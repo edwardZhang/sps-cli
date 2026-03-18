@@ -1,0 +1,56 @@
+# ── 项目基础信息 ─────────────────────────────────────────────────
+export PROJECT_NAME="__PROJECT_NAME__"
+export PROJECT_DISPLAY="__PROJECT_DISPLAY__"
+export PROJECT_DIR="$HOME/projects/__PROJECT_NAME__"
+
+# ── GitLab ───────────────────────────────────────────────────────
+export GITLAB_PROJECT="__GITLAB_PROJECT__"
+export GITLAB_PROJECT_ID="__GITLAB_PROJECT_ID__"
+export GITLAB_MERGE_BRANCH="__GITLAB_MERGE_BRANCH__"
+export GITLAB_RELEASE_BRANCH="__GITLAB_RELEASE_BRANCH__"
+
+# ── PM Backend ───────────────────────────────────────────────────
+export PM_TOOL="__PM_TOOL__"
+
+# ── Trello（PM_TOOL=trello 时填写）───────────────────────────────
+export TRELLO_BOARD_ID="__TRELLO_BOARD_ID__"
+export TRELLO_LIST_PLANNING="__TRELLO_LIST_PLANNING__"
+export TRELLO_LIST_BACKLOG="__TRELLO_LIST_BACKLOG__"
+export TRELLO_LIST_TODO="__TRELLO_LIST_TODO__"
+export TRELLO_LIST_INPROGRESS="__TRELLO_LIST_INPROGRESS__"
+export TRELLO_LIST_QA="__TRELLO_LIST_QA__"
+export TRELLO_LIST_DONE="__TRELLO_LIST_DONE__"
+export TRELLO_ACCOUNT="__TRELLO_ACCOUNT__"
+
+# ── Plane（PM_TOOL=plane 时填写）────────────────────────────────
+export PLANE_PROJECT_ID="__PLANE_PROJECT_ID__"
+export PLANE_PROJECT_NAME="__PLANE_PROJECT_NAME__"
+export PLANE_STATE_PLANNING="__PLANE_STATE_PLANNING__"
+export PLANE_STATE_BACKLOG="__PLANE_STATE_BACKLOG__"
+export PLANE_STATE_TODO="__PLANE_STATE_TODO__"
+export PLANE_STATE_INPROGRESS="__PLANE_STATE_INPROGRESS__"
+export PLANE_STATE_QA="__PLANE_STATE_QA__"
+export PLANE_STATE_DONE="__PLANE_STATE_DONE__"
+export PLANE_STATE_CANCELLED="__PLANE_STATE_CANCELLED__"
+# export PLANE_HELPER="$HOME/.openclaw/workspace/skills/plane/scripts/plane_helper.py"
+
+# ── Pipeline 筛选（可选）────────────────────────────────────────
+# 为空时表示 Planning/Active 状态中的所有任务都参与 pipeline
+export PIPELINE_LABEL="__PIPELINE_LABEL__"
+
+# ── CI ───────────────────────────────────────────────────────────
+export CI_MODE="__CI_MODE__"
+
+# ── 前端构建 ─────────────────────────────────────────────────────
+export HAS_FRONTEND="__HAS_FRONTEND__"
+export FRONTEND_DIR="__FRONTEND_DIR__"
+
+# ── 部署 ─────────────────────────────────────────────────────────
+export DEPLOY_ENABLED="__DEPLOY_ENABLED__"
+export DEPLOY_SCRIPT="$HOME/.projects/__PROJECT_NAME__/deploy.sh"
+
+# ── Worker / Agent ───────────────────────────────────────────────
+export MAX_CONCURRENT_WORKERS=__MAX_CONCURRENT_WORKERS__
+export WORKER_RESTART_LIMIT=__WORKER_RESTART_LIMIT__
+export AUTOFIX_ATTEMPTS=__AUTOFIX_ATTEMPTS__
+export WORKER_TOOL="__WORKER_TOOL__"
