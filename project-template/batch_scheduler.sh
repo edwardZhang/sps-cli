@@ -74,13 +74,14 @@ HELPER="${PLANE_HELPER:-$HOME/.openclaw/workspace/skills/plane/scripts/plane_hel
 : "${PLANE_STATE_INPROGRESS:?Missing PLANE_STATE_INPROGRESS}"
 : "${PLANE_STATE_QA:?Missing PLANE_STATE_QA}"
 
-active=$(ACTIVE_STATE_IDS="$PLANE_STATE_BACKLOG,$PLANE_STATE_TODO,$PLANE_STATE_INPROGRESS,$PLANE_STATE_QA" PIPELINE_LABEL="${PIPELINE_LABEL:-}" LABELS_JSON="$(python3 "$HELPER" labels list "$PLANE_PROJECT_ID" 2>/dev/null)" PLANE_JSON="$(python3 "$HELPER" issues list "$PLANE_PROJECT_ID" 2>/dev/null)" python3 - <<'PY'
+active=$(ACTIVE_STATE_IDS="$PLANE_STATE_BACKLOG,$PLANE_STATE_TODO,$PLANE_STATE_INPROGRESS,$PLANE_STATE_QA" PIPELINE_LABEL="${PIPELINE_LABEL:-}" PIPELINE_MIN_SEQ="${PIPELINE_MIN_SEQ:-}" LABELS_JSON="$(python3 "$HELPER" labels list "$PLANE_PROJECT_ID" 2>/dev/null)" PLANE_JSON="$(python3 "$HELPER" issues list "$PLANE_PROJECT_ID" 2>/dev/null)" python3 - <<'PY'
 import json,os
 obj=json.loads(os.environ['PLANE_JSON'])
-label_map={x.get('id'): x.get('name','') for x in json.loads(os.environ.get('LABELS_JSON','{"results":[]}')).get('results',[])}
 active=set(filter(None, os.environ.get('ACTIVE_STATE_IDS','').split(',')))
 want=os.environ.get('PIPELINE_LABEL','').strip()
+min_seq=(os.environ.get('PIPELINE_MIN_SEQ') or '').strip()
 count=0
+label_map={x.get('id'): x.get('name','') for x in json.loads(os.environ.get('LABELS_JSON','{"results":[]}')).get('results',[])}
 for it in obj.get('results',[]):
     if it.get('state') not in active:
         continue
@@ -94,6 +95,12 @@ for it in obj.get('results',[]):
             labels.append(name)
     if want and want not in labels:
         continue
+    if min_seq:
+        try:
+            if int(it.get('sequence_id') or 0) < int(min_seq):
+                continue
+        except Exception:
+            pass
     count += 1
 print(count)
 PY
@@ -104,12 +111,23 @@ if [ "$active" -gt 0 ]; then
   exit 0
 fi
 
-next=$(PIPELINE_LABEL="${PIPELINE_LABEL:-}" LABELS_JSON="$(python3 "$HELPER" labels list "$PLANE_PROJECT_ID" 2>/dev/null)" PLANE_JSON="$(python3 "$HELPER" issues list "$PLANE_PROJECT_ID" "$PLANE_STATE_PLANNING" 2>/dev/null)" python3 - <<'PY'
+next=$(PIPELINE_LABEL="${PIPELINE_LABEL:-}" PIPELINE_ORDER_FILE="${PIPELINE_ORDER_FILE:-}" LABELS_JSON="$(python3 "$HELPER" labels list "$PLANE_PROJECT_ID" 2>/dev/null)" PLANE_JSON="$(python3 "$HELPER" issues list "$PLANE_PROJECT_ID" "$PLANE_STATE_PLANNING" 2>/dev/null)" python3 - <<'PY'
 import json,os
 obj=json.loads(os.environ['PLANE_JSON'])
 label_map={x.get('id'): x.get('name','') for x in json.loads(os.environ.get('LABELS_JSON','{"results":[]}')).get('results',[])}
 want=os.environ.get('PIPELINE_LABEL','').strip()
-items=[]
+order_file=(os.environ.get('PIPELINE_ORDER_FILE') or '').strip()
+seq_order=[]
+if order_file and os.path.exists(order_file):
+    try:
+        raw=json.load(open(order_file))
+        if isinstance(raw, list):
+            seq_order=[int(x) for x in raw]
+        else:
+            seq_order=[int(x) for x in raw.get('items',[])]
+    except Exception:
+        seq_order=[]
+items_by_seq={}
 for it in obj.get('results',[]):
     labels=[]
     for lb in it.get('labels',[]):
@@ -121,16 +139,22 @@ for it in obj.get('results',[]):
             labels.append(name)
     if want and want not in labels:
         continue
-    seq=it.get('sequence_id')
     try:
-        seq_num=int(seq)
+        seq_num=int(it.get('sequence_id') or 0)
     except Exception:
-        seq_num=10**18
-    items.append((seq_num, it.get('created_at',''), it.get('id',''), it.get('name','')))
-items.sort()
-if items:
-    _, _, iid, name = items[0]
-    print(f"{iid}|{name}")
+        continue
+    items_by_seq[seq_num]=(it.get('id',''), it.get('name',''))
+if seq_order:
+    for seq in seq_order:
+        if seq in items_by_seq:
+            iid,name=items_by_seq[seq]
+            print(f"{iid}|{name}")
+            raise SystemExit(0)
+else:
+    for seq in sorted(items_by_seq):
+        iid,name=items_by_seq[seq]
+        print(f"{iid}|{name}")
+        raise SystemExit(0)
 PY
 )
 [ -z "$next" ] && { log "Planning empty, nothing to promote"; exit 0; }
