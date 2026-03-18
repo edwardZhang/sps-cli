@@ -1,0 +1,82 @@
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+
+export interface WorkerSlotState {
+  status: 'idle' | 'active' | 'releasing';
+  seq: number | null;
+  branch: string | null;
+  worktree: string | null;
+  tmuxSession: string | null;
+  claimedAt: string | null;
+  lastHeartbeat: string | null;
+}
+
+export interface ActiveCardState {
+  seq: number;
+  state: string;
+  worker: string | null;
+  mrUrl: string | null;
+  conflictDomains: string[];
+  startedAt: string;
+}
+
+export interface RuntimeState {
+  version: number;
+  generation: number;
+  updatedAt: string;
+  updatedBy: string;
+  workers: Record<string, WorkerSlotState>;
+  activeCards: Record<string, ActiveCardState>;
+}
+
+function defaultState(maxWorkers: number): RuntimeState {
+  const workers: Record<string, WorkerSlotState> = {};
+  for (let i = 1; i <= maxWorkers; i++) {
+    workers[`worker-${i}`] = {
+      status: 'idle',
+      seq: null,
+      branch: null,
+      worktree: null,
+      tmuxSession: null,
+      claimedAt: null,
+      lastHeartbeat: null,
+    };
+  }
+  return {
+    version: 1,
+    generation: 0,
+    updatedAt: new Date().toISOString(),
+    updatedBy: 'init',
+    workers,
+    activeCards: {},
+  };
+}
+
+export function readState(stateFile: string, maxWorkers: number): RuntimeState {
+  if (!existsSync(stateFile)) {
+    return defaultState(maxWorkers);
+  }
+  try {
+    const raw = readFileSync(stateFile, 'utf-8');
+    return JSON.parse(raw) as RuntimeState;
+  } catch {
+    return defaultState(maxWorkers);
+  }
+}
+
+/**
+ * Atomic write: write to temp file, then rename.
+ * Increments generation automatically.
+ */
+export function writeState(stateFile: string, state: RuntimeState, updatedBy: string): void {
+  const dir = dirname(stateFile);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+  state.generation += 1;
+  state.updatedAt = new Date().toISOString();
+  state.updatedBy = updatedBy;
+
+  const tmpFile = stateFile + '.tmp';
+  writeFileSync(tmpFile, JSON.stringify(state, null, 2) + '\n');
+  renameSync(tmpFile, stateFile);
+}

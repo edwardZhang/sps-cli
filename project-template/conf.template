@@ -23,6 +23,9 @@ export TRELLO_LIST_DONE="__TRELLO_LIST_DONE__"
 export TRELLO_ACCOUNT="__TRELLO_ACCOUNT__"
 
 # ── Plane（PM_TOOL=plane 时填写）────────────────────────────────
+export PLANE_API_URL="__PLANE_API_URL__"
+export PLANE_API_KEY="__PLANE_API_KEY__"
+export PLANE_WORKSPACE_SLUG="__PLANE_WORKSPACE_SLUG__"
 export PLANE_PROJECT_ID="__PLANE_PROJECT_ID__"
 export PLANE_PROJECT_NAME="__PLANE_PROJECT_NAME__"
 export PLANE_STATE_PLANNING="__PLANE_STATE_PLANNING__"
@@ -32,11 +35,10 @@ export PLANE_STATE_INPROGRESS="__PLANE_STATE_INPROGRESS__"
 export PLANE_STATE_QA="__PLANE_STATE_QA__"
 export PLANE_STATE_DONE="__PLANE_STATE_DONE__"
 export PLANE_STATE_CANCELLED="__PLANE_STATE_CANCELLED__"
-# export PLANE_HELPER="$HOME/.openclaw/workspace/skills/plane/scripts/plane_helper.py"
 
 # ── Pipeline 筛选（可选）────────────────────────────────────────
-# 为空时表示 Planning/Active 状态中的所有任务都参与 pipeline
 export PIPELINE_LABEL="__PIPELINE_LABEL__"
+export PIPELINE_ORDER_FILE="$HOME/.projects/__PROJECT_NAME__/pipeline_order.json"
 
 # ── CI ───────────────────────────────────────────────────────────
 export CI_MODE="__CI_MODE__"
@@ -50,7 +52,22 @@ export DEPLOY_ENABLED="__DEPLOY_ENABLED__"
 export DEPLOY_SCRIPT="$HOME/.projects/__PROJECT_NAME__/deploy.sh"
 
 # ── Worker / Agent ───────────────────────────────────────────────
+export WORKER_TOOL="__WORKER_TOOL__"
 export MAX_CONCURRENT_WORKERS=__MAX_CONCURRENT_WORKERS__
 export WORKER_RESTART_LIMIT=__WORKER_RESTART_LIMIT__
 export AUTOFIX_ATTEMPTS=__AUTOFIX_ATTEMPTS__
-export WORKER_TOOL="__WORKER_TOOL__"
+export WORKER_SESSION_REUSE=true
+export MAX_ACTIONS_PER_TICK=1
+
+# ── 超时与策略 ───────────────────────────────────────────────────
+export INPROGRESS_TIMEOUT_HOURS=8
+export MONITOR_AUTO_QA=false
+export CONFLICT_DEFAULT=serial
+export TICK_LOCK_TIMEOUT_MINUTES=30
+export NEEDS_FIX_MAX_RETRIES=3
+export WORKTREE_RETAIN_HOURS=24
+
+# ── 通知（Matrix）──────────────────────────────────────────────
+export MATRIX_HOMESERVER="__MATRIX_HOMESERVER__"
+export MATRIX_ACCESS_TOKEN="__MATRIX_ACCESS_TOKEN__"
+export MATRIX_ROOM_ID="__MATRIX_ROOM_ID__"

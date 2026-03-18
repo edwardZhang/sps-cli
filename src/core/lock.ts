@@ -1,0 +1,73 @@
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+
+interface LockInfo {
+  pid: number;
+  startedAt: string;
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface AcquireLockResult {
+  acquired: boolean;
+  reason?: 'another_tick_running' | 'stale_lock_reclaimed';
+}
+
+/**
+ * Acquire a tick lock. Returns whether the lock was successfully acquired.
+ * If a stale lock (dead PID or timed out) is found, it is reclaimed.
+ */
+export function acquireTickLock(lockFile: string, timeoutMinutes: number): AcquireLockResult {
+  const dir = dirname(lockFile);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+  if (existsSync(lockFile)) {
+    try {
+      const content = readFileSync(lockFile, 'utf-8');
+      const lock: LockInfo = JSON.parse(content);
+
+      // Check if PID is still alive
+      if (isPidAlive(lock.pid)) {
+        // Check timeout
+        const elapsed = (Date.now() - new Date(lock.startedAt).getTime()) / 60000;
+        if (elapsed < timeoutMinutes) {
+          return { acquired: false, reason: 'another_tick_running' };
+        }
+        // Timed out — force reclaim
+      }
+      // Dead PID or timed out — remove stale lock
+      unlinkSync(lockFile);
+    } catch {
+      // Corrupt lock file — remove it
+      try { unlinkSync(lockFile); } catch { /* ignore */ }
+    }
+  }
+
+  // Write new lock
+  const lock: LockInfo = {
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  };
+  writeFileSync(lockFile, JSON.stringify(lock) + '\n');
+  return { acquired: true, reason: existsSync(lockFile) ? 'stale_lock_reclaimed' : undefined };
+}
+
+/**
+ * Release the tick lock. Safe to call even if lock doesn't exist.
+ */
+export function releaseTickLock(lockFile: string): void {
+  try {
+    if (existsSync(lockFile)) {
+      unlinkSync(lockFile);
+    }
+  } catch {
+    // Best effort
+  }
+}
