@@ -41,11 +41,12 @@ PY
     exit 0
   fi
 
-  next=$(curl -s "$TAPI/lists/$TRELLO_LIST_PLANNING/cards?$TQ&fields=id,name,labels,pos" | python3 - <<'PY'
-import sys,json,os
+  next=$(PIPELINE_LABEL="${PIPELINE_LABEL:-}" TRELLO_JSON="$(curl -s "$TAPI/lists/$TRELLO_LIST_PLANNING/cards?$TQ&fields=id,name,labels,pos")" python3 - <<'PY'
+import json,os
 label=os.environ.get('PIPELINE_LABEL','').strip()
+obj=json.loads(os.environ.get('TRELLO_JSON','[]'))
 items=[]
-for c in json.load(sys.stdin):
+for c in obj:
     labels=[(lb.get('name') or '').strip() for lb in c.get('labels',[])]
     if label and label not in labels:
         continue
@@ -73,16 +74,24 @@ HELPER="${PLANE_HELPER:-$HOME/.openclaw/workspace/skills/plane/scripts/plane_hel
 : "${PLANE_STATE_INPROGRESS:?Missing PLANE_STATE_INPROGRESS}"
 : "${PLANE_STATE_QA:?Missing PLANE_STATE_QA}"
 
-active=$(ACTIVE_STATE_IDS="$PLANE_STATE_BACKLOG,$PLANE_STATE_TODO,$PLANE_STATE_INPROGRESS,$PLANE_STATE_QA" PIPELINE_LABEL="${PIPELINE_LABEL:-}" python3 "$HELPER" issues list "$PLANE_PROJECT_ID" 2>/dev/null | python3 - <<'PY'
-import json,os,sys
-obj=json.load(sys.stdin)
+active=$(ACTIVE_STATE_IDS="$PLANE_STATE_BACKLOG,$PLANE_STATE_TODO,$PLANE_STATE_INPROGRESS,$PLANE_STATE_QA" PIPELINE_LABEL="${PIPELINE_LABEL:-}" LABELS_JSON="$(python3 "$HELPER" labels list "$PLANE_PROJECT_ID" 2>/dev/null)" PLANE_JSON="$(python3 "$HELPER" issues list "$PLANE_PROJECT_ID" 2>/dev/null)" python3 - <<'PY'
+import json,os
+obj=json.loads(os.environ['PLANE_JSON'])
+label_map={x.get('id'): x.get('name','') for x in json.loads(os.environ.get('LABELS_JSON','{"results":[]}')).get('results',[])}
 active=set(filter(None, os.environ.get('ACTIVE_STATE_IDS','').split(',')))
 want=os.environ.get('PIPELINE_LABEL','').strip()
 count=0
 for it in obj.get('results',[]):
     if it.get('state') not in active:
         continue
-    labels=[(lb.get('name') or '').strip() for lb in it.get('labels',[])]
+    labels=[]
+    for lb in it.get('labels',[]):
+        if isinstance(lb, dict):
+            name=(lb.get('name') or '').strip()
+        else:
+            name=(label_map.get(lb,'') or '').strip()
+        if name:
+            labels.append(name)
     if want and want not in labels:
         continue
     count += 1
@@ -95,13 +104,21 @@ if [ "$active" -gt 0 ]; then
   exit 0
 fi
 
-next=$(PIPELINE_LABEL="${PIPELINE_LABEL:-}" python3 "$HELPER" issues list "$PLANE_PROJECT_ID" "$PLANE_STATE_PLANNING" 2>/dev/null | python3 - <<'PY'
-import json,os,sys
-obj=json.load(sys.stdin)
+next=$(PIPELINE_LABEL="${PIPELINE_LABEL:-}" LABELS_JSON="$(python3 "$HELPER" labels list "$PLANE_PROJECT_ID" 2>/dev/null)" PLANE_JSON="$(python3 "$HELPER" issues list "$PLANE_PROJECT_ID" "$PLANE_STATE_PLANNING" 2>/dev/null)" python3 - <<'PY'
+import json,os
+obj=json.loads(os.environ['PLANE_JSON'])
+label_map={x.get('id'): x.get('name','') for x in json.loads(os.environ.get('LABELS_JSON','{"results":[]}')).get('results',[])}
 want=os.environ.get('PIPELINE_LABEL','').strip()
 items=[]
 for it in obj.get('results',[]):
-    labels=[(lb.get('name') or '').strip() for lb in it.get('labels',[])]
+    labels=[]
+    for lb in it.get('labels',[]):
+        if isinstance(lb, dict):
+            name=(lb.get('name') or '').strip()
+        else:
+            name=(label_map.get(lb,'') or '').strip()
+        if name:
+            labels.append(name)
     if want and want not in labels:
         continue
     seq=it.get('sequence_id')
