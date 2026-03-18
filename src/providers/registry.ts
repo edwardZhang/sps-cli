@@ -7,6 +7,7 @@ import { PlaneTaskBackend } from './PlaneTaskBackend.js';
 import { TrelloTaskBackend } from './TrelloTaskBackend.js';
 import { MarkdownTaskBackend } from './MarkdownTaskBackend.js';
 import { ClaudeWorkerProvider } from './ClaudeWorkerProvider.js';
+import { CodexWorkerProvider } from './CodexWorkerProvider.js';
 import { GitLabRepoBackend } from './GitLabRepoBackend.js';
 import { MatrixNotifier } from './MatrixNotifier.js';
 
@@ -22,7 +23,7 @@ export function createTaskBackend(config: ProjectConfig): TaskBackend {
 export function createWorkerProvider(config: ProjectConfig): WorkerProvider {
   switch (config.WORKER_TOOL) {
     case 'claude': return new ClaudeWorkerProvider(config);
-    // case 'codex': return new CodexWorkerProvider();
+    case 'codex': return new CodexWorkerProvider(config);
     default: throw new Error(`Unknown WORKER_TOOL: ${config.WORKER_TOOL}`);
   }
 }

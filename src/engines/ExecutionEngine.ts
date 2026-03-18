@@ -491,7 +491,7 @@ export class ExecutionEngine {
     try {
       await this.workerProvider.launch(sessionName, worktreePath);
       // Wait for worker to be ready
-      const ready = await this.workerProvider.waitReady(sessionName, 30000);
+      const ready = await this.workerProvider.waitReady(sessionName, 90_000);
       if (!ready) {
         throw new Error('Worker did not become ready within timeout');
       }
@@ -550,65 +550,69 @@ export class ExecutionEngine {
   }
 
   /**
-   * Write CLAUDE.md and .jarvis_task_prompt.txt to worktree.
-   * Templates from 12 §7.
+   * Write worker rules and task prompt to worktree.
+   * Generates both CLAUDE.md (for Claude) and AGENTS.md (for Codex).
    */
   private buildTaskContext(card: Card, worktreePath: string): void {
     if (!existsSync(worktreePath)) {
       mkdirSync(worktreePath, { recursive: true });
     }
 
-    // CLAUDE.md — worker rules (12 §7.1)
-    const pmToolName = this.ctx.pmTool === 'trello' ? 'Trello' : 'PM';
-    const claudeMd = `# Task Rules (auto-generated, do not edit)
+    const branchName = this.buildBranchName(card);
+    const workerRules = `# Task Rules (auto-generated, do not edit)
 
-## Mandatory
-- Read project docs before starting
-- Create ${pmToolName} checklist for task breakdown
-- DO NOT create PLAN.md, TODO.md, TASKLIST.md or similar planning files
-- Use ${pmToolName} checklist as the only planning tool
-- Self-test before creating MR
-- Write SELF_TEST: PASS/FAIL in MR description
+## Scope
+- ONLY work in this directory: ${worktreePath}
+- Do NOT read or modify files outside this directory
+- Do NOT explore the system, home directory, or other projects
 
-## Notifications (6 key milestones)
-- Task started
-- Checklist created
-- Implementation complete
-- Tests passing
-- MR created
-- Task complete
+## Workflow
+1. Read the task description below
+2. Implement the changes in this directory
+3. Self-test your changes
+4. git add, commit, and push to branch: ${branchName}
+5. Create a Merge Request targeting ${this.ctx.mergeBranch}
+6. Output "done" when finished
 
 ## Commit Rules
 - Commit frequently (every meaningful change)
 - Push after each commit
-- Branch: ${this.buildBranchName(card)}
+- Branch: ${branchName}
+- Use conventional commit messages (feat:, fix:, etc.)
+
+## MR Creation
+- Use git push first, then create MR via GitLab API:
+  curl -s -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" -H "Content-Type: application/json" \\
+    "$GITLAB_URL/api/v4/projects/${this.ctx.config.GITLAB_PROJECT_ID}/merge_requests" \\
+    -d '{"source_branch":"${branchName}","target_branch":"${this.ctx.mergeBranch}","title":"feat(${card.seq}): ${card.name}"}'
 
 ## Forbidden
 - No PLAN.md, TODO.md, TASKLIST.md, ROADMAP.md, NOTES.md
 - No local planning files of any kind
 - No changes outside task scope
+- Do NOT explore ~/.projects or other system directories
 `;
 
-    // .jarvis_task_prompt.txt — task prompt (12 §7.2)
+    // .jarvis_task_prompt.txt — task prompt
     const taskPrompt = `Task ID: ${card.seq}
 Task: ${card.name}
-Branch: ${this.buildBranchName(card)}
+Branch: ${branchName}
 Card Full ID: ${card.id}
 
 Description:
 ${card.desc || '(no description)'}
 
-Execution requirements:
-1. Read project documentation first
-2. Create/update ${pmToolName} checklist with your plan
-3. Implement changes on branch ${this.buildBranchName(card)}
-4. Self-test all changes
-5. Commit and push incrementally
-6. Create MR when complete
-7. Move card to QA when done
+Requirements:
+1. Implement the changes described above
+2. Self-test your changes
+3. git add, commit, and push to branch ${branchName}
+4. Create a Merge Request targeting ${this.ctx.mergeBranch}
+5. Say "done" when finished
 `;
 
-    writeFileSync(resolve(worktreePath, 'CLAUDE.md'), claudeMd);
+    // Write both CLAUDE.md (for Claude) and AGENTS.md (for Codex)
+    writeFileSync(resolve(worktreePath, 'CLAUDE.md'), workerRules);
+    writeFileSync(resolve(worktreePath, 'AGENTS.md'), workerRules);
     writeFileSync(resolve(worktreePath, '.jarvis_task_prompt.txt'), taskPrompt);
   }
 

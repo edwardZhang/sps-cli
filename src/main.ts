@@ -11,7 +11,7 @@ import { executeMonitorTick } from './commands/monitorTick.js';
 import { executePmCommand } from './commands/pmCommand.js';
 import { executeCardAdd } from './commands/cardAdd.js';
 
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 
 const COMMANDS: Record<string, { desc: string; usage: string }> = {
   tick:      { desc: 'Run continuous pipeline (--once for single tick)', usage: 'workflow tick <project> [--once]' },
