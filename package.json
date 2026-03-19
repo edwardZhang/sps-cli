@@ -1,21 +1,33 @@
 {
-  "name": "@jarvis/workflow-cli",
-  "version": "0.1.0",
-  "description": "JARVIS Workflow CLI — AI-driven development pipeline orchestrator",
+  "name": "@coralai/sps-cli",
+  "version": "0.6.0",
+  "description": "SPS CLI — AI-driven development pipeline orchestrator",
   "type": "module",
   "main": "dist/main.js",
   "bin": {
-    "workflow": "../bin/workflow"
+    "sps": "dist/main.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/main.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=18.0.0"
   },
-  "private": true,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "cli",
+    "workflow",
+    "pipeline",
+    "ai",
+    "orchestrator"
+  ],
+  "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.5.0",
     "tsx": "^4.21.0",

@@ -15,7 +15,7 @@ export async function executeCardAdd(
   const desc = positionals.slice(1).join(' ');
 
   if (!name) {
-    console.error('Usage: workflow card add <project> "<title>" ["description"]');
+    console.error('Usage: sps card add <project> "<title>" ["description"]');
     process.exit(2);
   }
 

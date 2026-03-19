@@ -12,7 +12,7 @@ export async function executeProjectInit(
   const log = new Logger('project-init', project);
 
   if (!project) {
-    log.error('Usage: workflow project init <project>');
+    log.error('Usage: sps project init <project>');
     process.exit(2);
   }
 
@@ -45,7 +45,7 @@ export async function executeProjectInit(
   if (existsSync(schedulerSrc)) {
     copyFileSync(schedulerSrc, schedulerDst);
     chmodSync(schedulerDst, 0o755);
-    log.ok('Installed batch_scheduler.sh (thin wrapper → workflow tick)');
+    log.ok('Installed batch_scheduler.sh (thin wrapper → sps tick)');
   }
 
   // Copy deploy.sh
@@ -82,7 +82,7 @@ export async function executeProjectInit(
   log.ok(`Project ${project} initialized at ${instanceDir}`);
   log.info('Next steps:');
   log.info(`  1. Edit ${confDst} to fill in GitLab/PM/Notification settings`);
-  log.info(`  2. Run: workflow doctor ${project} --fix`);
-  log.info(`  3. Run: workflow card add ${project} "task title" "description"`);
-  log.info(`  4. Run: workflow tick ${project}`);
+  log.info(`  2. Run: sps doctor ${project} --fix`);
+  log.info(`  3. Run: sps card add ${project} "task title" "description"`);
+  log.info(`  4. Run: sps tick ${project}`);
 }

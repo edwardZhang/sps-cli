@@ -14,21 +14,21 @@ import { executeCardAdd } from './commands/cardAdd.js';
 const VERSION = '0.6.0';
 
 const COMMANDS: Record<string, { desc: string; usage: string }> = {
-  tick:      { desc: 'Run continuous pipeline (--once for single tick)', usage: 'workflow tick <project> [--once]' },
-  card:      { desc: 'Card management', usage: 'workflow card add <project> "<title>" ["desc"]' },
-  doctor:    { desc: 'Project health check', usage: 'workflow doctor <project> [--json] [--skip-remote]' },
-  scheduler: { desc: 'Planning → Backlog promotion', usage: 'workflow scheduler <tick|inspect|validate> <project>' },
-  pipeline:  { desc: 'Execution chain (Backlog → Todo → Inprogress)', usage: 'workflow pipeline <tick|inspect> <project>' },
-  worker:    { desc: 'Worker lifecycle management', usage: 'workflow worker <launch|release|inspect> <project> [seq|slot]' },
-  pm:        { desc: 'PM backend operations', usage: 'workflow pm <scan|move|comment|checklist> <project> [args...]' },
-  qa:        { desc: 'QA / closeout (QA → merge → Done)', usage: 'workflow qa <tick|inspect> <project>' },
-  monitor:   { desc: 'Anomaly detection and diagnostics', usage: 'workflow monitor <tick|inspect-worker|inspect-card> <project>' },
-  project:   { desc: 'Project init and validation', usage: 'workflow project <init|doctor|validate|paths> <project>' },
+  tick:      { desc: 'Run continuous pipeline (--once for single tick)', usage: 'sps tick <project> [--once]' },
+  card:      { desc: 'Card management', usage: 'sps card add <project> "<title>" ["desc"]' },
+  doctor:    { desc: 'Project health check', usage: 'sps doctor <project> [--json] [--skip-remote]' },
+  scheduler: { desc: 'Planning → Backlog promotion', usage: 'sps scheduler <tick|inspect|validate> <project>' },
+  pipeline:  { desc: 'Execution chain (Backlog → Todo → Inprogress)', usage: 'sps pipeline <tick|inspect> <project>' },
+  worker:    { desc: 'Worker lifecycle management', usage: 'sps worker <launch|release|inspect> <project> [seq|slot]' },
+  pm:        { desc: 'PM backend operations', usage: 'sps pm <scan|move|comment|checklist> <project> [args...]' },
+  qa:        { desc: 'QA / closeout (QA → merge → Done)', usage: 'sps qa <tick|inspect> <project>' },
+  monitor:   { desc: 'Anomaly detection and diagnostics', usage: 'sps monitor <tick|inspect-worker|inspect-card> <project>' },
+  project:   { desc: 'Project init and validation', usage: 'sps project <init|doctor|validate|paths> <project>' },
 };
 
 function printHelp() {
-  console.log(`workflow v${VERSION} — JARVIS Workflow CLI\n`);
-  console.log('Usage: workflow <command> [subcommand] <project> [options]\n');
+  console.log(`sps v${VERSION} — SPS CLI\n`);
+  console.log('Usage: sps <command> [subcommand] <project> [options]\n');
   console.log('Commands:');
   for (const [cmd, info] of Object.entries(COMMANDS)) {
     console.log(`  ${cmd.padEnd(12)} ${info.desc}`);
@@ -121,7 +121,7 @@ async function main() {
     if (args.project) projects.push(args.project);
     projects.push(...args.positionals);
     if (projects.length === 0) {
-      console.error('Usage: workflow tick <project> [project2] [project3] ...');
+      console.error('Usage: sps tick <project> [project2] [project3] ...');
       process.exit(2);
     }
     await executeTick(projects, args.flags);
@@ -130,7 +130,7 @@ async function main() {
 
   // ─── doctor (shorthand) ──────────────────────────────────────
   if (args.command === 'doctor') {
-    const project = requireProject(args, 'workflow doctor <project>');
+    const project = requireProject(args, 'sps doctor <project>');
     await executeDoctor(project, args.flags);
     return;
   }
@@ -138,7 +138,7 @@ async function main() {
   // ─── project ─────────────────────────────────────────────────
   if (args.command === 'project' && args.subcommand === 'init') {
     if (!args.project) {
-      console.error('Usage: workflow project init <project>');
+      console.error('Usage: sps project init <project>');
       process.exit(2);
     }
     await executeProjectInit(args.project, args.flags);
@@ -147,7 +147,7 @@ async function main() {
 
   if (args.command === 'project' && args.subcommand === 'doctor') {
     if (!args.project) {
-      console.error('Usage: workflow project doctor <project>');
+      console.error('Usage: sps project doctor <project>');
       process.exit(2);
     }
     await executeDoctor(args.project, args.flags);
@@ -158,7 +158,7 @@ async function main() {
   if (args.command === 'scheduler') {
     if (args.subcommand === 'tick') {
       if (!args.project) {
-        console.error('Usage: workflow scheduler tick <project>');
+        console.error('Usage: sps scheduler tick <project>');
         process.exit(2);
       }
       await executeSchedulerTick(args.project, args.flags);
@@ -170,7 +170,7 @@ async function main() {
   if (args.command === 'pipeline') {
     if (args.subcommand === 'tick') {
       if (!args.project) {
-        console.error('Usage: workflow pipeline tick <project>');
+        console.error('Usage: sps pipeline tick <project>');
         process.exit(2);
       }
       await executePipelineTick(args.project, args.flags);
@@ -182,7 +182,7 @@ async function main() {
   if (args.command === 'worker') {
     if (args.subcommand === 'launch') {
       if (!args.project) {
-        console.error('Usage: workflow worker launch <project> <seq>');
+        console.error('Usage: sps worker launch <project> <seq>');
         process.exit(2);
       }
       const seq = args.positionals[0] || '';
@@ -195,7 +195,7 @@ async function main() {
   if (args.command === 'qa') {
     if (args.subcommand === 'tick') {
       if (!args.project) {
-        console.error('Usage: workflow qa tick <project>');
+        console.error('Usage: sps qa tick <project>');
         process.exit(2);
       }
       await executeQaTick(args.project, args.flags);
@@ -207,7 +207,7 @@ async function main() {
   if (args.command === 'monitor') {
     if (args.subcommand === 'tick') {
       if (!args.project) {
-        console.error('Usage: workflow monitor tick <project>');
+        console.error('Usage: sps monitor tick <project>');
         process.exit(2);
       }
       await executeMonitorTick(args.project, args.flags);
@@ -218,11 +218,11 @@ async function main() {
   // ─── pm ─────────────────────────────────────────────────────
   if (args.command === 'pm') {
     if (!args.subcommand) {
-      console.error('Usage: workflow pm <scan|move|comment|checklist> <project> [args...]');
+      console.error('Usage: sps pm <scan|move|comment|checklist> <project> [args...]');
       process.exit(2);
     }
     if (!args.project) {
-      console.error(`Usage: workflow pm ${args.subcommand} <project> [args...]`);
+      console.error(`Usage: sps pm ${args.subcommand} <project> [args...]`);
       process.exit(2);
     }
     await executePmCommand(args.project, args.subcommand, args.positionals, args.flags);
@@ -233,7 +233,7 @@ async function main() {
   if (args.command === 'card') {
     if (args.subcommand === 'add') {
       if (!args.project) {
-        console.error('Usage: workflow card add <project> "<title>" ["description"]');
+        console.error('Usage: sps card add <project> "<title>" ["description"]');
         process.exit(2);
       }
       await executeCardAdd(args.project, args.positionals, args.flags);

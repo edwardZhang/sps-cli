@@ -175,7 +175,7 @@ export class ClaudeWorkerProvider implements WorkerProvider {
     }
     // Write prompt content to a temp file, load into tmux buffer, paste, then Enter.
     const content = readFileSync(promptFile, 'utf-8').trim();
-    const bufferFile = `/tmp/workflow-task-${Date.now()}.txt`;
+    const bufferFile = `/tmp/sps-task-${Date.now()}.txt`;
     const { writeFileSync: writeTmp, unlinkSync } = await import('node:fs');
     writeTmp(bufferFile, content);
     tmux(['load-buffer', bufferFile]);

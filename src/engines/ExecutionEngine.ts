@@ -107,7 +107,7 @@ export class ExecutionEngine {
   }
 
   /**
-   * Launch a single card (for `workflow worker launch <project> <seq>`).
+   * Launch a single card (for `sps worker launch <project> <seq>`).
    * Assumes card is in Todo state with branch/worktree already prepared.
    */
   async launchSingle(seq: string, opts: { dryRun?: boolean } = {}): Promise<CommandResult> {

@@ -196,7 +196,7 @@ export class CodexWorkerProvider implements WorkerProvider {
       throw new Error(`Prompt file does not exist: ${promptFile}`);
     }
     const content = readFileSync(promptFile, 'utf-8').trim();
-    const bufferFile = `/tmp/workflow-task-${Date.now()}.txt`;
+    const bufferFile = `/tmp/sps-task-${Date.now()}.txt`;
     const { writeFileSync: writeTmp, unlinkSync } = await import('node:fs');
     writeTmp(bufferFile, content);
     tmux(['load-buffer', bufferFile]);

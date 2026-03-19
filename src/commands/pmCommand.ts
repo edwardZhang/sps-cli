@@ -59,7 +59,7 @@ export async function executePmCommand(
         const seq = positionals[0];
         const targetState = positionals[1] as CardState;
         if (!seq || !targetState) {
-          console.error('Usage: workflow pm move <project> <seq> <state>');
+          console.error('Usage: sps pm move <project> <seq> <state>');
           process.exit(2);
         }
         if (!VALID_STATES.includes(targetState)) {
@@ -79,7 +79,7 @@ export async function executePmCommand(
         const seq = positionals[0];
         const text = positionals.slice(1).join(' ');
         if (!seq || !text) {
-          console.error('Usage: workflow pm comment <project> <seq> <text>');
+          console.error('Usage: sps pm comment <project> <seq> <text>');
           process.exit(2);
         }
         await taskBackend.comment(seq, text);
@@ -95,7 +95,7 @@ export async function executePmCommand(
         const action = positionals[0]; // create, list, check, uncheck
         const seq = positionals[1];
         if (!action || !seq) {
-          console.error('Usage: workflow pm checklist <create|list|check|uncheck> <project> <seq> [items...]');
+          console.error('Usage: sps pm checklist <create|list|check|uncheck> <project> <seq> [items...]');
           process.exit(2);
         }
 
@@ -103,7 +103,7 @@ export async function executePmCommand(
           case 'create': {
             const items = positionals.slice(2);
             if (items.length === 0) {
-              console.error('Usage: workflow pm checklist create <project> <seq> <item1> <item2> ...');
+              console.error('Usage: sps pm checklist create <project> <seq> <item1> <item2> ...');
               process.exit(2);
             }
             await taskBackend.checklistCreate(seq, items);
@@ -124,14 +124,14 @@ export async function executePmCommand(
           }
           case 'check': {
             const itemId = positionals[2];
-            if (!itemId) { console.error('Usage: workflow pm checklist check <project> <seq> <item-id>'); process.exit(2); }
+            if (!itemId) { console.error('Usage: sps pm checklist check <project> <seq> <item-id>'); process.exit(2); }
             await taskBackend.checklistCheck(seq, itemId);
             log.ok(`Checked item ${itemId} on seq ${seq}`);
             break;
           }
           case 'uncheck': {
             const itemId = positionals[2];
-            if (!itemId) { console.error('Usage: workflow pm checklist uncheck <project> <seq> <item-id>'); process.exit(2); }
+            if (!itemId) { console.error('Usage: sps pm checklist uncheck <project> <seq> <item-id>'); process.exit(2); }
             await taskBackend.checklistUncheck(seq, itemId);
             log.ok(`Unchecked item ${itemId} on seq ${seq}`);
             break;

@@ -16,7 +16,7 @@ export async function executeWorkerLaunch(
     if (jsonOutput) {
       console.log(JSON.stringify({ project, component: 'worker-launch', status: 'fail', exitCode: 2, error: 'Missing seq argument' }));
     } else {
-      log.error('Usage: workflow worker launch <project> <seq>');
+      log.error('Usage: sps worker launch <project> <seq>');
     }
     process.exit(2);
   }

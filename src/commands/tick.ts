@@ -89,7 +89,7 @@ function createRunner(project: string): ProjectRunner | null {
  * Execute the unified tick command.
  *
  * Supports multiple projects in a single process:
- *   workflow tick project-a project-b project-c
+ *   sps tick project-a project-b project-c
  *
  * Each project is fully isolated (own context, providers, engines, lock, state).
  * Projects are ticked sequentially within each cycle. One project's error
@@ -108,7 +108,7 @@ export async function executeTick(
   const interval = DEFAULT_INTERVAL_S;
 
   if (projects.length === 0) {
-    console.error('Usage: workflow tick <project> [project2] [project3] ...');
+    console.error('Usage: sps tick <project> [project2] [project3] ...');
     process.exit(2);
   }
 
