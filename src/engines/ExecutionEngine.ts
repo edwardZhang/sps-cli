@@ -327,7 +327,7 @@ export class ExecutionEngine {
   private async prepareCard(card: Card, opts: { dryRun?: boolean }): Promise<ActionRecord> {
     const seq = card.seq;
     const branchName = this.buildBranchName(card);
-    const worktreePath = resolveWorktreePath(this.ctx.projectName, seq);
+    const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
 
     if (opts.dryRun) {
       this.log.info(`[dry-run] Would prepare seq ${seq}: branch=${branchName} worktree=${worktreePath}`);
@@ -396,7 +396,7 @@ export class ExecutionEngine {
   ): Promise<ActionRecord> {
     const seq = card.seq;
     const branchName = this.buildBranchName(card);
-    const worktreePath = resolveWorktreePath(this.ctx.projectName, seq);
+    const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
 
     if (opts.dryRun) {
       this.log.info(`[dry-run] Would launch seq ${seq}`);

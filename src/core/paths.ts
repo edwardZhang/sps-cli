@@ -20,15 +20,30 @@ export interface ProjectPaths {
   pmMetaDir: string;
   /** ~/.projects/<project>/pipeline_order.json */
   pipelineOrderFile: string;
-  /** ~/projects/<project>/ (business repo) */
+  /** Business repo directory (configurable via PROJECT_DIR, default: ~/projects/<project>/) */
   repoDir: string;
-  /** ~/.openclaw/workspace/worktrees/<project>/ */
+  /** Worktree root (configurable via WORKTREE_DIR, default: ~/.coral/worktrees/<project>/) */
   worktreeRoot: string;
 }
 
-export function resolveProjectPaths(projectName: string): ProjectPaths {
+export interface PathOverrides {
+  /** Override business repo path (from conf PROJECT_DIR) */
+  projectDir?: string;
+  /** Override worktree root path (from conf WORKTREE_DIR) */
+  worktreeDir?: string;
+}
+
+export function resolveProjectPaths(projectName: string, overrides?: PathOverrides): ProjectPaths {
   const instanceDir = resolve(HOME, '.projects', projectName);
   const runtimeDir = resolve(instanceDir, 'runtime');
+
+  const repoDir = overrides?.projectDir
+    ? resolve(overrides.projectDir)
+    : resolve(HOME, 'projects', projectName);
+
+  const worktreeRoot = overrides?.worktreeDir
+    ? resolve(overrides.worktreeDir, projectName)
+    : resolve(HOME, '.coral', 'worktrees', projectName);
 
   return {
     instanceDir,
@@ -39,13 +54,16 @@ export function resolveProjectPaths(projectName: string): ProjectPaths {
     tickLockFile: resolve(runtimeDir, 'tick.lock'),
     pmMetaDir: resolve(instanceDir, 'pm_meta'),
     pipelineOrderFile: resolve(instanceDir, 'pipeline_order.json'),
-    repoDir: resolve(HOME, 'projects', projectName),
-    worktreeRoot: resolve(HOME, '.openclaw', 'workspace', 'worktrees', projectName),
+    repoDir,
+    worktreeRoot,
   };
 }
 
-export function resolveWorktreePath(projectName: string, seq: string | number): string {
-  return resolve(HOME, '.openclaw', 'workspace', 'worktrees', projectName, String(seq));
+export function resolveWorktreePath(projectName: string, seq: string | number, worktreeDir?: string): string {
+  const root = worktreeDir
+    ? resolve(worktreeDir, projectName)
+    : resolve(HOME, '.coral', 'worktrees', projectName);
+  return resolve(root, String(seq));
 }
 
 export function resolveWorkerCardFile(projectName: string, slot: number): string {

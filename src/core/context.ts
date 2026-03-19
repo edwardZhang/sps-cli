@@ -13,8 +13,11 @@ export class ProjectContext {
   }
 
   static load(projectName: string): ProjectContext {
-    const paths = resolveProjectPaths(projectName);
     const config = loadProjectConf(projectName);
+    const paths = resolveProjectPaths(projectName, {
+      projectDir: config.PROJECT_DIR,
+      worktreeDir: config.WORKTREE_DIR,
+    });
     return new ProjectContext(projectName, config, paths);
   }
 
