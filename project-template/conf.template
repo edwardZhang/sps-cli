@@ -1,7 +1,12 @@
 # ── 项目基础信息 ─────────────────────────────────────────────────
 export PROJECT_NAME="__PROJECT_NAME__"
 export PROJECT_DISPLAY="__PROJECT_DISPLAY__"
-export PROJECT_DIR="$HOME/projects/__PROJECT_NAME__"
+
+# ── 路径配置（可选，不设置则使用默认值）───────────────────────────
+# 业务代码仓库目录（默认: ~/projects/<project>）
+# export PROJECT_DIR="$HOME/projects/__PROJECT_NAME__"
+# Worker worktree 根目录（默认: ~/.coral/worktrees/）
+# export WORKTREE_DIR="$HOME/.coral/worktrees"
 
 # ── GitLab ───────────────────────────────────────────────────────
 export GITLAB_PROJECT="__GITLAB_PROJECT__"

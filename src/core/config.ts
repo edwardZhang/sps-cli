@@ -120,6 +120,9 @@ export interface ProjectConfig {
   NEEDS_FIX_MAX_RETRIES: number;
   WORKTREE_RETAIN_HOURS: number;
 
+  // Paths (overridable)
+  WORKTREE_DIR?: string;
+
   // Deploy
   DEPLOY_ENABLED: boolean;
   DEPLOY_SCRIPT?: string;
@@ -187,6 +190,8 @@ export function loadProjectConf(projectName: string): ProjectConfig {
     TICK_LOCK_TIMEOUT_MINUTES: parseInt(raw.TICK_LOCK_TIMEOUT_MINUTES || '30', 10),
     NEEDS_FIX_MAX_RETRIES: parseInt(raw.NEEDS_FIX_MAX_RETRIES || '3', 10),
     WORKTREE_RETAIN_HOURS: parseInt(raw.WORKTREE_RETAIN_HOURS || '24', 10),
+
+    WORKTREE_DIR: raw.WORKTREE_DIR,
 
     DEPLOY_ENABLED: raw.DEPLOY_ENABLED === 'true',
     DEPLOY_SCRIPT: raw.DEPLOY_SCRIPT,
