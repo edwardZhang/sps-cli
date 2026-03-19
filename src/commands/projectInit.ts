@@ -1,9 +1,26 @@
 import { existsSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, chmodSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Logger } from '../core/logger.js';
 
 const HOME = process.env.HOME || '/home/coral';
-const TEMPLATE_DIR = resolve(HOME, 'jarvis-skills', 'coding-work-flow', 'project-template');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Look for project-template relative to the package root (works for both npm install and source)
+function findTemplateDir(): string {
+  // When installed via npm: dist/commands/projectInit.js → ../../project-template
+  const npmPath = resolve(__dirname, '..', '..', 'project-template');
+  if (existsSync(npmPath)) return npmPath;
+  // When running from source repo: src/commands/ → ../../../project-template
+  const srcPath = resolve(__dirname, '..', '..', '..', 'project-template');
+  if (existsSync(srcPath)) return srcPath;
+  // Legacy fallback
+  const legacyPath = resolve(HOME, 'jarvis-skills', 'coding-work-flow', 'project-template');
+  if (existsSync(legacyPath)) return legacyPath;
+  return npmPath; // default, will fail gracefully below
+}
+
+const TEMPLATE_DIR = findTemplateDir();
 
 export async function executeProjectInit(
   project: string,

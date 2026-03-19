@@ -10,10 +10,12 @@ import { executeQaTick } from './commands/qaTick.js';
 import { executeMonitorTick } from './commands/monitorTick.js';
 import { executePmCommand } from './commands/pmCommand.js';
 import { executeCardAdd } from './commands/cardAdd.js';
+import { executeSetup } from './commands/setup.js';
 
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 
 const COMMANDS: Record<string, { desc: string; usage: string }> = {
+  setup:     { desc: 'Initial environment setup (credentials, directories)', usage: 'sps setup [--force]' },
   tick:      { desc: 'Run continuous pipeline (--once for single tick)', usage: 'sps tick <project> [--once]' },
   card:      { desc: 'Card management', usage: 'sps card add <project> "<title>" ["desc"]' },
   doctor:    { desc: 'Project health check', usage: 'sps doctor <project> [--json] [--skip-remote]' },
@@ -112,6 +114,12 @@ async function main() {
   if (args.flags.help || !args.command) {
     printHelp();
     process.exit(0);
+  }
+
+  // ─── setup ─────────────────────────────────────────────────
+  if (args.command === 'setup') {
+    await executeSetup(args.flags);
+    return;
   }
 
   // ─── tick (supports multiple projects) ──────────────────────
