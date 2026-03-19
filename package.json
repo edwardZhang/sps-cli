@@ -1,6 +1,6 @@
 {
   "name": "@coralai/sps-cli",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "SPS CLI — AI-driven development pipeline orchestrator",
   "type": "module",
   "main": "dist/main.js",
@@ -8,7 +8,7 @@
     "sps": "dist/main.js"
   },
   "scripts": {
-    "build": "tsc && cp -r ../project-template ./project-template 2>/dev/null || true",
+    "build": "tsc && rm -rf ./project-template && cp -r ../project-template ./project-template",
     "dev": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"

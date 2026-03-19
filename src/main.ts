@@ -12,7 +12,7 @@ import { executePmCommand } from './commands/pmCommand.js';
 import { executeCardAdd } from './commands/cardAdd.js';
 import { executeSetup } from './commands/setup.js';
 
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 
 const COMMANDS: Record<string, { desc: string; usage: string }> = {
   setup:     { desc: 'Initial environment setup (credentials, directories)', usage: 'sps setup [--force]' },
