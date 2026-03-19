@@ -26,7 +26,20 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
   const log = new Logger('setup', '');
   const prompt = createPrompt();
 
-  console.log('\n  SPS CLI — Initial Setup\n');
+  console.log('');
+  console.log('   ██████╗ ██████╗ ██████╗  █████╗ ██╗         ███████╗██████╗ ███████╗');
+  console.log('  ██╔════╝██╔═══██╗██╔══██╗██╔══██╗██║         ██╔════╝██╔══██╗██╔════╝');
+  console.log('  ██║     ██║   ██║██████╔╝███████║██║         ███████╗██████╔╝███████╗');
+  console.log('  ██║     ██║   ██║██╔══██╗██╔══██║██║         ╚════██║██╔═══╝ ╚════██║');
+  console.log('  ╚██████╗╚██████╔╝██║  ██║██║  ██║███████╗    ███████║██║     ███████║');
+  console.log('   ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝    ╚══════╝╚═╝     ╚══════╝');
+  console.log('');
+  console.log('  AI-Driven Development Pipeline Orchestrator');
+  console.log('  ──────────────────────────────────────────────────────────────────────');
+  console.log('  Automate the full dev lifecycle: task cards → AI coding → MR → merge.');
+  console.log('  Supports Plane/Trello/Markdown, GitLab, Claude Code/Codex, Matrix.');
+  console.log('  https://www.npmjs.com/package/@coralai/sps-cli');
+  console.log('');
 
   // ─── Step 1: ~/.projects directory ─────────────────────────────
   if (!existsSync(PROJECTS_DIR)) {
