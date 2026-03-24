@@ -297,6 +297,36 @@ export class GitLabRepoBackend implements RepoBackend {
   }
 
   // ---------------------------------------------------------------------------
+  // Worktree cleanup
+  // ---------------------------------------------------------------------------
+
+  async removeWorktree(repoDir: string, worktreePath: string, branch?: string): Promise<void> {
+    // Step 1: Remove the worktree directory
+    if (existsSync(worktreePath)) {
+      try {
+        this.git(['worktree', 'remove', '--force', worktreePath], repoDir);
+      } catch {
+        // Fallback: manual directory removal + prune
+        const { rmSync } = await import('node:fs');
+        rmSync(worktreePath, { recursive: true, force: true });
+        try { this.git(['worktree', 'prune'], repoDir); } catch { /* non-fatal */ }
+      }
+    } else {
+      // Path already gone — just prune stale references
+      try { this.git(['worktree', 'prune'], repoDir); } catch { /* non-fatal */ }
+    }
+
+    // Step 2: Delete local branch (only if already merged)
+    if (branch) {
+      try {
+        this.git(['branch', '-d', branch], repoDir);
+      } catch {
+        // Branch may not exist locally or not fully merged — skip
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Status mapping helpers (doc 12 §13.4)
   // ---------------------------------------------------------------------------
 

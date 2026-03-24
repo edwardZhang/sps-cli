@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ProjectContext } from '../core/context.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
@@ -43,31 +43,40 @@ export class ExecutionEngine {
     try {
       // 1. Process Inprogress cards (detect completion → move to QA)
       //    This runs first to free slots before launching new workers.
+      //    Completion detection does NOT consume action quota — it's a
+      //    prerequisite for freeing slots, not a new forward action.
       const inprogressCards = await this.taskBackend.listByState('Inprogress');
       for (const card of inprogressCards) {
         if (this.shouldSkip(card)) continue;
         const checkResult = await this.checkInprogressCard(card, opts);
         if (checkResult) {
           actions.push(checkResult);
-          if (checkResult.result === 'ok') actionsThisTick++;
+          // NOTE: intentionally not incrementing actionsThisTick here.
+          // Completion detection frees slots for new launches and should
+          // never block subsequent prepare/launch steps in the same tick.
         }
       }
 
       // 2. Process Backlog cards (prepare: branch + worktree + move to Todo)
+      //    Prepare does NOT consume launch quota — it only sets up the
+      //    environment. This allows prepare + launch to happen in a single tick.
       const backlogCards = await this.taskBackend.listByState('Backlog');
       for (const card of backlogCards) {
-        if (actionsThisTick >= maxActions) break;
         if (this.shouldSkip(card)) {
           actions.push({ action: 'skip', entity: `seq:${card.seq}`, result: 'skip', message: 'Has auxiliary state label' });
           continue;
         }
         const prepareResult = await this.prepareCard(card, opts);
         actions.push(prepareResult);
-        if (prepareResult.result === 'ok') actionsThisTick++;
+        // NOTE: prepare does not count toward actionsThisTick.
+        // It only creates branch + worktree + moves to Todo.
+        // The real throttle point is worker launch (step 3).
       }
 
       // 3. Process Todo cards (launch: claim + context + worker + move to Inprogress)
-      //    Stagger launches to avoid overwhelming tmux/system with simultaneous Claude starts
+      //    This is the only step that consumes action quota — it starts
+      //    resource-intensive AI workers that need system capacity.
+      //    Stagger launches to avoid overwhelming tmux/system.
       const todoCards = await this.taskBackend.listByState('Todo');
       let launchedThisTick = 0;
       const failedSlots = new Set<string>(); // track slots that failed launch this tick
@@ -550,8 +559,16 @@ export class ExecutionEngine {
   }
 
   /**
-   * Write worker rules and task prompt to worktree.
-   * Generates both CLAUDE.md (for Claude) and AGENTS.md (for Codex).
+   * Write task-specific prompt to worktree.
+   *
+   * CLAUDE.md and AGENTS.md are managed by `sps doctor --fix` and committed
+   * to the repo — worktrees inherit them automatically via git.
+   *
+   * The prompt file includes the project rules (from CLAUDE.md) followed by
+   * the task-specific details. This ensures that when a session is reused
+   * (WORKER_SESSION_REUSE=true), the worker always receives the latest
+   * project rules via tmux paste — even though /clear + cd does not
+   * trigger Claude/Codex to re-read CLAUDE.md from disk.
    */
   private buildTaskContext(card: Card, worktreePath: string): void {
     if (!existsSync(worktreePath)) {
@@ -559,45 +576,33 @@ export class ExecutionEngine {
     }
 
     const branchName = this.buildBranchName(card);
-    const workerRules = `# Task Rules (auto-generated, do not edit)
 
-## Scope
-- ONLY work in this directory: ${worktreePath}
-- Do NOT read or modify files outside this directory
-- Do NOT explore the system, home directory, or other projects
+    // Read project rules from CLAUDE.md (if exists)
+    const claudeMdPath = resolve(worktreePath, 'CLAUDE.md');
+    let projectRules = '';
+    if (existsSync(claudeMdPath)) {
+      projectRules = readFileSync(claudeMdPath, 'utf-8').trim();
+    } else {
+      this.log.warn(`CLAUDE.md not found in worktree — run: sps doctor ${this.ctx.projectName} --fix`);
+    }
 
-## Workflow
-1. Read the task description below
-2. Implement the changes in this directory
-3. Self-test your changes
-4. git add, commit, and push to branch: ${branchName}
-5. Create a Merge Request targeting ${this.ctx.mergeBranch}
-6. Output "done" when finished
+    // .jarvis_task_prompt.txt — project rules + task-specific prompt
+    // Sent to worker via tmux paste, ensuring rules are always fresh
+    const sections: string[] = [];
 
-## Commit Rules
-- Commit frequently (every meaningful change)
-- Push after each commit
-- Branch: ${branchName}
-- Use conventional commit messages (feat:, fix:, etc.)
+    if (projectRules) {
+      sections.push(projectRules);
+      sections.push('---');
+    }
 
-## MR Creation
-- Use git push first, then create MR via GitLab API:
-  curl -s -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" -H "Content-Type: application/json" \\
-    "$GITLAB_URL/api/v4/projects/${this.ctx.config.GITLAB_PROJECT_ID}/merge_requests" \\
-    -d '{"source_branch":"${branchName}","target_branch":"${this.ctx.mergeBranch}","title":"feat(${card.seq}): ${card.name}"}'
+    sections.push(`# Current Task
 
-## Forbidden
-- No PLAN.md, TODO.md, TASKLIST.md, ROADMAP.md, NOTES.md
-- No local planning files of any kind
-- No changes outside task scope
-- Do NOT explore ~/.projects or other system directories
-`;
-
-    // .jarvis_task_prompt.txt — task prompt
-    const taskPrompt = `Task ID: ${card.seq}
+Task ID: ${card.seq}
 Task: ${card.name}
 Branch: ${branchName}
+Target Branch: ${this.ctx.mergeBranch}
 Card Full ID: ${card.id}
+GitLab Project ID: ${this.ctx.config.GITLAB_PROJECT_ID}
 
 Description:
 ${card.desc || '(no description)'}
@@ -607,13 +612,12 @@ Requirements:
 2. Self-test your changes
 3. git add, commit, and push to branch ${branchName}
 4. Create a Merge Request targeting ${this.ctx.mergeBranch}
-5. Say "done" when finished
-`;
+5. Say "done" when finished`);
 
-    // Write both CLAUDE.md (for Claude) and AGENTS.md (for Codex)
-    writeFileSync(resolve(worktreePath, 'CLAUDE.md'), workerRules);
-    writeFileSync(resolve(worktreePath, 'AGENTS.md'), workerRules);
-    writeFileSync(resolve(worktreePath, '.jarvis_task_prompt.txt'), taskPrompt);
+    writeFileSync(
+      resolve(worktreePath, '.jarvis_task_prompt.txt'),
+      sections.join('\n\n') + '\n',
+    );
   }
 
   /**

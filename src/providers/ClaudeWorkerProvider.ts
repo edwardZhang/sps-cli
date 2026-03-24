@@ -306,21 +306,35 @@ export class ClaudeWorkerProvider implements WorkerProvider {
   }
 
   /**
-   * Stop the worker session.
-   * If WORKER_SESSION_REUSE is enabled, keep the session alive (just exit Claude).
-   * Otherwise, kill the entire tmux session.
+   * Release a worker session after task completion.
+   *
+   * WORKER_SESSION_REUSE=true:  do nothing — keep Claude running so the
+   *   next task can hot-reuse the session via /clear + cd (preserves
+   *   session state, env vars, loaded MCP servers, etc.).
+   *
+   * WORKER_SESSION_REUSE=false: exit Claude but keep tmux session alive
+   *   (next launch will restart Claude in the existing session).
+   */
+  async release(session: string): Promise<void> {
+    if (!sessionExists(session)) return;
+
+    if (this.config.WORKER_SESSION_REUSE) {
+      // Keep everything alive — next launch() will /clear + cd + send prompt
+      this.log.info(`Session ${session} kept alive for reuse`);
+      return;
+    }
+
+    // Exit Claude but keep tmux session
+    tmux(['send-keys', '-t', session, '/exit', 'Enter']);
+  }
+
+  /**
+   * Force-stop a worker session (error recovery, cleanup).
+   * Always exits Claude and kills the tmux session.
    */
   async stop(session: string): Promise<void> {
     if (!sessionExists(session)) return;
 
-    if (this.config.WORKER_SESSION_REUSE) {
-      // Keep session alive — just exit Claude, leave tmux running
-      tmux(['send-keys', '-t', session, '/exit', 'Enter']);
-      // Don't force kill — session will be reused
-      return;
-    }
-
-    // Full stop: exit Claude then kill session
     tmux(['send-keys', '-t', session, '/exit', 'Enter']);
     for (let i = 0; i < 5; i++) {
       await this.sleep(1_000);

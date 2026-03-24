@@ -287,16 +287,32 @@ export class CodexWorkerProvider implements WorkerProvider {
   }
 
   /**
-   * Stop Codex. Uses /quit (Codex's exit command, not /exit like Claude).
+   * Release a worker session after task completion.
+   *
+   * WORKER_SESSION_REUSE=true:  do nothing — keep Codex running so the
+   *   next task can hot-reuse the session via /clear + cd.
+   *
+   * WORKER_SESSION_REUSE=false: quit Codex but keep tmux session alive.
    */
-  async stop(session: string): Promise<void> {
+  async release(session: string): Promise<void> {
     if (!sessionExists(session)) return;
 
     if (this.config.WORKER_SESSION_REUSE) {
-      // Keep session, just quit Codex
-      tmux(['send-keys', '-t', session, '/quit', 'Enter']);
+      // Keep everything alive — next launch() will /clear + /cd + send prompt
+      process.stderr.write(`[codex-worker] Session ${session} kept alive for reuse\n`);
       return;
     }
+
+    // Quit Codex but keep tmux session
+    tmux(['send-keys', '-t', session, '/quit', 'Enter']);
+  }
+
+  /**
+   * Force-stop a worker session (error recovery, cleanup).
+   * Always quits Codex and kills the tmux session.
+   */
+  async stop(session: string): Promise<void> {
+    if (!sessionExists(session)) return;
 
     tmux(['send-keys', '-t', session, '/quit', 'Enter']);
     for (let i = 0; i < 5; i++) {

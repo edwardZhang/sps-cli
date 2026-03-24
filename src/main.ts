@@ -11,8 +11,9 @@ import { executeMonitorTick } from './commands/monitorTick.js';
 import { executePmCommand } from './commands/pmCommand.js';
 import { executeCardAdd } from './commands/cardAdd.js';
 import { executeSetup } from './commands/setup.js';
+import { executeWorkerDashboard } from './commands/workerDashboard.js';
 
-const VERSION = '0.8.1';
+const VERSION = '0.9.0';
 
 const COMMANDS: Record<string, { desc: string; usage: string }> = {
   setup:     { desc: 'Initial environment setup (credentials, directories)', usage: 'sps setup [--force]' },
@@ -21,7 +22,7 @@ const COMMANDS: Record<string, { desc: string; usage: string }> = {
   doctor:    { desc: 'Project health check', usage: 'sps doctor <project> [--json] [--skip-remote]' },
   scheduler: { desc: 'Planning → Backlog promotion', usage: 'sps scheduler <tick|inspect|validate> <project>' },
   pipeline:  { desc: 'Execution chain (Backlog → Todo → Inprogress)', usage: 'sps pipeline <tick|inspect> <project>' },
-  worker:    { desc: 'Worker lifecycle management', usage: 'sps worker <launch|release|inspect> <project> [seq|slot]' },
+  worker:    { desc: 'Worker lifecycle management', usage: 'sps worker <launch|release|inspect|dashboard> <project> [seq|slot]' },
   pm:        { desc: 'PM backend operations', usage: 'sps pm <scan|move|comment|checklist> <project> [args...]' },
   qa:        { desc: 'QA / closeout (QA → merge → Done)', usage: 'sps qa <tick|inspect> <project>' },
   monitor:   { desc: 'Anomaly detection and diagnostics', usage: 'sps monitor <tick|inspect-worker|inspect-card> <project>' },
@@ -195,6 +196,14 @@ async function main() {
       }
       const seq = args.positionals[0] || '';
       await executeWorkerLaunch(args.project, seq, args.flags);
+      return;
+    }
+    if (args.subcommand === 'dashboard') {
+      // Collect projects: project + positionals (all optional, auto-discovers if empty)
+      const projects: string[] = [];
+      if (args.project) projects.push(args.project);
+      projects.push(...args.positionals);
+      await executeWorkerDashboard(projects, args.flags);
       return;
     }
   }

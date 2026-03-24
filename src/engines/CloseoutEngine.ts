@@ -5,6 +5,7 @@ import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { CommandResult, ActionRecord, Card, RecommendedAction } from '../models/types.js';
 import { readState, writeState } from '../core/state.js';
+import { resolveWorktreePath } from '../core/paths.js';
 import { Logger } from '../core/logger.js';
 
 /**
@@ -52,35 +53,34 @@ export class CloseoutEngine {
       if (qaCards.length === 0) {
         this.log.info('No QA cards to process');
         result.details = { reason: 'no_qa_cards' };
-        return result;
-      }
+      } else {
+        this.log.info(`Processing ${qaCards.length} QA card(s)`);
 
-      this.log.info(`Processing ${qaCards.length} QA card(s)`);
+        for (const card of qaCards) {
+          // Skip cards with BLOCKED label
+          if (card.labels.includes('BLOCKED')) {
+            this.log.debug(`Skipping seq ${card.seq}: BLOCKED`);
+            actions.push({
+              action: 'skip',
+              entity: `seq:${card.seq}`,
+              result: 'skip',
+              message: 'Card is BLOCKED',
+            });
+            continue;
+          }
 
-      for (const card of qaCards) {
-        // Skip cards with BLOCKED label
-        if (card.labels.includes('BLOCKED')) {
-          this.log.debug(`Skipping seq ${card.seq}: BLOCKED`);
-          actions.push({
-            action: 'skip',
-            entity: `seq:${card.seq}`,
-            result: 'skip',
-            message: 'Card is BLOCKED',
-          });
-          continue;
-        }
-
-        try {
-          await this.processQaCard(card, actions, recommendedActions);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          this.log.error(`Unexpected error processing seq ${card.seq}: ${msg}`);
-          actions.push({
-            action: 'closeout',
-            entity: `seq:${card.seq}`,
-            result: 'fail',
-            message: `Unexpected error: ${msg}`,
-          });
+          try {
+            await this.processQaCard(card, actions, recommendedActions);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.log.error(`Unexpected error processing seq ${card.seq}: ${msg}`);
+            actions.push({
+              action: 'closeout',
+              entity: `seq:${card.seq}`,
+              result: 'fail',
+              message: `Unexpected error: ${msg}`,
+            });
+          }
         }
       }
     } catch (err) {
@@ -90,6 +90,9 @@ export class CloseoutEngine {
       result.exitCode = 1;
       result.details = { error: msg };
     }
+
+    // Always run worktree cleanup — independent of QA card processing
+    await this.cleanupWorktrees(actions);
 
     if (actions.some((a) => a.result === 'fail') && result.status === 'ok') {
       result.status = 'degraded';
@@ -467,28 +470,28 @@ export class CloseoutEngine {
       this.log.debug(`seq ${seq}: No active worker slot found (already released)`);
     }
 
-    // Step 4: Stop worker session
+    // Step 4: Release worker session (keeps session alive for reuse if configured)
     if (sessionName) {
       try {
-        await this.workerProvider.stop(sessionName);
-        this.log.ok(`seq ${seq}: Worker session ${sessionName} stopped`);
+        await this.workerProvider.release(sessionName);
+        this.log.ok(`seq ${seq}: Worker session ${sessionName} released`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.log.error(`seq ${seq}: Failed to stop session: ${msg}`);
-        errors.push(`stop-session: ${msg}`);
+        this.log.error(`seq ${seq}: Failed to release session: ${msg}`);
+        errors.push(`release-session: ${msg}`);
       }
     }
 
-    // Step 5: Mark worktree for cleanup (don't delete immediately)
-    // We record it in state metadata; actual cleanup is a separate concern
+    // Step 5: Mark worktree for cleanup (actual removal runs at end of tick)
     try {
       const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
       const branchName = this.buildBranchName(card);
-      const stateAny = freshState as unknown as Record<string, unknown>;
-      const worktreeCleanup = (stateAny.worktreeCleanup as string[]) || [];
-      if (!worktreeCleanup.includes(branchName)) {
-        worktreeCleanup.push(branchName);
-        stateAny.worktreeCleanup = worktreeCleanup;
+      const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
+      const cleanup = freshState.worktreeCleanup ?? [];
+      const alreadyMarked = cleanup.some((e) => e.branch === branchName);
+      if (!alreadyMarked) {
+        cleanup.push({ branch: branchName, worktreePath, markedAt: new Date().toISOString() });
+        freshState.worktreeCleanup = cleanup;
         writeState(this.ctx.paths.stateFile, freshState, 'closeout-worktree-mark');
       }
       this.log.ok(`seq ${seq}: Worktree marked for cleanup`);
@@ -612,6 +615,56 @@ export class CloseoutEngine {
       this.log.error(`seq ${seq}: L2 conflict resolution failed: ${msg}`);
       return false;
     }
+  }
+
+  // ─── Worktree Cleanup ──────────────────────────────────────────
+
+  /**
+   * Process the worktreeCleanup queue: remove worktree directories and
+   * delete local branches that have been merged.
+   *
+   * Each entry is processed independently — one failure does not block others.
+   */
+  private async cleanupWorktrees(actions: ActionRecord[]): Promise<void> {
+    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const queue = state.worktreeCleanup ?? [];
+    if (queue.length === 0) return;
+
+    this.log.info(`Cleaning up ${queue.length} worktree(s)`);
+    const remaining: typeof queue = [];
+
+    for (const entry of queue) {
+      try {
+        await this.repoBackend.removeWorktree(
+          this.ctx.paths.repoDir,
+          entry.worktreePath,
+          entry.branch,
+        );
+        this.log.ok(`Cleaned up worktree: ${entry.branch}`);
+        actions.push({
+          action: 'worktree-cleanup',
+          entity: entry.branch,
+          result: 'ok',
+          message: `Removed worktree ${entry.worktreePath}`,
+        });
+        this.logEvent('worktree-cleanup', entry.branch, 'ok');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.warn(`Failed to clean up worktree ${entry.branch}: ${msg}`);
+        remaining.push(entry); // retry next tick
+        actions.push({
+          action: 'worktree-cleanup',
+          entity: entry.branch,
+          result: 'fail',
+          message: `Cleanup failed: ${msg}`,
+        });
+      }
+    }
+
+    // Update state with remaining entries
+    const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    freshState.worktreeCleanup = remaining;
+    writeState(this.ctx.paths.stateFile, freshState, 'closeout-worktree-cleanup');
   }
 
   // ─── Helpers ───────────────────────────────────────────────────

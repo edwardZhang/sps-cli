@@ -20,6 +20,12 @@ export interface ActiveCardState {
   startedAt: string;
 }
 
+export interface WorktreeCleanupEntry {
+  branch: string;
+  worktreePath: string;
+  markedAt: string;
+}
+
 export interface RuntimeState {
   version: number;
   generation: number;
@@ -27,6 +33,7 @@ export interface RuntimeState {
   updatedBy: string;
   workers: Record<string, WorkerSlotState>;
   activeCards: Record<string, ActiveCardState>;
+  worktreeCleanup: WorktreeCleanupEntry[];
 }
 
 function defaultState(maxWorkers: number): RuntimeState {
@@ -49,6 +56,7 @@ function defaultState(maxWorkers: number): RuntimeState {
     updatedBy: 'init',
     workers,
     activeCards: {},
+    worktreeCleanup: [],
   };
 }
 

@@ -74,11 +74,15 @@ export class SchedulerEngine {
       }
 
       // 4. Walk ordered list and promote eligible cards
+      //    Scheduler promotion (Planning → Backlog) is lightweight — it only
+      //    changes card state in PM. The real throttle is in ExecutionEngine
+      //    which launches actual workers. We allow promoting up to
+      //    MAX_CONCURRENT_WORKERS cards per tick so the pipeline stays fed.
       let actionsThisTick = 0;
-      const maxActions = this.ctx.config.MAX_ACTIONS_PER_TICK;
+      const maxPromotions = this.ctx.config.MAX_CONCURRENT_WORKERS;
 
       for (const seq of orderedSeqs) {
-        if (actionsThisTick >= maxActions) break;
+        if (actionsThisTick >= maxPromotions) break;
 
         // Check admission rules
         const skipReason = this.checkAdmission(state);
@@ -184,13 +188,21 @@ export class SchedulerEngine {
 
   /**
    * Check conflict domain constraints for a specific card.
+   *
+   * Only Inprogress cards are considered as blocking — QA and Done cards
+   * are about to be released and should not prevent new cards from entering
+   * the pipeline. This avoids the stall where a card in QA (waiting for
+   * CI/merge) blocks the next card from being scheduled.
    */
   private checkConflictDomain(
     card: Card,
     state: import('../core/state.js').RuntimeState,
   ): string | null {
-    const activeCards = Object.values(state.activeCards);
-    if (activeCards.length === 0) return null;
+    // Only consider cards that are actively being worked on (have a worker assigned)
+    const inprogressCards = Object.values(state.activeCards).filter(
+      (ac) => ac.state === 'Inprogress' || ac.state === 'Todo',
+    );
+    if (inprogressCards.length === 0) return null;
 
     const cardDomains = card.labels
       .filter((l) => l.startsWith('conflict:'))
@@ -203,7 +215,7 @@ export class SchedulerEngine {
       return null;
     }
 
-    for (const active of activeCards) {
+    for (const active of inprogressCards) {
       for (const domain of cardDomains) {
         if (active.conflictDomains.includes(domain)) {
           return `conflict_domain_collision:${domain}:seq:${active.seq}`;

@@ -11,4 +11,5 @@ export interface RepoBackend {
   mergeMr(iid: number): Promise<{ merged: boolean; error?: string }>;
   detectMerged(branch: string): Promise<boolean>;
   rebase(worktree: string, baseBranch: string): Promise<{ success: boolean; conflictFiles?: string[] }>;
+  removeWorktree(repoDir: string, worktreePath: string, branch?: string): Promise<void>;
 }
