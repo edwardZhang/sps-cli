@@ -726,18 +726,30 @@ export class ExecutionEngine {
       : `Merge your changes into ${this.ctx.mergeBranch}`;
 
     const requirements = [
+      '0. BEFORE coding, read these files if they exist (project knowledge from previous tasks):',
+      '   - docs/DECISIONS.md — architecture decisions and tech choices',
+      '   - docs/CHANGELOG.md — recent changes by previous workers',
+      '',
       '1. Implement the changes described above',
       '2. Self-test your changes (run existing tests if any, ensure no regressions)',
-      `3. git add, commit, and push to branch ${branchName}`,
-      `4. ${mergeStepDesc} by running:`,
+      '3. Update project knowledge (create docs/ dir if needed):',
+      '   - If you made architecture/design choices, append to docs/DECISIONS.md:',
+      `     ## [${card.seq}-${card.name}] ${new Date().toISOString().slice(0, 10)}`,
+      '     - Decision: ...',
+      '     - Reason: ...',
+      '   - Append a summary of your changes to docs/CHANGELOG.md:',
+      `     ## [${card.seq}-${card.name}] ${new Date().toISOString().slice(0, 10)}`,
+      '     - What changed and why',
+      `4. git add, commit, and push to branch ${branchName}`,
+      `5. ${mergeStepDesc} by running:`,
       '   ```bash',
       '   bash .jarvis/merge.sh',
       '   ```',
-      '5. Verify the script output shows success, then say "done"',
+      '6. Verify the script output shows success, then say "done"',
     ];
 
     requirements.push('');
-    requirements.push('IMPORTANT: You MUST complete ALL steps above. Step 4 (bash .jarvis/merge.sh) is MANDATORY — just pushing code is NOT enough. After completing, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, docker compose up, or any dev server / watch mode).');
+    requirements.push('IMPORTANT: You MUST complete ALL steps above. Step 5 (bash .jarvis/merge.sh) is MANDATORY — just pushing code is NOT enough. After completing, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, docker compose up, or any dev server / watch mode).');
 
     sections.push(`# Current Task
 
