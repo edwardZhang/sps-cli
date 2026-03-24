@@ -28,6 +28,8 @@ export interface ActiveCardState {
   mrUrl: string | null;
   conflictDomains: string[];
   startedAt: string;
+  /** Number of times this card has been auto-retried */
+  retryCount?: number;
 }
 
 export interface WorktreeCleanupEntry {

@@ -113,6 +113,10 @@ export interface ProjectConfig {
   WORKER_SESSION_REUSE: boolean;
   MAX_ACTIONS_PER_TICK: number;
 
+  // Worker health
+  WORKER_LAUNCH_TIMEOUT_S: number;
+  WORKER_IDLE_TIMEOUT_M: number;
+
   // Timeouts & policies
   INPROGRESS_TIMEOUT_HOURS: number;
   MONITOR_AUTO_QA: boolean;
@@ -192,6 +196,9 @@ export function loadProjectConf(projectName: string): ProjectConfig {
     AUTOFIX_ATTEMPTS: parseInt(raw.AUTOFIX_ATTEMPTS || '2', 10),
     WORKER_SESSION_REUSE: raw.WORKER_SESSION_REUSE !== 'false',
     MAX_ACTIONS_PER_TICK: parseInt(raw.MAX_ACTIONS_PER_TICK || '1', 10),
+
+    WORKER_LAUNCH_TIMEOUT_S: parseInt(raw.WORKER_LAUNCH_TIMEOUT_S || '120', 10),
+    WORKER_IDLE_TIMEOUT_M: parseInt(raw.WORKER_IDLE_TIMEOUT_M || '15', 10),
 
     INPROGRESS_TIMEOUT_HOURS: parseInt(raw.INPROGRESS_TIMEOUT_HOURS || '8', 10),
     MONITOR_AUTO_QA: raw.MONITOR_AUTO_QA === 'true',

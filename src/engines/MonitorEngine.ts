@@ -4,6 +4,7 @@ import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { CommandResult, ActionRecord, CheckResult, RecommendedAction } from '../models/types.js';
+import { existsSync, statSync } from 'node:fs';
 import { readState, writeState } from '../core/state.js';
 import { Logger } from '../core/logger.js';
 
@@ -46,6 +47,9 @@ export class MonitorEngine {
     };
 
     try {
+      // 0. Worker health check (print-mode: launch timeout, idle timeout, auto-retry)
+      await this.checkWorkerHealth(checks, actions);
+
       // 1. Orphan slot cleanup
       await this.checkOrphanSlots(checks, actions);
 
@@ -577,6 +581,216 @@ export class MonitorEngine {
         ? `${discrepancies.length} state alignment discrepancy(ies)`
         : 'State aligned with runtime',
     });
+  }
+
+  // ─── Check 0: Worker Health (print-mode auto-recovery) ────────
+
+  private async checkWorkerHealth(
+    checks: CheckResult[],
+    actions: ActionRecord[],
+  ): Promise<void> {
+    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    let issues = 0;
+
+    for (const [slotName, slotState] of Object.entries(state.workers)) {
+      if (slotState.status !== 'active' || slotState.mode !== 'print') continue;
+      if (!slotState.pid || !slotState.outputFile || !slotState.claimedAt) continue;
+
+      // Check if PID is alive
+      let pidAlive: boolean;
+      try {
+        process.kill(slotState.pid, 0);
+        pidAlive = true;
+      } catch {
+        pidAlive = false;
+      }
+
+      if (!pidAlive) {
+        // PID dead → auto-retry
+        const seq = slotState.seq != null ? String(slotState.seq) : null;
+        if (seq) {
+          this.log.warn(`Worker health: ${slotName} pid ${slotState.pid} is dead, auto-retrying seq ${seq}`);
+          await this.autoRetry(seq, slotName, state, actions, 'Worker process died');
+          issues++;
+        }
+        continue;
+      }
+
+      // PID alive — check output health
+      const nowMs = Date.now();
+      const claimedMs = new Date(slotState.claimedAt).getTime();
+      const elapsedS = (nowMs - claimedMs) / 1000;
+
+      let outputSize = 0;
+      let outputMtimeMs = 0;
+      if (existsSync(slotState.outputFile)) {
+        try {
+          const st = statSync(slotState.outputFile);
+          outputSize = st.size;
+          outputMtimeMs = st.mtimeMs;
+        } catch { /* ignore */ }
+      }
+
+      const launchTimeout = this.ctx.config.WORKER_LAUNCH_TIMEOUT_S;
+      const idleTimeout = this.ctx.config.WORKER_IDLE_TIMEOUT_M * 60 * 1000;
+
+      // Launch timeout: process alive but no output after N seconds
+      if (outputSize === 0 && elapsedS > launchTimeout) {
+        const seq = slotState.seq != null ? String(slotState.seq) : null;
+        if (seq) {
+          this.log.warn(
+            `Worker health: ${slotName} has no output after ${Math.round(elapsedS)}s, killing and retrying seq ${seq}`,
+          );
+          this.killWorker(slotState.pid);
+          await this.autoRetry(seq, slotName, state, actions, `No output after ${Math.round(elapsedS)}s`);
+          issues++;
+        }
+        continue;
+      }
+
+      // Idle timeout: process alive but no new output for N minutes
+      if (outputSize > 0 && outputMtimeMs > 0) {
+        const idleSinceMs = nowMs - outputMtimeMs;
+        if (idleSinceMs > idleTimeout) {
+          const seq = slotState.seq != null ? String(slotState.seq) : null;
+          if (seq) {
+            const idleMin = Math.round(idleSinceMs / 60000);
+            this.log.warn(
+              `Worker health: ${slotName} no output for ${idleMin}min, killing and retrying seq ${seq}`,
+            );
+            this.killWorker(slotState.pid);
+            await this.autoRetry(seq, slotName, state, actions, `No output for ${idleMin}min`);
+            issues++;
+          }
+        }
+      }
+    }
+
+    checks.push({
+      name: 'worker-health',
+      status: issues > 0 ? 'warn' : 'pass',
+      message: issues > 0
+        ? `${issues} worker health issue(s) resolved via auto-retry`
+        : 'All active workers healthy',
+    });
+  }
+
+  private killWorker(pid: number): void {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch { /* already dead */ }
+    // Give it a moment, then force kill
+    try {
+      process.kill(pid, 0); // check alive
+      process.kill(pid, 'SIGKILL');
+    } catch { /* dead */ }
+  }
+
+  private async autoRetry(
+    seq: string,
+    slotName: string,
+    state: import('../core/state.js').RuntimeState,
+    actions: ActionRecord[],
+    reason: string,
+  ): Promise<void> {
+    const restartLimit = this.ctx.config.WORKER_RESTART_LIMIT;
+
+    // Get retry count from activeCards
+    const activeCard = state.activeCards[seq];
+    const retryCount = activeCard?.retryCount ?? 0;
+
+    // Release the slot
+    state.workers[slotName] = {
+      status: 'idle',
+      seq: null,
+      branch: null,
+      worktree: null,
+      tmuxSession: null,
+      claimedAt: null,
+      lastHeartbeat: null,
+      mode: null,
+      sessionId: null,
+      pid: null,
+      outputFile: null,
+      exitCode: null,
+    };
+    delete state.activeCards[seq];
+
+    if (retryCount < restartLimit) {
+      // Move back to Todo for re-launch on next tick
+      try {
+        await this.taskBackend.move(seq, 'Todo');
+        await this.removeLabelSafe(seq, 'CLAIMED');
+        await this.removeLabelSafe(seq, 'STALE-RUNTIME');
+
+        // Track retry count — store in a fresh activeCards entry
+        state.activeCards[seq] = {
+          seq: parseInt(seq, 10),
+          state: 'Todo',
+          worker: null,
+          mrUrl: null,
+          conflictDomains: activeCard?.conflictDomains ?? [],
+          startedAt: activeCard?.startedAt ?? new Date().toISOString(),
+          retryCount: retryCount + 1,
+        };
+
+        writeState(this.ctx.paths.stateFile, state, 'monitor-auto-retry');
+
+        const attempt = retryCount + 1;
+        this.log.ok(`seq ${seq}: Auto-retry ${attempt}/${restartLimit} — moved back to Todo (${reason})`);
+        await this.notifySafe(
+          `seq:${seq} auto-retry ${attempt}/${restartLimit} — ${reason}`,
+          'warning',
+        );
+        actions.push({
+          action: 'auto-retry',
+          entity: `seq:${seq}`,
+          result: 'ok',
+          message: `Auto-retry ${attempt}/${restartLimit}: ${reason}`,
+        });
+        this.logEvent('auto-retry', seq, 'ok', { attempt, reason });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.error(`seq ${seq}: Auto-retry failed: ${msg}`);
+        writeState(this.ctx.paths.stateFile, state, 'monitor-auto-retry-fail');
+        actions.push({
+          action: 'auto-retry',
+          entity: `seq:${seq}`,
+          result: 'fail',
+          message: `Auto-retry failed: ${msg}`,
+        });
+      }
+    } else {
+      // Retry limit reached — mark as BLOCKED
+      writeState(this.ctx.paths.stateFile, state, 'monitor-retry-exhausted');
+      try {
+        await this.addLabelSafe(seq, 'BLOCKED');
+        await this.taskBackend.move(seq, 'Todo');
+        await this.taskBackend.comment(
+          seq,
+          `Auto-retry limit reached (${restartLimit}). Last failure: ${reason}. Needs manual intervention.`,
+        );
+      } catch { /* best effort */ }
+
+      this.log.error(`seq ${seq}: Retry limit reached (${restartLimit}), marked BLOCKED`);
+      await this.notifySafe(
+        `seq:${seq} retry limit reached (${restartLimit}x) — marked BLOCKED, needs manual review`,
+        'error',
+      );
+      actions.push({
+        action: 'retry-exhausted',
+        entity: `seq:${seq}`,
+        result: 'ok',
+        message: `Retry limit ${restartLimit} reached: ${reason}`,
+      });
+      this.logEvent('retry-exhausted', seq, 'ok', { retryCount, reason });
+    }
+  }
+
+  private async removeLabelSafe(seq: string, label: string): Promise<void> {
+    try {
+      await this.taskBackend.removeLabel(seq, label);
+    } catch { /* best effort */ }
   }
 
   // ─── Helpers ───────────────────────────────────────────────────
