@@ -34,6 +34,9 @@ const CODEX_MODEL_LINE = /codex.*default.*·/i;
 /** Codex update blocker pattern */
 const CODEX_UPDATE_PROMPT = /Update available|Skip until next version/i;
 
+/** Codex rate-limit model switch prompt */
+const CODEX_RATE_LIMIT_PROMPT = /rate limit|Switch to .+codex-mini|Keep current model/i;
+
 /**
  * Run a tmux command. Returns null on failure.
  */
@@ -169,6 +172,14 @@ export class CodexWorkerProvider implements WorkerProvider {
         continue;
       }
 
+      // Handle rate-limit model switch prompt — select "Keep current model"
+      if (CODEX_RATE_LIMIT_PROMPT.test(text)) {
+        process.stderr.write('[codex-worker] Detected rate-limit model switch prompt, keeping current model\n');
+        this.dismissRateLimitPrompt(session);
+        await this.sleep(3_000);
+        continue;
+      }
+
       // Check if Codex is ready: › prompt + model info line
       if (CODEX_MODEL_LINE.test(text) && CODEX_READY.test(text)) {
         process.stderr.write('[codex-worker] Codex ready\n');
@@ -227,6 +238,13 @@ export class CodexWorkerProvider implements WorkerProvider {
       return { waiting: true, destructive: false, prompt: 'Codex update prompt' };
     }
 
+    // Rate-limit model switch prompt — auto-dismiss
+    if (CODEX_RATE_LIMIT_PROMPT.test(pane)) {
+      process.stderr.write('[codex-worker] Auto-dismissing rate-limit model switch prompt\n');
+      this.dismissRateLimitPrompt(session);
+      return { waiting: false, destructive: false, prompt: '' }; // handled, not waiting
+    }
+
     return { waiting: false, destructive: false, prompt: '' };
   }
 
@@ -244,10 +262,16 @@ export class CodexWorkerProvider implements WorkerProvider {
       return 'COMPLETED';
     }
 
-    // Priority 2: check for update prompt (needs auto-skip, not completion)
+    // Priority 2: check for interactive prompts (needs auto-skip, not completion)
     const pane = capturePaneText(session, 20);
     if (CODEX_UPDATE_PROMPT.test(pane)) {
       return 'NEEDS_INPUT'; // will trigger auto-confirm to skip update
+    }
+    if (CODEX_RATE_LIMIT_PROMPT.test(pane)) {
+      // Auto-dismiss and report ALIVE (not completed, not blocked)
+      process.stderr.write('[codex-worker] Rate-limit prompt detected during completion check, dismissing\n');
+      this.dismissRateLimitPrompt(session);
+      return 'ALIVE';
     }
 
     // Priority 3: completion keywords + back at › prompt
@@ -324,6 +348,27 @@ export class CodexWorkerProvider implements WorkerProvider {
 
   async collectSummary(session: string): Promise<string> {
     return capturePaneText(session, 100);
+  }
+
+  /**
+   * Dismiss the rate-limit model switch prompt by selecting "Keep current model".
+   *
+   * The prompt shows:
+   *   › 1. Switch to gpt-5.1-codex-mini
+   *     2. Keep current model
+   *     3. Keep current model (never show again)
+   *
+   * Strategy: press Down once to select option 2, then Enter.
+   */
+  private dismissRateLimitPrompt(session: string): void {
+    // Navigate to "Keep current model" (option 2)
+    tmux(['send-keys', '-t', session, 'Down']);
+    // Small delay to let the UI register the selection
+    tmux(['send-keys', '-t', session, '']);
+    // Confirm selection
+    setTimeout(() => {
+      tmux(['send-keys', '-t', session, 'Enter']);
+    }, 500);
   }
 
   private sleep(ms: number): Promise<void> {
