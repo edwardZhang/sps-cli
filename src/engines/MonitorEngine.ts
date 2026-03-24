@@ -91,50 +91,68 @@ export class MonitorEngine {
     for (const [slotName, slotState] of Object.entries(state.workers)) {
       if (slotState.status !== 'active' || !slotState.tmuxSession) continue;
 
-      try {
-        const inspection = await this.workerProvider.inspect(slotState.tmuxSession);
-        if (!inspection.alive) {
-          // Session/process dead but slot still active → orphan
+      // Print mode: check PID liveness directly instead of inspect()
+      if (slotState.mode === 'print' && slotState.pid) {
+        try {
+          process.kill(slotState.pid, 0); // signal 0 = check alive
+          continue; // PID alive → not orphan
+        } catch {
+          // PID dead → fall through to orphan cleanup
           this.log.warn(
-            `Orphan slot ${slotName}: session ${slotState.tmuxSession} is dead, releasing`,
+            `Orphan slot ${slotName}: print-mode pid ${slotState.pid} is dead, releasing`,
           );
-
-          state.workers[slotName] = {
-            status: 'idle',
-            seq: null,
-            branch: null,
-            worktree: null,
-            tmuxSession: null,
-            claimedAt: null,
-            lastHeartbeat: null,
-            mode: null,
-            sessionId: null,
-            pid: null,
-            outputFile: null,
-            exitCode: null,
-          };
-
-          // Remove from active cards if present
-          if (slotState.seq != null) {
-            delete state.activeCards[String(slotState.seq)];
-          }
-
-          orphansFound++;
-          actions.push({
-            action: 'orphan-cleanup',
-            entity: `slot:${slotName}`,
-            result: 'ok',
-            message: `Released orphan slot (session ${slotState.tmuxSession} dead)`,
-          });
-          this.logEvent('orphan-cleanup', slotName, 'ok', {
-            session: slotState.tmuxSession,
-            seq: slotState.seq,
-          });
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.log.warn(`Failed to inspect session ${slotState.tmuxSession}: ${msg}`);
+      } else if (slotState.mode === 'print' && !slotState.pid) {
+        // Print mode but no PID recorded — skip, launch may still be writing state
+        this.log.debug(`Skipping orphan check for ${slotName}: print mode, no PID yet`);
+        continue;
+      } else {
+        // Tmux mode: use inspect()
+        try {
+          const inspection = await this.workerProvider.inspect(slotState.tmuxSession);
+          if (inspection.alive) continue; // alive → not orphan
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.log.warn(`Failed to inspect session ${slotState.tmuxSession}: ${msg}`);
+          continue; // can't determine → skip
+        }
+        this.log.warn(
+          `Orphan slot ${slotName}: session ${slotState.tmuxSession} is dead, releasing`,
+        );
       }
+
+      // Orphan cleanup (shared for both modes)
+      state.workers[slotName] = {
+        status: 'idle',
+        seq: null,
+        branch: null,
+        worktree: null,
+        tmuxSession: null,
+        claimedAt: null,
+        lastHeartbeat: null,
+        mode: null,
+        sessionId: null,
+        pid: null,
+        outputFile: null,
+        exitCode: null,
+      };
+
+      // Remove from active cards if present
+      if (slotState.seq != null) {
+        delete state.activeCards[String(slotState.seq)];
+      }
+
+      orphansFound++;
+      actions.push({
+        action: 'orphan-cleanup',
+        entity: `slot:${slotName}`,
+        result: 'ok',
+        message: `Released orphan slot (${slotState.mode === 'print' ? `pid ${slotState.pid}` : `session ${slotState.tmuxSession}`} dead)`,
+      });
+      this.logEvent('orphan-cleanup', slotName, 'ok', {
+        session: slotState.tmuxSession,
+        seq: slotState.seq,
+      });
     }
 
     if (orphansFound > 0) {
