@@ -203,58 +203,61 @@ export class MonitorEngine {
       const [, slotState] = slotEntry;
       if (!slotState.tmuxSession) continue;
 
-      // Print mode: check PID liveness directly
+      // Determine if worker is alive
+      let workerAlive: boolean;
+
       if (slotState.mode === 'print') {
+        // Print mode: check PID liveness directly (no tmux session)
         if (slotState.pid) {
           try {
             process.kill(slotState.pid, 0);
-            continue; // PID alive → worker still running, not stale
+            workerAlive = true;
           } catch {
-            // PID dead — fall through to stale detection
+            workerAlive = false;
           }
         } else {
           continue; // No PID yet, skip
         }
+      } else {
+        // Interactive mode: use inspect()
+        try {
+          const inspection = await this.workerProvider.inspect(slotState.tmuxSession);
+          workerAlive = inspection.alive;
+        } catch {
+          continue; // Can't determine, skip
+        }
       }
 
-      try {
-        const inspection = await this.workerProvider.inspect(slotState.tmuxSession);
-        if (!inspection.alive) {
-          // Session dead + card still Inprogress
-          const branchName = slotState.branch || this.buildBranchName(card);
-          const mrStatus = await this.repoBackend.getMrStatus(branchName);
+      if (!workerAlive) {
+        // Worker dead + card still Inprogress → check if MR exists
+        const branchName = slotState.branch || this.buildBranchName(card);
+        const mrStatus = await this.repoBackend.getMrStatus(branchName);
 
-          if (mrStatus.exists) {
-            // Dead session + MR exists → stale runtime
-            this.log.warn(
-              `seq ${card.seq}: Worker session dead but MR exists — stale runtime`,
-            );
-            await this.handleStaleRuntime(card, actions, recommendedActions);
-            staleCount++;
-          } else {
-            // Dead session + no MR → worker died before completing
-            this.log.warn(`seq ${card.seq}: Worker session dead, no MR found`);
-            await this.addLabelSafe(card.seq, 'STALE-RUNTIME');
-            actions.push({
-              action: 'mark-stale',
-              entity: `seq:${card.seq}`,
-              result: 'ok',
-              message: 'Worker dead, no MR — needs manual review',
-            });
-            recommendedActions.push({
-              action: `Review seq:${card.seq} — worker died without creating MR`,
-              reason: 'Worker session dead with no MR',
-              severity: 'warning',
-              autoExecutable: false,
-              requiresConfirmation: true,
-              safeToRetry: false,
-            });
-            staleCount++;
-          }
+        if (mrStatus.exists) {
+          this.log.warn(
+            `seq ${card.seq}: Worker dead but MR exists — stale runtime`,
+          );
+          await this.handleStaleRuntime(card, actions, recommendedActions);
+          staleCount++;
+        } else {
+          this.log.warn(`seq ${card.seq}: Worker dead, no MR found`);
+          await this.addLabelSafe(card.seq, 'STALE-RUNTIME');
+          actions.push({
+            action: 'mark-stale',
+            entity: `seq:${card.seq}`,
+            result: 'ok',
+            message: 'Worker dead, no MR — needs manual review',
+          });
+          recommendedActions.push({
+            action: `Review seq:${card.seq} — worker died without creating MR`,
+            reason: 'Worker dead with no MR',
+            severity: 'warning',
+            autoExecutable: false,
+            requiresConfirmation: true,
+            safeToRetry: false,
+          });
+          staleCount++;
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.log.warn(`Failed to inspect session for seq ${card.seq}: ${msg}`);
       }
     }
 
@@ -406,6 +409,8 @@ export class MonitorEngine {
 
     for (const [slotName, slotState] of Object.entries(state.workers)) {
       if (slotState.status !== 'active' || !slotState.tmuxSession) continue;
+      // Print mode workers use --dangerously-skip-permissions, never wait for input
+      if (slotState.mode === 'print') continue;
 
       try {
         const waitResult = await this.workerProvider.detectWaiting(slotState.tmuxSession);
@@ -520,17 +525,34 @@ export class MonitorEngine {
     for (const [slotName, slotState] of Object.entries(state.workers)) {
       if (slotState.status !== 'active' || !slotState.tmuxSession) continue;
 
-      try {
-        const inspection = await this.workerProvider.inspect(slotState.tmuxSession);
-        if (!inspection.alive) {
-          discrepancies.push(
-            `${slotName}: state says active but session ${slotState.tmuxSession} is dead`,
-          );
+      let alive: boolean;
+      if (slotState.mode === 'print') {
+        // Print mode: check PID directly
+        if (!slotState.pid) continue; // No PID yet, skip
+        try {
+          process.kill(slotState.pid, 0);
+          alive = true;
+        } catch {
+          alive = false;
         }
-      } catch {
-        discrepancies.push(
-          `${slotName}: could not inspect session ${slotState.tmuxSession}`,
-        );
+      } else {
+        // Interactive mode: check tmux session
+        try {
+          const inspection = await this.workerProvider.inspect(slotState.tmuxSession);
+          alive = inspection.alive;
+        } catch {
+          discrepancies.push(
+            `${slotName}: could not inspect session ${slotState.tmuxSession}`,
+          );
+          continue;
+        }
+      }
+
+      if (!alive) {
+        const desc = slotState.mode === 'print'
+          ? `pid ${slotState.pid} is dead`
+          : `session ${slotState.tmuxSession} is dead`;
+        discrepancies.push(`${slotName}: state says active but ${desc}`);
       }
     }
 

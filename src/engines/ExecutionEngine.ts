@@ -456,8 +456,9 @@ export class ExecutionEngine {
     }
 
     // Prefer slot with live session (Claude still running → context reuse)
+    // Only applies to interactive (tmux) mode — print mode workers are one-shot processes
     let slotEntry = idleSlots[0];
-    if (this.ctx.config.WORKER_SESSION_REUSE) {
+    if (this.ctx.config.WORKER_SESSION_REUSE && this.ctx.config.WORKER_MODE !== 'print') {
       for (const entry of idleSlots) {
         const [name] = entry;
         const sessionName = `${this.ctx.projectName}-${name}`;
