@@ -176,7 +176,7 @@ export function loadProjectConf(projectName: string): ProjectConfig {
 
     PIPELINE_LABEL: raw.PIPELINE_LABEL,
     PIPELINE_ORDER_FILE: raw.PIPELINE_ORDER_FILE,
-    CI_MODE: (raw.CI_MODE as ProjectConfig['CI_MODE']) || 'gitlab',
+    CI_MODE: (raw.CI_MODE as ProjectConfig['CI_MODE']) || 'none',
 
     WORKER_TOOL: (raw.WORKER_TOOL as ProjectConfig['WORKER_TOOL']) || 'claude',
     WORKER_MODE: (raw.WORKER_MODE as ProjectConfig['WORKER_MODE']) || 'print',

@@ -644,6 +644,32 @@ export class ExecutionEngine {
       sections.push('---');
     }
 
+    // Build requirements based on CI mode
+    const ciMode = this.ctx.config.CI_MODE;
+    const hasCI = ciMode === 'gitlab' || ciMode === 'local';
+
+    const requirements = [
+      '1. Implement the changes described above',
+      '2. Self-test your changes (run existing tests if any, ensure no regressions)',
+      `3. git add, commit, and push to branch ${branchName}`,
+      `4. Create a Merge Request targeting ${this.ctx.mergeBranch}`,
+    ];
+
+    if (hasCI) {
+      // CI configured — Worker creates MR, pipeline handles CI wait + merge
+      requirements.push('5. Say "done" when finished');
+      requirements.push('');
+      requirements.push('NOTE: CI pipeline will run automatically after you push. Do NOT wait for CI — just create the MR and say "done". The pipeline will handle CI monitoring and auto-merge.');
+    } else {
+      // No CI — Worker should merge the MR itself after verifying
+      requirements.push('5. Verify the MR can be merged (no conflicts)');
+      requirements.push('6. Merge the MR via GitLab API or git merge');
+      requirements.push('7. Say "done" when finished');
+    }
+
+    requirements.push('');
+    requirements.push('IMPORTANT: After completing, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, python -m http.server, docker compose up, or any dev server / watch mode). These block the pipeline.');
+
     sections.push(`# Current Task
 
 Task ID: ${card.seq}
@@ -652,18 +678,13 @@ Branch: ${branchName}
 Target Branch: ${this.ctx.mergeBranch}
 Card Full ID: ${card.id}
 GitLab Project ID: ${this.ctx.config.GITLAB_PROJECT_ID}
+CI Mode: ${ciMode}
 
 Description:
 ${card.desc || '(no description)'}
 
 Requirements:
-1. Implement the changes described above
-2. Self-test your changes
-3. git add, commit, and push to branch ${branchName}
-4. Create a Merge Request targeting ${this.ctx.mergeBranch}
-5. Say "done" when finished
-
-IMPORTANT: After creating the MR, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, python -m http.server, docker compose up, or any dev server / watch mode). These block the pipeline.`);
+${requirements.join('\n')}`);
 
     writeFileSync(
       resolve(worktreePath, '.jarvis_task_prompt.txt'),
