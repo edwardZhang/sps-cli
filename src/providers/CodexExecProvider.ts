@@ -5,8 +5,8 @@
  * Uses `codex exec resume <sessionId>` for context continuity.
  */
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync, createWriteStream } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, mkdirSync, createWriteStream } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 import type { ProjectConfig } from '../core/config.js';
 import type { WorkerProvider, LaunchResult } from '../interfaces/WorkerProvider.js';
 import type { WorkerStatus } from '../models/types.js';
@@ -228,8 +228,6 @@ export class CodexExecProvider implements WorkerProvider {
     resumeSessionId?: string,
   ): LaunchResult {
     // Ensure output directory exists
-    const { mkdirSync } = require('node:fs');
-    const { dirname } = require('node:path');
     try { mkdirSync(dirname(outputFile), { recursive: true }); } catch { /* exists */ }
 
     const outStream = createWriteStream(outputFile, { flags: 'a' });

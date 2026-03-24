@@ -4,8 +4,9 @@
 if (typeof globalThis.fetch === 'undefined') {
   try {
     // Node 16.15+ / 18+ have undici bundled; use it as polyfill
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const undici = require('undici') as Record<string, unknown>;
+    const { createRequire: _cr } = await import('node:module');
+    const _req = _cr(import.meta.url);
+    const undici = _req('undici') as Record<string, unknown>;
     Object.assign(globalThis, {
       fetch: undici.fetch,
       Request: undici.Request,

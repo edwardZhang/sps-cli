@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import type { ProjectConfig } from '../core/config.js';
 import type { WorkerProvider, LaunchResult } from '../interfaces/WorkerProvider.js';
 import type { WorkerStatus } from '../models/types.js';
@@ -37,7 +37,6 @@ function tmux(args: string[]): string | null {
       // Stale tmux socket — clean up and retry
       try {
         const uid = process.getuid?.() ?? 1000;
-        const { rmSync } = require('node:fs');
         rmSync(`/tmp/tmux-${uid}`, { recursive: true, force: true });
         process.stderr.write('[worker] Cleaned stale tmux socket, retrying\n');
         return execFileSync('tmux', args, {
