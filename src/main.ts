@@ -33,7 +33,9 @@ import { executeCardAdd } from './commands/cardAdd.js';
 import { executeSetup } from './commands/setup.js';
 import { executeWorkerDashboard } from './commands/workerDashboard.js';
 
-const VERSION = '0.10.2';
+import { createRequire } from 'node:module';
+const _require = createRequire(import.meta.url);
+const VERSION: string = (_require('../package.json') as { version: string }).version;
 
 const COMMANDS: Record<string, { desc: string; usage: string }> = {
   setup:     { desc: 'Initial environment setup (credentials, directories)', usage: 'sps setup [--force]' },
