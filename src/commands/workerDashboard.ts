@@ -337,8 +337,8 @@ function renderDashboard(projects: string[]): string {
   const gridRows = Math.ceil(panels.length / gridCols);
   const panelWidth = Math.floor((termWidth - 1) / gridCols); // -1 for spacing
   const usedHeaderRows = output.length;
-  const availableRows = termHeight - usedHeaderRows - 2; // -2 for footer
-  const panelHeight = Math.max(10, Math.floor(availableRows / gridRows));
+  const availableRows = termHeight - usedHeaderRows - 1; // -1 for safety
+  const panelHeight = Math.max(6, Math.floor(availableRows / gridRows));
 
   // Render panels row by row
   for (let row = 0; row < gridRows; row++) {
@@ -361,6 +361,11 @@ function renderDashboard(projects: string[]): string {
         .join(' ');
       output.push(merged);
     }
+  }
+
+  // Truncate to terminal height to prevent scrolling
+  if (output.length > termHeight) {
+    output.length = termHeight;
   }
 
   return output.join('\n');
