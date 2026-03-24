@@ -132,17 +132,28 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
   // 8. Remote checks (optional)
   if (!flags['skip-remote']) {
     // GitLab connectivity
+    // Uses curl -sk to tolerate self-signed certificates common in self-hosted GitLab.
     const gitlabUrl = ctx.config.raw.GITLAB_URL;
     const gitlabToken = ctx.config.raw.GITLAB_TOKEN;
     if (gitlabUrl && gitlabToken) {
       try {
-        execSync(
-          `curl -sf -o /dev/null -w '%{http_code}' -H "PRIVATE-TOKEN: ${gitlabToken}" "${gitlabUrl}/api/v4/projects/${ctx.config.GITLAB_PROJECT_ID}"`,
-          { timeout: 10000, encoding: 'utf-8' }
-        );
-        checks.push({ name: 'gitlab', status: 'pass', message: `Connected to ${gitlabUrl}` });
-      } catch {
-        checks.push({ name: 'gitlab', status: 'fail', message: `Cannot reach GitLab at ${gitlabUrl}` });
+        const httpCode = execSync(
+          `curl -sk -o /dev/null -w '%{http_code}' -H "PRIVATE-TOKEN: ${gitlabToken}" "${gitlabUrl}/api/v4/projects/${encodeURIComponent(ctx.config.GITLAB_PROJECT_ID)}"`,
+          { timeout: 15000, encoding: 'utf-8' }
+        ).trim();
+        const code = parseInt(httpCode, 10);
+        if (code >= 200 && code < 400) {
+          checks.push({ name: 'gitlab', status: 'pass', message: `Connected to ${gitlabUrl} (HTTP ${code})` });
+        } else {
+          checks.push({ name: 'gitlab', status: 'fail', message: `GitLab returned HTTP ${code} at ${gitlabUrl}` });
+        }
+      } catch (err) {
+        const stderr = (err as { stderr?: string }).stderr ?? '';
+        const hint = stderr.includes('resolve') ? ' (DNS resolution failed)'
+          : stderr.includes('connect') ? ' (connection refused)'
+          : stderr.includes('timeout') ? ' (connection timed out)'
+          : '';
+        checks.push({ name: 'gitlab', status: 'fail', message: `Cannot reach GitLab at ${gitlabUrl}${hint}` });
       }
     } else {
       checks.push({ name: 'gitlab', status: 'skip', message: 'GITLAB_URL or GITLAB_TOKEN not configured' });
@@ -157,11 +168,16 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
       if (planeUrl && planeKey && planeWorkspace && planeProjectId) {
         try {
           const apiUrl = `${planeUrl}/api/v1/workspaces/${planeWorkspace}/projects/${planeProjectId}/`;
-          execSync(
-            `curl -sf -o /dev/null -w '%{http_code}' -H "X-API-Key: ${planeKey}" "${apiUrl}"`,
-            { timeout: 10000, encoding: 'utf-8' }
-          );
-          checks.push({ name: 'plane', status: 'pass', message: `Connected to ${planeUrl}` });
+          const httpCode = execSync(
+            `curl -sk -o /dev/null -w '%{http_code}' -H "X-API-Key: ${planeKey}" "${apiUrl}"`,
+            { timeout: 15000, encoding: 'utf-8' }
+          ).trim();
+          const code = parseInt(httpCode, 10);
+          if (code >= 200 && code < 400) {
+            checks.push({ name: 'plane', status: 'pass', message: `Connected to ${planeUrl} (HTTP ${code})` });
+          } else {
+            checks.push({ name: 'plane', status: 'fail', message: `Plane returned HTTP ${code} at ${planeUrl}` });
+          }
         } catch {
           checks.push({ name: 'plane', status: 'fail', message: `Cannot reach Plane at ${planeUrl}` });
         }
