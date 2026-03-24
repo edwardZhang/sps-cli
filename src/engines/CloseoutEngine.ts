@@ -186,7 +186,29 @@ export class CloseoutEngine {
       return;
     }
 
-    // Check CI status
+    // Determine effective CI mode:
+    // - CI_MODE=none → no CI, skip checks
+    // - CI_MODE=gitlab/local but ciStatus=unknown (no pipeline) → treat as no CI
+    const noCi = this.ctx.ciMode === 'none'
+      || (mrStatus.ciStatus === 'unknown' && mrStatus.iid != null);
+
+    if (noCi) {
+      // No CI configured or no pipeline on this MR → go straight to merge
+      this.log.info(`seq ${seq}: No CI (mode=${this.ctx.ciMode}, ciStatus=${mrStatus.ciStatus}), proceeding to merge`);
+      if (mrStatus.iid != null) {
+        await this.attemptMerge(card, mrStatus.iid, actions);
+      } else {
+        actions.push({
+          action: 'skip',
+          entity: `seq:${seq}`,
+          result: 'skip',
+          message: 'No CI, but MR has no iid',
+        });
+      }
+      return;
+    }
+
+    // CI exists — check status
     switch (mrStatus.ciStatus) {
       case 'running':
       case 'pending':
@@ -209,7 +231,6 @@ export class CloseoutEngine {
         if (mrStatus.mergeStatus === 'can_be_merged' && mrStatus.iid != null) {
           await this.attemptMerge(card, mrStatus.iid, actions);
         } else if (mrStatus.mergeStatus === 'checking') {
-          // Merge status still being determined → skip
           this.log.debug(`seq ${seq}: merge status is 'checking', waiting`);
           actions.push({
             action: 'skip',
@@ -218,7 +239,6 @@ export class CloseoutEngine {
             message: 'Merge status checking',
           });
         } else {
-          // Unknown merge status with CI success
           this.log.warn(`seq ${seq}: CI passed but merge status is ${mrStatus.mergeStatus}`);
           recommendedActions.push({
             action: `Check MR merge status for seq:${seq}`,
@@ -238,31 +258,14 @@ export class CloseoutEngine {
         return;
 
       default:
-        // CI status unknown — check CI_MODE
-        if (this.ctx.ciMode === 'none') {
-          // No CI configured — treat as success, attempt merge
-          if (mrStatus.mergeStatus === 'can_be_merged' && mrStatus.iid != null) {
-            await this.attemptMerge(card, mrStatus.iid, actions);
-          } else if (mrStatus.iid != null) {
-            // CI_MODE=none + unknown merge status → still attempt merge
-            await this.attemptMerge(card, mrStatus.iid, actions);
-          } else {
-            actions.push({
-              action: 'skip',
-              entity: `seq:${seq}`,
-              result: 'skip',
-              message: 'No CI, but MR has no iid',
-            });
-          }
-        } else {
-          this.log.debug(`seq ${seq}: CI status is ${mrStatus.ciStatus}, skipping`);
-          actions.push({
-            action: 'skip',
-            entity: `seq:${seq}`,
-            result: 'skip',
-            message: `CI status unknown: ${mrStatus.ciStatus}`,
-          });
-        }
+        // Unexpected CI status
+        this.log.debug(`seq ${seq}: CI status is ${mrStatus.ciStatus}, skipping`);
+        actions.push({
+          action: 'skip',
+          entity: `seq:${seq}`,
+          result: 'skip',
+          message: `CI status unexpected: ${mrStatus.ciStatus}`,
+        });
         return;
     }
   }
