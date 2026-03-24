@@ -143,9 +143,30 @@ export async function executePmCommand(
         break;
       }
 
+      case 'label': {
+        const action = positionals[0]; // add, remove
+        const seq = positionals[1];
+        const label = positionals[2];
+        if (!action || !seq || !label) {
+          console.error('Usage: sps pm label <add|remove> <project> <seq> <label>');
+          process.exit(2);
+        }
+        if (action === 'add') {
+          await taskBackend.addLabel(seq, label);
+          log.ok(`Added label "${label}" to seq ${seq}`);
+        } else if (action === 'remove') {
+          await taskBackend.removeLabel(seq, label);
+          log.ok(`Removed label "${label}" from seq ${seq}`);
+        } else {
+          console.error(`Unknown label action: ${action}. Use: add, remove`);
+          process.exit(2);
+        }
+        break;
+      }
+
       default:
         console.error(`Unknown pm subcommand: ${subcommand}`);
-        console.error('Available: scan, move, comment, checklist');
+        console.error('Available: scan, move, comment, checklist, label');
         process.exit(2);
     }
   } catch (err) {
