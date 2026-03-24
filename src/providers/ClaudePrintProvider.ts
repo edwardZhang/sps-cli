@@ -119,9 +119,9 @@ export class ClaudePrintProvider implements WorkerProvider {
       return 'COMPLETED';
     }
 
-    // Resolve process info — in-memory or state.json fallback
+    // Resolve process info — in-memory AND state.json (need both)
     const proc = activeProcesses.get(session);
-    const slotInfo = !proc ? this.findSlotBySession(session) : null;
+    const slotInfo = this.findSlotBySession(session);
     const pid = proc?.child.pid ?? slotInfo?.pid ?? 0;
     const outputFile = proc?.outputFile ?? slotInfo?.outputFile ?? null;
     const exitCode = proc?.exitCode ?? slotInfo?.exitCode ?? null;

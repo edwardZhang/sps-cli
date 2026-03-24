@@ -182,19 +182,27 @@ export function extractLastAssistantText(filePath: string): string {
     for (const line of lines) {
       try {
         const obj = JSON.parse(line);
-        // Claude stream-json assistant content messages
+        // Claude stream-json: assistant messages have content as array of blocks
+        if (obj.type === 'assistant' && Array.isArray(obj.message?.content)) {
+          for (const block of obj.message.content) {
+            if (block.type === 'text' && typeof block.text === 'string') {
+              lastText = block.text;
+            }
+          }
+        }
+        // Claude stream-json: assistant messages may have content as string (older format)
         if (obj.type === 'assistant' && typeof obj.message?.content === 'string') {
           lastText = obj.message.content;
         }
-        // Also check result type
+        // Result type (session end)
         if (obj.type === 'result' && typeof obj.result === 'string') {
           lastText = obj.result;
         }
-        // Content block text
+        // Content block delta (streaming)
         if (obj.type === 'content_block_delta' && obj.delta?.text) {
           lastText += obj.delta.text;
         }
-      } catch { /* skip */ }
+      } catch { /* skip non-JSON lines */ }
     }
     return lastText;
   } catch {
