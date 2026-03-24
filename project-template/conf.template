@@ -42,25 +42,25 @@ export PLANE_STATE_DONE="__PLANE_STATE_DONE__"
 export PLANE_STATE_CANCELLED="__PLANE_STATE_CANCELLED__"
 
 # ── Pipeline 筛选（可选）────────────────────────────────────────
-export PIPELINE_LABEL="__PIPELINE_LABEL__"
+export PIPELINE_LABEL="AI-PIPELINE"
 export PIPELINE_ORDER_FILE="$HOME/.projects/__PROJECT_NAME__/pipeline_order.json"
 
 # ── CI ───────────────────────────────────────────────────────────
-export CI_MODE="__CI_MODE__"
+export CI_MODE="none"
 
 # ── 前端构建 ─────────────────────────────────────────────────────
-export HAS_FRONTEND="__HAS_FRONTEND__"
-export FRONTEND_DIR="__FRONTEND_DIR__"
+# export HAS_FRONTEND="false"
+# export FRONTEND_DIR=""
 
 # ── 部署 ─────────────────────────────────────────────────────────
-export DEPLOY_ENABLED="__DEPLOY_ENABLED__"
+# export DEPLOY_ENABLED="false"
 export DEPLOY_SCRIPT="$HOME/.projects/__PROJECT_NAME__/deploy.sh"
 
 # ── Worker / Agent ───────────────────────────────────────────────
-export WORKER_TOOL="__WORKER_TOOL__"
-export MAX_CONCURRENT_WORKERS=__MAX_CONCURRENT_WORKERS__
-export WORKER_RESTART_LIMIT=__WORKER_RESTART_LIMIT__
-export AUTOFIX_ATTEMPTS=__AUTOFIX_ATTEMPTS__
+export WORKER_TOOL="claude"
+export MAX_CONCURRENT_WORKERS=3
+export WORKER_RESTART_LIMIT=2
+export AUTOFIX_ATTEMPTS=2
 export WORKER_SESSION_REUSE=true
 export MAX_ACTIONS_PER_TICK=1
 

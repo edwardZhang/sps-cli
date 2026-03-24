@@ -162,6 +162,13 @@ export function loadProjectConf(projectName: string): ProjectConfig {
   const envPath = resolve(process.env.HOME || '~', '.jarvis.env');
   const raw = sourceCombinedConf(envPath, confPath);
 
+  // Strip unreplaced template placeholders (__FOO__) — treat as empty
+  for (const key of Object.keys(raw)) {
+    if (raw[key] && /^__[A-Z_]+__$/.test(raw[key])) {
+      raw[key] = '';
+    }
+  }
+
   return {
     PROJECT_NAME: raw.PROJECT_NAME || projectName,
     PROJECT_DISPLAY: raw.PROJECT_DISPLAY || raw.PROJECT_NAME || projectName,
