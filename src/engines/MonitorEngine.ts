@@ -203,6 +203,20 @@ export class MonitorEngine {
       const [, slotState] = slotEntry;
       if (!slotState.tmuxSession) continue;
 
+      // Print mode: check PID liveness directly
+      if (slotState.mode === 'print') {
+        if (slotState.pid) {
+          try {
+            process.kill(slotState.pid, 0);
+            continue; // PID alive → worker still running, not stale
+          } catch {
+            // PID dead — fall through to stale detection
+          }
+        } else {
+          continue; // No PID yet, skip
+        }
+      }
+
       try {
         const inspection = await this.workerProvider.inspect(slotState.tmuxSession);
         if (!inspection.alive) {
