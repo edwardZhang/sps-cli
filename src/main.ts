@@ -34,6 +34,7 @@ import { executeCardAdd } from './commands/cardAdd.js';
 import { executeSetup } from './commands/setup.js';
 import { executeWorkerDashboard } from './commands/workerDashboard.js';
 import { executeLogs } from './commands/logs.js';
+import { executeStop } from './commands/stop.js';
 
 import { createRequire } from 'node:module';
 const _require = createRequire(import.meta.url);
@@ -52,6 +53,7 @@ const COMMANDS: Record<string, { desc: string; usage: string }> = {
   monitor:   { desc: 'Anomaly detection and diagnostics', usage: 'sps monitor <tick|inspect-worker|inspect-card> <project>' },
   project:   { desc: 'Project init and validation', usage: 'sps project <init|doctor|validate|paths> <project>' },
   logs:      { desc: 'Real-time log viewer (pm2-style)', usage: 'sps logs [project] [--err] [--lines N] [--no-follow]' },
+  stop:      { desc: 'Stop running tick process', usage: 'sps stop <project> [--all]' },
 };
 
 function printHelp() {
@@ -171,6 +173,15 @@ async function main() {
     const linesIdx = process.argv.indexOf('--lines');
     const initialLines = linesIdx >= 0 ? parseInt(process.argv[linesIdx + 1] || '20', 10) : 20;
     await executeLogs(projects, args.flags, initialLines);
+    return;
+  }
+
+  // ─── stop ──────────────────────────────────────────────────────
+  if (args.command === 'stop') {
+    const projects: string[] = [];
+    if (args.project) projects.push(args.project);
+    projects.push(...args.positionals);
+    await executeStop(projects, args.flags);
     return;
   }
 
