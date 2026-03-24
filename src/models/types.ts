@@ -21,7 +21,9 @@ export type WorkerStatus =
   | 'AUTO_CONFIRM'
   | 'BLOCKED'
   | 'DEAD'
-  | 'DEAD_EXCEEDED';
+  | 'DEAD_EXCEEDED'
+  /** Process exited (code 0) but no artifacts found (no commits/MR). Worker gave up or hit token limit. */
+  | 'EXITED_INCOMPLETE';
 
 /** MR status from repo backend */
 export interface MrStatus {

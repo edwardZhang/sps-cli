@@ -3,6 +3,7 @@
  * Handles output file tailing, session ID parsing, and process inspection.
  */
 import { readFileSync, existsSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 /**
  * Read the last N lines from a file efficiently.
@@ -122,6 +123,50 @@ export async function killProcessGroup(pid: number, timeoutMs = 5_000): Promise<
   // Force kill
   try { process.kill(-pid, 'SIGKILL'); } catch { /* ignore */ }
   try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
+}
+
+// ─── Git Artifact Verification ─────────────────────────────────────
+
+/**
+ * Check if a branch has commits ahead of a base branch.
+ * This is the most reliable signal that the worker actually did work.
+ *
+ * Returns the number of commits ahead, or -1 on error.
+ */
+export function branchCommitsAhead(worktree: string, branch: string, baseBranch: string): number {
+  try {
+    // Fetch latest remote state (best-effort, may fail offline)
+    try {
+      execFileSync('git', ['-C', worktree, 'fetch', 'origin', '--quiet'], {
+        timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch { /* offline or no remote — ok, use local state */ }
+
+    const output = execFileSync(
+      'git',
+      ['-C', worktree, 'rev-list', '--count', `origin/${baseBranch}..${branch}`],
+      { encoding: 'utf-8', timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] },
+    ).trim();
+    return parseInt(output, 10) || 0;
+  } catch {
+    return -1; // git error
+  }
+}
+
+/**
+ * Check if branch has been pushed to remote (remote tracking ref exists).
+ */
+export function branchPushed(worktree: string, branch: string): boolean {
+  try {
+    execFileSync(
+      'git',
+      ['-C', worktree, 'rev-parse', '--verify', `origin/${branch}`],
+      { encoding: 'utf-8', timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

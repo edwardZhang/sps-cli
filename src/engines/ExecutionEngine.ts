@@ -307,10 +307,26 @@ export class ExecutionEngine {
         return { action: 'mark-blocked', entity: `seq:${seq}`, result: 'ok', message: 'Worker blocked' };
       }
 
+      case 'EXITED_INCOMPLETE': {
+        // Worker exited gracefully (exit 0) but produced no artifacts.
+        // Likely hit token/budget limit or gave up.
+        // Mark NEEDS-FIX so it can be retried or investigated.
+        this.log.warn(`seq ${seq}: Worker exited without completing (no commits/MR found)`);
+        try {
+          await this.taskBackend.addLabel(seq, 'NEEDS-FIX');
+          await this.taskBackend.comment(seq, 'Worker exited without completing the task (no commits or MR found). May need retry or manual intervention.');
+        } catch { /* best effort */ }
+        if (this.notifier) {
+          await this.notifier.sendWarning(`[${this.ctx.projectName}] seq:${seq} worker exited incomplete — no artifacts`).catch(() => {});
+        }
+        this.logEvent('exited-incomplete', seq, 'ok');
+        return { action: 'mark-needs-fix', entity: `seq:${seq}`, result: 'ok', message: 'Worker exited without artifacts (NEEDS-FIX)' };
+      }
+
       case 'DEAD':
       case 'DEAD_EXCEEDED': {
-        // Worker session died — MonitorEngine handles STALE-RUNTIME in detail
-        this.log.warn(`seq ${seq}: Worker session dead (${workerStatus})`);
+        // Worker session/process died — MonitorEngine handles STALE-RUNTIME in detail
+        this.log.warn(`seq ${seq}: Worker dead (${workerStatus})`);
         return null; // defer to MonitorEngine
       }
 

@@ -15,7 +15,10 @@ import {
   parseCodexSessionId,
   isProcessAlive,
   killProcessGroup,
+  branchCommitsAhead,
+  branchPushed,
 } from './outputParser.js';
+import { readState } from '../core/state.js';
 
 /** Completion indicators. */
 const COMPLETION_KEYWORDS =
@@ -71,38 +74,75 @@ export class CodexExecProvider implements WorkerProvider {
     exitCode?: number;
   }> {
     const proc = activeProcesses.get(session);
-    if (!proc) {
-      return { alive: false, paneText: '', pid: undefined, exitCode: undefined };
+    if (proc) {
+      const pid = proc.child.pid ?? 0;
+      const alive = pid > 0 && isProcessAlive(pid);
+      return {
+        alive,
+        paneText: tailFile(proc.outputFile, 50),
+        pid,
+        exitCode: proc.exitCode ?? undefined,
+      };
     }
 
-    const pid = proc.child.pid ?? 0;
-    const alive = pid > 0 && isProcessAlive(pid);
-    const paneText = tailFile(proc.outputFile, 50);
+    // Fallback: recover from state.json
+    const slotInfo = this.findSlotBySession(session);
+    if (slotInfo?.pid) {
+      const alive = isProcessAlive(slotInfo.pid);
+      const paneText = slotInfo.outputFile ? tailFile(slotInfo.outputFile, 50) : '';
+      return {
+        alive,
+        paneText,
+        pid: slotInfo.pid,
+        exitCode: alive ? undefined : (slotInfo.exitCode ?? undefined),
+      };
+    }
 
-    return { alive, paneText, pid, exitCode: proc.exitCode ?? undefined };
+    return { alive: false, paneText: '', pid: undefined, exitCode: undefined };
   }
 
   async detectCompleted(
     session: string,
     logDir: string,
-    _branch: string,
+    branch: string,
   ): Promise<WorkerStatus> {
     const markerPath = `${logDir}/task_completed`;
     if (existsSync(markerPath)) {
       return 'COMPLETED';
     }
 
+    // Resolve process info — in-memory or state.json fallback
     const proc = activeProcesses.get(session);
-    if (!proc) return 'DEAD';
+    const slotInfo = !proc ? this.findSlotBySession(session) : null;
+    const pid = proc?.child.pid ?? slotInfo?.pid ?? 0;
+    const exitCode = proc?.exitCode ?? slotInfo?.exitCode ?? null;
 
-    const pid = proc.child.pid ?? 0;
+    if (!pid && !proc) {
+      return 'DEAD';
+    }
+
+    // Process still running
     if (pid > 0 && isProcessAlive(pid)) {
       return 'ALIVE';
     }
 
-    // Process exited
-    if (proc.exitCode === 0) {
-      return 'COMPLETED';
+    // Process exited — verify with git artifacts
+    const worktree = slotInfo?.worktree ?? null;
+    const baseBranch = this.config.GITLAB_MERGE_BRANCH;
+
+    if (worktree && branch) {
+      const pushed = branchPushed(worktree, branch);
+      const commitsAhead = pushed
+        ? branchCommitsAhead(worktree, branch, baseBranch)
+        : 0;
+
+      if (pushed && commitsAhead > 0) {
+        return 'COMPLETED';
+      }
+    }
+
+    if (exitCode === 0) {
+      return 'EXITED_INCOMPLETE';
     }
 
     return 'DEAD';
@@ -251,6 +291,42 @@ export class CodexExecProvider implements WorkerProvider {
     const proc = activeProcesses.get(session);
     if (!proc) return null;
     return parseCodexSessionId(proc.outputFile);
+  }
+
+  /**
+   * Look up worker slot info from state.json by tmuxSession name.
+   * Fallback when activeProcesses map is empty (SPS restarted).
+   */
+  private findSlotBySession(session: string): {
+    pid: number | null;
+    outputFile: string | null;
+    exitCode: number | null;
+    sessionId: string | null;
+    worktree: string | null;
+  } | null {
+    try {
+      const stateFile = resolve(
+        process.env.HOME || '~',
+        '.projects',
+        this.config.PROJECT_NAME,
+        'runtime',
+        'state.json',
+      );
+      if (!existsSync(stateFile)) return null;
+      const state = readState(stateFile, this.config.MAX_CONCURRENT_WORKERS);
+      for (const slot of Object.values(state.workers)) {
+        if (slot.tmuxSession === session && slot.mode === 'print') {
+          return {
+            pid: slot.pid ?? null,
+            outputFile: slot.outputFile ?? null,
+            exitCode: slot.exitCode ?? null,
+            sessionId: slot.sessionId ?? null,
+            worktree: slot.worktree ?? null,
+          };
+        }
+      }
+    } catch { /* state read error */ }
+    return null;
   }
 
   private log(msg: string): void {

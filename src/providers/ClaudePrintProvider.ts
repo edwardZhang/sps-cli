@@ -16,7 +16,10 @@ import {
   isProcessAlive,
   killProcessGroup,
   extractLastAssistantText,
+  branchCommitsAhead,
+  branchPushed,
 } from './outputParser.js';
+import { readState } from '../core/state.js';
 
 /** Completion indicators in the final assistant message. */
 const COMPLETION_KEYWORDS =
@@ -76,27 +79,39 @@ export class ClaudePrintProvider implements WorkerProvider {
     pid?: number;
     exitCode?: number;
   }> {
+    // Try in-memory tracking first
     const proc = activeProcesses.get(session);
-    if (!proc) {
-      return { alive: false, paneText: '', pid: undefined, exitCode: undefined };
+    if (proc) {
+      const pid = proc.child.pid ?? 0;
+      const alive = pid > 0 && isProcessAlive(pid);
+      return {
+        alive,
+        paneText: tailFile(proc.outputFile, 50),
+        pid,
+        exitCode: proc.exitCode ?? undefined,
+      };
     }
 
-    const pid = proc.child.pid ?? 0;
-    const alive = pid > 0 && isProcessAlive(pid);
-    const paneText = tailFile(proc.outputFile, 50);
+    // Fallback: recover from state.json (SPS process may have restarted)
+    const slotInfo = this.findSlotBySession(session);
+    if (slotInfo?.pid) {
+      const alive = isProcessAlive(slotInfo.pid);
+      const paneText = slotInfo.outputFile ? tailFile(slotInfo.outputFile, 50) : '';
+      return {
+        alive,
+        paneText,
+        pid: slotInfo.pid,
+        exitCode: alive ? undefined : (slotInfo.exitCode ?? undefined),
+      };
+    }
 
-    return {
-      alive,
-      paneText,
-      pid,
-      exitCode: proc.exitCode ?? undefined,
-    };
+    return { alive: false, paneText: '', pid: undefined, exitCode: undefined };
   }
 
   async detectCompleted(
     session: string,
     logDir: string,
-    _branch: string,
+    branch: string,
   ): Promise<WorkerStatus> {
     // Priority 1: marker file
     const markerPath = `${logDir}/task_completed`;
@@ -104,32 +119,62 @@ export class ClaudePrintProvider implements WorkerProvider {
       return 'COMPLETED';
     }
 
+    // Resolve process info — in-memory or state.json fallback
     const proc = activeProcesses.get(session);
-    if (!proc) {
-      // No tracked process — treat as dead
+    const slotInfo = !proc ? this.findSlotBySession(session) : null;
+    const pid = proc?.child.pid ?? slotInfo?.pid ?? 0;
+    const outputFile = proc?.outputFile ?? slotInfo?.outputFile ?? null;
+    const exitCode = proc?.exitCode ?? slotInfo?.exitCode ?? null;
+
+    if (!pid && !proc) {
+      // No process tracked at all — treat as dead
       return 'DEAD';
     }
 
-    const pid = proc.child.pid ?? 0;
-    const alive = pid > 0 && isProcessAlive(pid);
-
-    if (alive) {
+    // Priority 2: process still running
+    if (pid > 0 && isProcessAlive(pid)) {
       return 'ALIVE';
     }
 
-    // Process has exited — check exit code + output
-    if (proc.exitCode === 0) {
-      // Verify completion by checking output for success indicators
-      const lastText = extractLastAssistantText(proc.outputFile);
+    // ── Process has exited — verify with artifacts ──
+    // The key question: did the worker actually complete the task?
+    // Exit code 0 alone is NOT enough — worker may have:
+    //   - Hit token/budget limit and exited gracefully
+    //   - Said "I can't do this" and exited
+    //   - Completed coding but not pushed / not created MR
+
+    // Check git artifacts: branch pushed with commits ahead of base
+    const worktree = slotInfo?.worktree ?? null;
+    const baseBranch = this.config.GITLAB_MERGE_BRANCH;
+
+    if (worktree && branch) {
+      const pushed = branchPushed(worktree, branch);
+      const commitsAhead = pushed
+        ? branchCommitsAhead(worktree, branch, baseBranch)
+        : 0;
+
+      if (pushed && commitsAhead > 0) {
+        // Branch has been pushed with new commits — worker did real work.
+        // ExecutionEngine will additionally check MR existence before moving to QA.
+        return 'COMPLETED';
+      }
+    }
+
+    // Check output text for completion keywords as secondary signal
+    if (outputFile) {
+      const lastText = extractLastAssistantText(outputFile);
       if (COMPLETION_KEYWORDS.test(lastText)) {
         return 'COMPLETED';
       }
-      // Exit 0 but no completion keyword — still consider completed
-      // (claude -p exits 0 on normal completion)
-      return 'COMPLETED';
     }
 
-    // Non-zero exit — worker crashed or errored
+    // Process exited but no artifacts found
+    if (exitCode === 0) {
+      // Graceful exit but nothing to show for it
+      return 'EXITED_INCOMPLETE';
+    }
+
+    // Non-zero exit — worker crashed
     return 'DEAD';
   }
 
@@ -155,9 +200,9 @@ export class ClaudePrintProvider implements WorkerProvider {
     fixPrompt: string,
     resumeSessionId?: string,
   ): Promise<LaunchResult> {
-    // Find worktree from the existing process or fall back
-    const proc = activeProcesses.get(session);
-    const worktree = proc ? (this.getWorktreeFromSession(session) || '.') : '.';
+    // Find worktree from state.json
+    const slotInfo = this.findSlotBySession(session);
+    const worktree = slotInfo?.worktree || '.';
 
     const outputFile = resolve(
       this.config.raw.LOGS_DIR || `/tmp/sps-${this.config.PROJECT_NAME}`,
@@ -296,8 +341,39 @@ export class ClaudePrintProvider implements WorkerProvider {
     return parseClaudeSessionId(proc.outputFile);
   }
 
-  private getWorktreeFromSession(_session: string): string | null {
-    // Could look up from state.json, but callers should provide worktree
+  /**
+   * Look up worker slot info from state.json by tmuxSession name.
+   * Used as fallback when activeProcesses map is empty (SPS restarted).
+   */
+  private findSlotBySession(session: string): {
+    pid: number | null;
+    outputFile: string | null;
+    exitCode: number | null;
+    sessionId: string | null;
+    worktree: string | null;
+  } | null {
+    try {
+      const stateFile = resolve(
+        process.env.HOME || '~',
+        '.projects',
+        this.config.PROJECT_NAME,
+        'runtime',
+        'state.json',
+      );
+      if (!existsSync(stateFile)) return null;
+      const state = readState(stateFile, this.config.MAX_CONCURRENT_WORKERS);
+      for (const slot of Object.values(state.workers)) {
+        if (slot.tmuxSession === session && slot.mode === 'print') {
+          return {
+            pid: slot.pid ?? null,
+            outputFile: slot.outputFile ?? null,
+            exitCode: slot.exitCode ?? null,
+            sessionId: slot.sessionId ?? null,
+            worktree: slot.worktree ?? null,
+          };
+        }
+      }
+    } catch { /* state read error */ }
     return null;
   }
 
