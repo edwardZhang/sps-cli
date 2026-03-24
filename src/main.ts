@@ -13,7 +13,7 @@ import { executeCardAdd } from './commands/cardAdd.js';
 import { executeSetup } from './commands/setup.js';
 import { executeWorkerDashboard } from './commands/workerDashboard.js';
 
-const VERSION = '0.9.1';
+const VERSION = '0.9.2';
 
 const COMMANDS: Record<string, { desc: string; usage: string }> = {
   setup:     { desc: 'Initial environment setup (credentials, directories)', usage: 'sps setup [--force]' },

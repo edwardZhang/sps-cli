@@ -77,7 +77,7 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     // Matrix notifications
     console.log('\n  ── Notifications (Matrix) ──');
     const matrixHomeserver = await prompt.ask('MATRIX_HOMESERVER (leave empty if not using Matrix)');
-    const matrixToken = matrixHomeserver ? await prompt.ask('MATRIX_TOKEN') : '';
+    const matrixToken = matrixHomeserver ? await prompt.ask('MATRIX_ACCESS_TOKEN') : '';
     const matrixRoomId = matrixHomeserver ? await prompt.ask('MATRIX_ROOM_ID') : '';
 
     // Build env file
@@ -114,7 +114,7 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     if (matrixHomeserver) {
       lines.push('# ── Matrix (Notifications) ──────────────────────────');
       lines.push(`export MATRIX_HOMESERVER="${matrixHomeserver}"`);
-      if (matrixToken) lines.push(`export MATRIX_TOKEN="${matrixToken}"`);
+      if (matrixToken) lines.push(`export MATRIX_ACCESS_TOKEN="${matrixToken}"`);
       if (matrixRoomId) lines.push(`export MATRIX_ROOM_ID="${matrixRoomId}"`);
       lines.push('');
     }
