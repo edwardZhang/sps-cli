@@ -185,6 +185,9 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
         checks.push({ name: 'plane', status: 'skip', message: 'Plane API fields incomplete (PLANE_API_URL / PLANE_API_KEY / PLANE_WORKSPACE_SLUG)' });
       }
     }
+
+    // 8.5 PM backend state/list validation (requires remote access)
+    await checkPmStates(ctx, checks, fixes, doFix);
   }
 
   // 9. Worker tool
@@ -410,6 +413,307 @@ function checkWorkerRulesFiles(
       status: 'warn',
       message: `Missing ${missing.join(', ')} in repo (use --fix to generate)`,
     });
+  }
+}
+
+// ─── PM State/List Validation ─────────────────────────────────────
+
+/** SPS required states and their default Plane group mapping. */
+const SPS_STATES: { name: string; confField: string; planeGroup: string }[] = [
+  { name: 'Planning',   confField: 'PLANE_STATE_PLANNING',   planeGroup: 'backlog' },
+  { name: 'Backlog',    confField: 'PLANE_STATE_BACKLOG',    planeGroup: 'backlog' },
+  { name: 'Todo',       confField: 'PLANE_STATE_TODO',       planeGroup: 'unstarted' },
+  { name: 'Inprogress', confField: 'PLANE_STATE_INPROGRESS', planeGroup: 'started' },
+  { name: 'QA',         confField: 'PLANE_STATE_QA',         planeGroup: 'started' },
+  { name: 'Done',       confField: 'PLANE_STATE_DONE',       planeGroup: 'completed' },
+];
+
+const TRELLO_STATES: { name: string; confField: string }[] = [
+  { name: 'Planning',   confField: 'TRELLO_LIST_PLANNING' },
+  { name: 'Backlog',    confField: 'TRELLO_LIST_BACKLOG' },
+  { name: 'Todo',       confField: 'TRELLO_LIST_TODO' },
+  { name: 'Inprogress', confField: 'TRELLO_LIST_INPROGRESS' },
+  { name: 'QA',         confField: 'TRELLO_LIST_QA' },
+  { name: 'Done',       confField: 'TRELLO_LIST_DONE' },
+];
+
+async function checkPmStates(
+  ctx: ProjectContext,
+  checks: CheckResult[],
+  fixes: string[],
+  doFix: boolean,
+): Promise<void> {
+  if (ctx.pmTool === 'plane') {
+    await checkPlaneStates(ctx, checks, fixes, doFix);
+  } else if (ctx.pmTool === 'trello') {
+    await checkTrelloLists(ctx, checks, fixes, doFix);
+  }
+  // markdown: no remote state to validate
+}
+
+async function checkPlaneStates(
+  ctx: ProjectContext,
+  checks: CheckResult[],
+  fixes: string[],
+  doFix: boolean,
+): Promise<void> {
+  const raw = ctx.config.raw;
+  const apiUrl = raw.PLANE_API_URL;
+  const apiKey = raw.PLANE_API_KEY;
+  const workspace = raw.PLANE_WORKSPACE_SLUG;
+  const projectId = raw.PLANE_PROJECT_ID;
+
+  if (!apiUrl || !apiKey || !workspace || !projectId) {
+    checks.push({ name: 'pm-states', status: 'skip', message: 'Plane API fields incomplete' });
+    return;
+  }
+
+  // Fetch existing states from Plane
+  interface PlaneState { id: string; name: string; group: string }
+  const baseUrl = `${apiUrl}/api/v1/workspaces/${workspace}/projects/${projectId}`;
+
+  let existingStates: PlaneState[];
+  try {
+    const res = await fetch(`${baseUrl}/states/`, {
+      headers: { 'X-API-Key': apiKey },
+    });
+    if (!res.ok) {
+      checks.push({ name: 'pm-states', status: 'fail', message: `Plane states API returned HTTP ${res.status}` });
+      return;
+    }
+    const data = await res.json() as { results: PlaneState[] };
+    existingStates = data.results;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({ name: 'pm-states', status: 'fail', message: `Cannot fetch Plane states: ${msg}` });
+    return;
+  }
+
+  // Check each required state
+  const missing: typeof SPS_STATES = [];
+  const confUpdates: string[] = [];
+
+  for (const req of SPS_STATES) {
+    const confValue = raw[req.confField];
+    if (confValue && confValue !== `__${req.confField}__`) {
+      // UUID configured — verify it exists in Plane
+      const found = existingStates.find((s) => s.id === confValue);
+      if (found) continue;
+      // UUID configured but doesn't exist in Plane
+      checks.push({ name: 'pm-states', status: 'warn', message: `${req.confField}=${confValue} not found in Plane (stale UUID?)` });
+      missing.push(req);
+    } else {
+      // Not configured — check if a matching state exists by name
+      const byName = existingStates.find((s) => s.name.toLowerCase() === req.name.toLowerCase());
+      if (byName) {
+        // State exists in Plane but not configured in conf
+        if (doFix) {
+          confUpdates.push(`export ${req.confField}="${byName.id}"`);
+        } else {
+          checks.push({ name: 'pm-states', status: 'warn', message: `${req.name} exists in Plane (${byName.id}) but ${req.confField} not set in conf (use --fix)` });
+        }
+        continue;
+      }
+      missing.push(req);
+    }
+  }
+
+  // Auto-create missing states in Plane if --fix
+  if (missing.length > 0) {
+    if (doFix) {
+      for (const req of missing) {
+        try {
+          const res = await fetch(`${baseUrl}/states/`, {
+            method: 'POST',
+            headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: req.name, group: req.planeGroup, color: '#6B7280' }),
+          });
+          if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            checks.push({ name: 'pm-states', status: 'fail', message: `Failed to create Plane state "${req.name}": HTTP ${res.status} ${text}` });
+            continue;
+          }
+          const created = await res.json() as PlaneState;
+          confUpdates.push(`export ${req.confField}="${created.id}"`);
+          checks.push({ name: 'pm-states', status: 'pass', message: `Created Plane state "${req.name}" (${created.id})` });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          checks.push({ name: 'pm-states', status: 'fail', message: `Failed to create Plane state "${req.name}": ${msg}` });
+        }
+      }
+    } else {
+      const names = missing.map((m) => m.name).join(', ');
+      checks.push({ name: 'pm-states', status: 'warn', message: `Missing Plane states: ${names} (use --fix to auto-create)` });
+    }
+  }
+
+  // Write conf updates
+  if (confUpdates.length > 0 && doFix) {
+    try {
+      const confContent = readFileSync(ctx.paths.confFile, 'utf-8');
+      const lines: string[] = [];
+      for (const update of confUpdates) {
+        const field = update.match(/export (\w+)=/)?.[1];
+        if (field && confContent.includes(`${field}=`)) {
+          // Replace existing placeholder or stale value
+          const regex = new RegExp(`^export ${field}=.*$`, 'm');
+          const current = confContent.match(regex);
+          if (current) {
+            // Will be handled by sed-like replacement below
+          }
+        }
+      }
+      // Append new mappings to conf
+      const appendLines = ['\n# ── Plane State UUIDs (auto-configured by doctor --fix) ──'];
+      for (const update of confUpdates) {
+        const field = update.match(/export (\w+)=/)?.[1];
+        if (!field) continue;
+        // Check if field already exists in conf (even as placeholder)
+        if (confContent.includes(`${field}=`)) {
+          // Replace in-place
+          const newContent = confContent.replace(
+            new RegExp(`^(export )?${field}=.*$`, 'm'),
+            update,
+          );
+          writeFileSync(ctx.paths.confFile, newContent);
+        } else {
+          appendLines.push(update);
+        }
+      }
+      if (appendLines.length > 1) {
+        appendFileSync(ctx.paths.confFile, appendLines.join('\n') + '\n');
+      }
+      fixes.push(`Updated ${confUpdates.length} Plane state UUID(s) in conf`);
+      checks.push({ name: 'pm-states', status: 'pass', message: `Configured ${confUpdates.length} Plane state UUID(s)` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      checks.push({ name: 'pm-states', status: 'fail', message: `Failed to update conf: ${msg}` });
+    }
+  }
+
+  if (missing.length === 0 && confUpdates.length === 0) {
+    checks.push({ name: 'pm-states', status: 'pass', message: 'All 6 Plane states configured and valid' });
+  }
+}
+
+async function checkTrelloLists(
+  ctx: ProjectContext,
+  checks: CheckResult[],
+  fixes: string[],
+  doFix: boolean,
+): Promise<void> {
+  const raw = ctx.config.raw;
+  const apiKey = raw.TRELLO_API_KEY;
+  const apiToken = raw.TRELLO_TOKEN;
+  const boardId = raw.TRELLO_BOARD_ID;
+
+  if (!apiKey || !apiToken || !boardId) {
+    checks.push({ name: 'pm-lists', status: 'skip', message: 'Trello API fields incomplete' });
+    return;
+  }
+
+  // Fetch existing lists
+  interface TrelloList { id: string; name: string; closed: boolean }
+  let existingLists: TrelloList[];
+  try {
+    const res = await fetch(
+      `https://api.trello.com/1/boards/${boardId}/lists?key=${apiKey}&token=${apiToken}`,
+    );
+    if (!res.ok) {
+      checks.push({ name: 'pm-lists', status: 'fail', message: `Trello lists API returned HTTP ${res.status}` });
+      return;
+    }
+    existingLists = await res.json() as TrelloList[];
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({ name: 'pm-lists', status: 'fail', message: `Cannot fetch Trello lists: ${msg}` });
+    return;
+  }
+
+  const openLists = existingLists.filter((l) => !l.closed);
+  const missing: typeof TRELLO_STATES = [];
+  const confUpdates: string[] = [];
+
+  for (const req of TRELLO_STATES) {
+    const confValue = raw[req.confField];
+    if (confValue && confValue !== `__${req.confField}__`) {
+      const found = openLists.find((l) => l.id === confValue);
+      if (found) continue;
+      checks.push({ name: 'pm-lists', status: 'warn', message: `${req.confField}=${confValue} not found in Trello (stale ID?)` });
+      missing.push(req);
+    } else {
+      const byName = openLists.find((l) => l.name.toLowerCase() === req.name.toLowerCase());
+      if (byName) {
+        if (doFix) {
+          confUpdates.push(`export ${req.confField}="${byName.id}"`);
+        } else {
+          checks.push({ name: 'pm-lists', status: 'warn', message: `${req.name} exists in Trello (${byName.id}) but ${req.confField} not set (use --fix)` });
+        }
+        continue;
+      }
+      missing.push(req);
+    }
+  }
+
+  // Auto-create missing lists if --fix
+  if (missing.length > 0) {
+    if (doFix) {
+      for (const req of missing) {
+        try {
+          const res = await fetch(
+            `https://api.trello.com/1/lists?key=${apiKey}&token=${apiToken}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: req.name, idBoard: boardId }),
+            },
+          );
+          if (!res.ok) {
+            checks.push({ name: 'pm-lists', status: 'fail', message: `Failed to create Trello list "${req.name}": HTTP ${res.status}` });
+            continue;
+          }
+          const created = await res.json() as TrelloList;
+          confUpdates.push(`export ${req.confField}="${created.id}"`);
+          checks.push({ name: 'pm-lists', status: 'pass', message: `Created Trello list "${req.name}" (${created.id})` });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          checks.push({ name: 'pm-lists', status: 'fail', message: `Failed to create Trello list "${req.name}": ${msg}` });
+        }
+      }
+    } else {
+      const names = missing.map((m) => m.name).join(', ');
+      checks.push({ name: 'pm-lists', status: 'warn', message: `Missing Trello lists: ${names} (use --fix to auto-create)` });
+    }
+  }
+
+  // Write conf updates
+  if (confUpdates.length > 0 && doFix) {
+    try {
+      let confContent = readFileSync(ctx.paths.confFile, 'utf-8');
+      const appendLines: string[] = [];
+      for (const update of confUpdates) {
+        const field = update.match(/export (\w+)=/)?.[1];
+        if (!field) continue;
+        if (confContent.includes(`${field}=`)) {
+          confContent = confContent.replace(new RegExp(`^(export )?${field}=.*$`, 'm'), update);
+        } else {
+          appendLines.push(update);
+        }
+      }
+      writeFileSync(ctx.paths.confFile, confContent);
+      if (appendLines.length > 0) {
+        appendFileSync(ctx.paths.confFile, '\n# ── Trello List IDs (auto-configured by doctor --fix) ──\n' + appendLines.join('\n') + '\n');
+      }
+      fixes.push(`Updated ${confUpdates.length} Trello list ID(s) in conf`);
+      checks.push({ name: 'pm-lists', status: 'pass', message: `Configured ${confUpdates.length} Trello list ID(s)` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      checks.push({ name: 'pm-lists', status: 'fail', message: `Failed to update conf: ${msg}` });
+    }
+  }
+
+  if (missing.length === 0 && confUpdates.length === 0) {
+    checks.push({ name: 'pm-lists', status: 'pass', message: 'All 6 Trello lists configured and valid' });
   }
 }
 
