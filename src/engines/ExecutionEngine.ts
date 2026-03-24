@@ -307,27 +307,42 @@ export class ExecutionEngine {
         return { action: 'mark-blocked', entity: `seq:${seq}`, result: 'ok', message: 'Worker blocked' };
       }
 
-      case 'EXITED_INCOMPLETE': {
-        // Worker exited gracefully (exit 0) but produced no artifacts.
-        // Likely hit token/budget limit or gave up.
-        // Mark NEEDS-FIX so it can be retried or investigated.
-        this.log.warn(`seq ${seq}: Worker exited without completing (no commits/MR found)`);
-        try {
-          await this.taskBackend.addLabel(seq, 'NEEDS-FIX');
-          await this.taskBackend.comment(seq, 'Worker exited without completing the task (no commits or MR found). May need retry or manual intervention.');
-        } catch { /* best effort */ }
-        if (this.notifier) {
-          await this.notifier.sendWarning(`[${this.ctx.projectName}] seq:${seq} worker exited incomplete — no artifacts`).catch(() => {});
-        }
-        this.logEvent('exited-incomplete', seq, 'ok');
-        return { action: 'mark-needs-fix', entity: `seq:${seq}`, result: 'ok', message: 'Worker exited without artifacts (NEEDS-FIX)' };
-      }
-
+      case 'EXITED_INCOMPLETE':
       case 'DEAD':
       case 'DEAD_EXCEEDED': {
-        // Worker session/process died — MonitorEngine handles STALE-RUNTIME in detail
-        this.log.warn(`seq ${seq}: Worker dead (${workerStatus})`);
-        return null; // defer to MonitorEngine
+        // Worker exited without completing. Attempt auto-resume if:
+        //   - Print mode (can --resume to continue context)
+        //   - Retry limit not exhausted
+        // Otherwise mark NEEDS-FIX.
+        const isPrintMode = slotState.mode === 'print';
+        const reason = workerStatus === 'EXITED_INCOMPLETE'
+          ? 'exited without artifacts (token limit / gave up)'
+          : `process died (${workerStatus})`;
+        this.log.warn(`seq ${seq}: Worker ${reason}`);
+
+        if (isPrintMode && slotState.sessionId) {
+          const retryResult = await this.attemptResume(
+            seq, slotName, slotState, card, reason,
+          );
+          if (retryResult) return retryResult;
+        }
+
+        // No resume possible or retries exhausted → NEEDS-FIX
+        if (workerStatus === 'DEAD' || workerStatus === 'DEAD_EXCEEDED') {
+          // Also defer to MonitorEngine for STALE-RUNTIME marking
+          return null;
+        }
+        try {
+          await this.taskBackend.addLabel(seq, 'NEEDS-FIX');
+          await this.taskBackend.comment(seq, `Worker ${reason}. Resume retries exhausted.`);
+        } catch { /* best effort */ }
+        if (this.notifier) {
+          await this.notifier.sendWarning(
+            `[${this.ctx.projectName}] seq:${seq} worker ${reason} — retries exhausted, NEEDS-FIX`,
+          ).catch(() => {});
+        }
+        this.logEvent('exited-incomplete-final', seq, 'ok');
+        return { action: 'mark-needs-fix', entity: `seq:${seq}`, result: 'ok', message: `Worker ${reason}, retries exhausted (NEEDS-FIX)` };
       }
 
       case 'ALIVE':
@@ -719,6 +734,110 @@ IMPORTANT: After creating the MR, say "done" and STOP. Do NOT run long-running c
         }
       } catch { /* non-fatal */ }
     }, 5_000);
+  }
+
+  /**
+   * Attempt to resume a failed/incomplete worker via --resume.
+   *
+   * Uses metaRead/metaWrite to track resumeAttempts per card.
+   * Max retries = WORKER_RESTART_LIMIT (default 2).
+   *
+   * Returns an ActionRecord if resume was initiated, or null if retries exhausted.
+   */
+  private async attemptResume(
+    seq: string,
+    slotName: string,
+    slotState: import('../core/state.js').WorkerSlotState,
+    card: Card,
+    reason: string,
+  ): Promise<ActionRecord | null> {
+    const maxRetries = this.ctx.config.WORKER_RESTART_LIMIT;
+
+    let meta: Record<string, unknown>;
+    try {
+      meta = await this.taskBackend.metaRead(seq);
+    } catch {
+      meta = {};
+    }
+
+    const resumeAttempts = typeof meta.resumeAttempts === 'number' ? meta.resumeAttempts : 0;
+
+    if (resumeAttempts >= maxRetries) {
+      this.log.warn(`seq ${seq}: Resume retries exhausted (${resumeAttempts}/${maxRetries})`);
+      return null; // caller handles NEEDS-FIX
+    }
+
+    const session = slotState.tmuxSession;
+    const sessionId = slotState.sessionId;
+    if (!session || !sessionId) {
+      this.log.warn(`seq ${seq}: No session ID for resume`);
+      return null;
+    }
+
+    try {
+      // Build a continuation prompt that tells the worker to pick up where it left off
+      const branch = slotState.branch || this.buildBranchName(card);
+      const continuePrompt = [
+        `Your previous session exited before the task was completed (${reason}).`,
+        `This is resume attempt ${resumeAttempts + 1} of ${maxRetries}.`,
+        '',
+        `Task: ${card.name}`,
+        `Branch: ${branch}`,
+        `Target: ${this.ctx.mergeBranch}`,
+        '',
+        'Please check the current state of the code and continue:',
+        '1. Review what has been done so far (git log, existing files)',
+        '2. Complete any remaining implementation',
+        '3. Self-test your changes',
+        '4. git add, commit, and push to the branch',
+        '5. Create a Merge Request if not already created',
+        '6. Say "done" when finished',
+        '',
+        'IMPORTANT: After creating the MR, say "done" and STOP. Do NOT run dev servers or watch commands.',
+      ].join('\n');
+
+      const resumeResult = await this.workerProvider.sendFix(session, continuePrompt, sessionId);
+
+      // Update state with new process info
+      if (resumeResult && typeof resumeResult === 'object' && 'pid' in resumeResult) {
+        const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+        if (freshState.workers[slotName]) {
+          freshState.workers[slotName].pid = resumeResult.pid;
+          freshState.workers[slotName].outputFile = resumeResult.outputFile;
+          if (resumeResult.sessionId) {
+            freshState.workers[slotName].sessionId = resumeResult.sessionId;
+          }
+          freshState.workers[slotName].exitCode = null;
+          freshState.workers[slotName].lastHeartbeat = new Date().toISOString();
+          writeState(this.ctx.paths.stateFile, freshState, 'pipeline-resume');
+        }
+      }
+
+      // Increment resume counter
+      await this.taskBackend.metaWrite(seq, {
+        ...meta,
+        resumeAttempts: resumeAttempts + 1,
+      });
+
+      this.log.info(`seq ${seq}: Resumed worker (attempt ${resumeAttempts + 1}/${maxRetries}), reason: ${reason}`);
+      if (this.notifier) {
+        await this.notifier.send(
+          `[${this.ctx.projectName}] seq:${seq} worker resumed (${resumeAttempts + 1}/${maxRetries}): ${reason}`,
+          'info',
+        ).catch(() => {});
+      }
+      this.logEvent('resume', seq, 'ok', { attempt: resumeAttempts + 1, max: maxRetries, reason });
+      return {
+        action: 'resume',
+        entity: `seq:${seq}`,
+        result: 'ok',
+        message: `Worker resumed (${resumeAttempts + 1}/${maxRetries}): ${reason}`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`seq ${seq}: Resume failed: ${msg}`);
+      return null; // caller handles NEEDS-FIX
+    }
   }
 
   private logEvent(action: string, seq: string, result: 'ok' | 'fail', meta?: Record<string, unknown>): void {
