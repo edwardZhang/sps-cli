@@ -272,6 +272,7 @@ export class ClaudePrintProvider implements WorkerProvider {
   ): LaunchResult {
     const args = [
       '-p',  // print mode: reads prompt from stdin when no prompt arg given
+      '--verbose',
       '--output-format', 'stream-json',
       '--dangerously-skip-permissions',
     ];
