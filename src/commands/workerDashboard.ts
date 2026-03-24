@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { readState, type WorkerSlotState } from '../core/state.js';
+import { isProcessAlive, tailFile } from '../providers/outputParser.js';
+import { renderClaudeStreamLines, renderCodexStreamLines } from '../providers/streamRenderer.js';
 
 const HOME = process.env.HOME || '/home/coral';
 
@@ -150,13 +152,33 @@ function collectPanels(projects: string[]): WorkerPanel[] {
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
       const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
-      const sessionAlive = allSessions.has(sessionName);
+      const isPrintMode = slot.mode === 'print';
 
-      // Only show panels with active slots or live tmux sessions
+      let sessionAlive: boolean;
+      let paneLines: string[];
+
+      if (isPrintMode) {
+        // Print mode: check PID liveness + tail output file
+        sessionAlive = !!(slot.pid && slot.pid > 0 && isProcessAlive(slot.pid));
+        if (slot.outputFile) {
+          const rawLines = tailFile(slot.outputFile, 40).split('\n');
+          // Render JSONL into human-readable lines
+          const rendered = slot.tmuxSession?.includes('codex')
+            ? renderCodexStreamLines(rawLines)
+            : renderClaudeStreamLines(rawLines);
+          paneLines = rendered.length > 0 ? rendered : rawLines;
+        } else {
+          paneLines = sessionAlive ? ['(worker running, no output yet)'] : ['(no output file)'];
+        }
+      } else {
+        // Interactive (tmux) mode
+        sessionAlive = allSessions.has(sessionName);
+        const paneText = sessionAlive ? capturePaneText(sessionName, 30) : '';
+        paneLines = paneText.split('\n');
+      }
+
+      // Only show panels with active slots or live sessions/processes
       if (slot.status === 'idle' && !sessionAlive) continue;
-
-      const paneText = sessionAlive ? capturePaneText(sessionName, 30) : '';
-      const paneLines = paneText.split('\n');
 
       panels.push({
         projectName,
@@ -207,8 +229,11 @@ function renderPanel(panel: WorkerPanel, panelWidth: number, panelHeight: number
   const heartbeat = panel.slot.lastHeartbeat
     ? `hb: ${formatElapsed(new Date(panel.slot.lastHeartbeat))} ago`
     : '';
-  const timeLine = elapsed || heartbeat
-    ? ` ${DIM}${[elapsed, heartbeat].filter(Boolean).join(' │ ')}${RESET}`
+  const modeInfo = panel.slot.mode === 'print'
+    ? `pid:${panel.slot.pid || '?'}${panel.slot.exitCode != null ? ` exit:${panel.slot.exitCode}` : ''}`
+    : '';
+  const timeLine = elapsed || heartbeat || modeInfo
+    ? ` ${DIM}${[elapsed, heartbeat, modeInfo].filter(Boolean).join(' │ ')}${RESET}`
     : '';
 
   // Top border
@@ -413,13 +438,14 @@ function buildJsonOutput(projects: string[]): DashboardJson {
 // ── Live mode (watch) ────────────────────────────────────────────────
 
 async function runLive(projects: string[], intervalMs: number): Promise<never> {
-  // Hide cursor
-  process.stdout.write('\x1b[?25l');
+  // Switch to alternate screen buffer + hide cursor (like top/htop/vim)
+  process.stdout.write('\x1b[?1049h\x1b[?25l');
 
-  // Restore cursor on exit
+  // Restore main screen + cursor on exit
   const cleanup = () => {
-    process.stdout.write('\x1b[?25h'); // show cursor
-    process.stdout.write('\x1b[0m');   // reset colors
+    process.stdout.write('\x1b[?25h');   // show cursor
+    process.stdout.write('\x1b[?1049l'); // switch back to main screen
+    process.stdout.write('\x1b[0m');     // reset colors
     process.exit(0);
   };
   process.on('SIGINT', cleanup);
@@ -443,8 +469,9 @@ async function runLive(projects: string[], intervalMs: number): Promise<never> {
 
   const draw = () => {
     const screen = renderDashboard(projects);
-    // Clear screen and move cursor to top-left
-    process.stdout.write('\x1b[2J\x1b[H');
+    // Move cursor to top-left and clear from cursor to end of screen.
+    // No \x1b[2J needed — alternate screen buffer prevents scrollback pollution.
+    process.stdout.write('\x1b[H\x1b[J');
     process.stdout.write(screen);
   };
 

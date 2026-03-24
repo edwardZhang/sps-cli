@@ -295,36 +295,63 @@ export class CloseoutEngine {
       );
 
       if (slotEntry) {
-        const [, slotState] = slotEntry;
+        const [slotName, slotState] = slotEntry;
         const session = slotState.tmuxSession!;
+        const isPrintMode = slotState.mode === 'print';
 
         try {
-          const inspection = await this.workerProvider.inspect(session);
-          if (inspection.alive) {
-            const fixPrompt = `CI pipeline has failed. Please review the CI logs, fix the issues, commit, and push. This is autofix attempt ${autofixAttempts + 1} of ${maxAttempts}.`;
-            await this.workerProvider.sendFix(session, fixPrompt);
+          const fixPrompt = `CI pipeline has failed. Please review the CI logs, fix the issues, commit, and push. This is autofix attempt ${autofixAttempts + 1} of ${maxAttempts}.`;
 
-            // Increment counter
-            await this.taskBackend.metaWrite(seq, {
-              ...meta,
-              autofixAttempts: autofixAttempts + 1,
-            });
-
-            this.log.info(
-              `seq ${seq}: CI failed, sent fix prompt (attempt ${autofixAttempts + 1}/${maxAttempts})`,
+          if (isPrintMode) {
+            // Print mode: spawn new process with --resume (process already exited)
+            const resumeResult = await this.workerProvider.sendFix(
+              session, fixPrompt, slotState.sessionId || undefined,
             );
-            actions.push({
-              action: 'autofix',
-              entity: `seq:${seq}`,
-              result: 'ok',
-              message: `Sent fix prompt (attempt ${autofixAttempts + 1}/${maxAttempts})`,
-            });
-            this.logEvent('closeout-autofix', seq, 'ok', {
-              attempt: autofixAttempts + 1,
-              max: maxAttempts,
-            });
-            return;
+
+            // Update state with new process info
+            if (resumeResult && typeof resumeResult === 'object' && 'pid' in resumeResult) {
+              const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+              if (freshState.workers[slotName]) {
+                freshState.workers[slotName].pid = resumeResult.pid;
+                freshState.workers[slotName].outputFile = resumeResult.outputFile;
+                if (resumeResult.sessionId) {
+                  freshState.workers[slotName].sessionId = resumeResult.sessionId;
+                }
+                freshState.workers[slotName].exitCode = null;
+                writeState(this.ctx.paths.stateFile, freshState, 'closeout-autofix-resume');
+              }
+            }
+          } else {
+            // Interactive mode: send text to live tmux session
+            const inspection = await this.workerProvider.inspect(session);
+            if (!inspection.alive) {
+              this.log.warn(`seq ${seq}: Worker session dead, cannot autofix`);
+              // Fall through to NEEDS-FIX below
+              throw new Error('Worker session dead');
+            }
+            await this.workerProvider.sendFix(session, fixPrompt);
           }
+
+          // Increment counter
+          await this.taskBackend.metaWrite(seq, {
+            ...meta,
+            autofixAttempts: autofixAttempts + 1,
+          });
+
+          this.log.info(
+            `seq ${seq}: CI failed, sent fix prompt (attempt ${autofixAttempts + 1}/${maxAttempts})`,
+          );
+          actions.push({
+            action: 'autofix',
+            entity: `seq:${seq}`,
+            result: 'ok',
+            message: `Sent fix prompt (attempt ${autofixAttempts + 1}/${maxAttempts})`,
+          });
+          this.logEvent('closeout-autofix', seq, 'ok', {
+            attempt: autofixAttempts + 1,
+            max: maxAttempts,
+          });
+          return;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           this.log.warn(`seq ${seq}: Failed to send fix prompt: ${msg}`);
@@ -447,6 +474,11 @@ export class CloseoutEngine {
           tmuxSession: null,
           claimedAt: null,
           lastHeartbeat: null,
+          mode: null,
+          sessionId: null,
+          pid: null,
+          outputFile: null,
+          exitCode: null,
         };
         delete state.activeCards[seq];
         writeState(this.ctx.paths.stateFile, state, 'closeout-release');
@@ -582,22 +614,48 @@ export class CloseoutEngine {
 
     // ── L2: Send to original worker ──────────────────────────────
     if (!slotEntry) return false;
-    const [, slotState] = slotEntry;
+    const [slotName, slotState] = slotEntry;
     const session = slotState.tmuxSession;
     if (!session) {
       this.log.warn(`seq ${seq}: No worker session for L2 conflict resolution`);
       return false;
     }
 
+    const isPrintMode = slotState.mode === 'print';
+
     try {
-      const inspection = await this.workerProvider.inspect(session);
-      if (!inspection.alive) {
-        this.log.warn(`seq ${seq}: Worker session dead, cannot do L2 resolution`);
-        return false;
+      if (isPrintMode) {
+        // Print mode: spawn new process with --resume
+        this.log.info(`seq ${seq}: L2 — spawning conflict resolution via --resume`);
+        const resumeResult = await this.workerProvider.resolveConflict(
+          session, worktree, branchName, slotState.sessionId || undefined,
+        );
+
+        // Update state with new process info
+        if (resumeResult && typeof resumeResult === 'object' && 'pid' in resumeResult) {
+          const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+          if (freshState.workers[slotName]) {
+            freshState.workers[slotName].pid = resumeResult.pid;
+            freshState.workers[slotName].outputFile = resumeResult.outputFile;
+            if (resumeResult.sessionId) {
+              freshState.workers[slotName].sessionId = resumeResult.sessionId;
+            }
+            freshState.workers[slotName].exitCode = null;
+            writeState(this.ctx.paths.stateFile, freshState, 'closeout-conflict-resume');
+          }
+        }
+      } else {
+        // Interactive mode: send to live tmux session
+        const inspection = await this.workerProvider.inspect(session);
+        if (!inspection.alive) {
+          this.log.warn(`seq ${seq}: Worker session dead, cannot do L2 resolution`);
+          return false;
+        }
+
+        this.log.info(`seq ${seq}: L2 — sending conflict resolution to worker ${session}`);
+        await this.workerProvider.resolveConflict(session, worktree, branchName);
       }
 
-      this.log.info(`seq ${seq}: L2 — sending conflict resolution to worker ${session}`);
-      await this.workerProvider.resolveConflict(session, worktree, branchName);
       await this.notifySafe(
         `seq:${seq} sent conflict resolution instructions to worker`,
         'info',

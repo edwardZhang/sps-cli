@@ -1,0 +1,158 @@
+/**
+ * Shared utilities for print-mode worker providers.
+ * Handles output file tailing, session ID parsing, and process inspection.
+ */
+import { readFileSync, existsSync, statSync } from 'node:fs';
+
+/**
+ * Read the last N lines from a file efficiently.
+ * Returns empty string if file doesn't exist.
+ */
+export function tailFile(filePath: string, lines: number): string {
+  if (!existsSync(filePath)) return '';
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    const allLines = content.split('\n');
+    return allLines.slice(-lines).join('\n');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Get file size in bytes (for checking if output is being written).
+ */
+export function fileSize(filePath: string): number {
+  try {
+    return statSync(filePath).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Parse session ID from a Claude stream-json output file.
+ *
+ * Claude --output-format stream-json emits lines like:
+ *   {"type":"result",...,"session_id":"uuid",...}
+ *
+ * We also check the very first system message.
+ */
+export function parseClaudeSessionId(filePath: string): string | null {
+  if (!existsSync(filePath)) return null;
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line);
+        if (obj.session_id) return obj.session_id;
+      } catch {
+        // not valid JSON, skip
+      }
+    }
+  } catch {
+    // file read error
+  }
+  return null;
+}
+
+/**
+ * Parse session ID from a Codex exec --json JSONL output file.
+ *
+ * Codex emits JSONL events. Look for session/conversation ID.
+ */
+export function parseCodexSessionId(filePath: string): string | null {
+  if (!existsSync(filePath)) return null;
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line);
+        // Codex uses conversation_id or session_id
+        if (obj.conversation_id) return obj.conversation_id;
+        if (obj.session_id) return obj.session_id;
+        if (obj.id && typeof obj.id === 'string' && obj.type === 'session_start') return obj.id;
+      } catch {
+        // not valid JSON
+      }
+    }
+  } catch {
+    // file read error
+  }
+  return null;
+}
+
+/**
+ * Check if a process is alive by sending signal 0.
+ */
+export function isProcessAlive(pid: number): boolean {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Kill a process group. First SIGTERM, then SIGKILL after timeout.
+ * Uses negative PID to signal the entire process group.
+ */
+export async function killProcessGroup(pid: number, timeoutMs = 5_000): Promise<void> {
+  if (!isProcessAlive(pid)) return;
+
+  try {
+    // Signal the process group
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    // Process group may not exist, try direct kill
+    try { process.kill(pid, 'SIGTERM'); } catch { return; }
+  }
+
+  // Wait for graceful shutdown
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  // Force kill
+  try { process.kill(-pid, 'SIGKILL'); } catch { /* ignore */ }
+  try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
+}
+
+/**
+ * Extract the last assistant message text from Claude stream-json output.
+ * Useful for verifying task completion.
+ */
+export function extractLastAssistantText(filePath: string): string {
+  if (!existsSync(filePath)) return '';
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n').filter((l) => l.trim());
+    let lastText = '';
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        // Claude stream-json assistant content messages
+        if (obj.type === 'assistant' && typeof obj.message?.content === 'string') {
+          lastText = obj.message.content;
+        }
+        // Also check result type
+        if (obj.type === 'result' && typeof obj.result === 'string') {
+          lastText = obj.result;
+        }
+        // Content block text
+        if (obj.type === 'content_block_delta' && obj.delta?.text) {
+          lastText += obj.delta.text;
+        }
+      } catch { /* skip */ }
+    }
+    return lastText;
+  } catch {
+    return '';
+  }
+}

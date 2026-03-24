@@ -106,6 +106,7 @@ export interface ProjectConfig {
 
   // Worker
   WORKER_TOOL: 'claude' | 'codex';
+  WORKER_MODE: 'print' | 'interactive';
   MAX_CONCURRENT_WORKERS: number;
   WORKER_RESTART_LIMIT: number;
   AUTOFIX_ATTEMPTS: number;
@@ -178,6 +179,7 @@ export function loadProjectConf(projectName: string): ProjectConfig {
     CI_MODE: (raw.CI_MODE as ProjectConfig['CI_MODE']) || 'gitlab',
 
     WORKER_TOOL: (raw.WORKER_TOOL as ProjectConfig['WORKER_TOOL']) || 'claude',
+    WORKER_MODE: (raw.WORKER_MODE as ProjectConfig['WORKER_MODE']) || 'print',
     MAX_CONCURRENT_WORKERS: parseInt(raw.MAX_CONCURRENT_WORKERS || '3', 10),
     WORKER_RESTART_LIMIT: parseInt(raw.WORKER_RESTART_LIMIT || '2', 10),
     AUTOFIX_ATTEMPTS: parseInt(raw.AUTOFIX_ATTEMPTS || '2', 10),

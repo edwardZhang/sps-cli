@@ -9,6 +9,16 @@ export interface WorkerSlotState {
   tmuxSession: string | null;
   claimedAt: string | null;
   lastHeartbeat: string | null;
+  /** Worker execution mode — null for legacy state files */
+  mode?: 'print' | 'interactive' | null;
+  /** Claude/Codex session ID for resume chains (print mode) */
+  sessionId?: string | null;
+  /** OS process ID of the worker (print mode) */
+  pid?: number | null;
+  /** Path to the JSONL output file (print mode) */
+  outputFile?: string | null;
+  /** Process exit code — null while running (print mode) */
+  exitCode?: number | null;
 }
 
 export interface ActiveCardState {
@@ -47,6 +57,11 @@ function defaultState(maxWorkers: number): RuntimeState {
       tmuxSession: null,
       claimedAt: null,
       lastHeartbeat: null,
+      mode: null,
+      sessionId: null,
+      pid: null,
+      outputFile: null,
+      exitCode: null,
     };
   }
   return {

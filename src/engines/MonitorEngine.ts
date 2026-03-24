@@ -94,7 +94,7 @@ export class MonitorEngine {
       try {
         const inspection = await this.workerProvider.inspect(slotState.tmuxSession);
         if (!inspection.alive) {
-          // Session dead but slot still active → orphan
+          // Session/process dead but slot still active → orphan
           this.log.warn(
             `Orphan slot ${slotName}: session ${slotState.tmuxSession} is dead, releasing`,
           );
@@ -107,6 +107,11 @@ export class MonitorEngine {
             tmuxSession: null,
             claimedAt: null,
             lastHeartbeat: null,
+            mode: null,
+            sessionId: null,
+            pid: null,
+            outputFile: null,
+            exitCode: null,
           };
 
           // Remove from active cards if present

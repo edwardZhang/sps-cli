@@ -6,6 +6,7 @@ import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { CommandResult, ActionRecord, Card, AuxiliaryState } from '../models/types.js';
+import type { LaunchResult } from '../interfaces/WorkerProvider.js';
 import { readState, writeState, type WorkerSlotState } from '../core/state.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { Logger } from '../core/logger.js';
@@ -86,10 +87,11 @@ export class ExecutionEngine {
           actions.push({ action: 'skip', entity: `seq:${card.seq}`, result: 'skip', message: 'Has auxiliary state label' });
           continue;
         }
-        // Stagger: wait 10s between worker launches to let each Claude settle
+        // Stagger: wait between worker launches (shorter for print mode)
         if (launchedThisTick > 0) {
-          this.log.info(`Waiting 10s before next worker launch...`);
-          await new Promise((r) => setTimeout(r, 10_000));
+          const delay = this.ctx.config.WORKER_MODE === 'print' ? 2_000 : 10_000;
+          this.log.info(`Waiting ${delay / 1000}s before next worker launch...`);
+          await new Promise((r) => setTimeout(r, delay));
         }
         const launchResult = await this.launchCard(card, opts, failedSlots);
         actions.push(launchResult);
@@ -451,6 +453,11 @@ export class ExecutionEngine {
       tmuxSession: sessionName,
       claimedAt: new Date().toISOString(),
       lastHeartbeat: new Date().toISOString(),
+      mode: this.ctx.config.WORKER_MODE,
+      sessionId: null,
+      pid: null,
+      outputFile: null,
+      exitCode: null,
     };
 
     // Add to active cards
@@ -496,17 +503,27 @@ export class ExecutionEngine {
       return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Context build failed: ${msg}` };
     }
 
-    // Step 6: Launch worker
+    // Step 6: Launch worker (unified: launch + waitReady + sendTask in one call)
     try {
-      await this.workerProvider.launch(sessionName, worktreePath);
-      // Wait for worker to be ready
-      const ready = await this.workerProvider.waitReady(sessionName, 90_000);
-      if (!ready) {
-        throw new Error('Worker did not become ready within timeout');
-      }
-      // Send task prompt
       const promptFile = resolve(worktreePath, '.jarvis_task_prompt.txt');
-      await this.workerProvider.sendTask(sessionName, promptFile);
+      const launchResult = await this.workerProvider.launch(sessionName, worktreePath, promptFile);
+
+      // Store print-mode process info in state
+      if (launchResult.pid > 0) {
+        const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+        if (freshState.workers[slotName]) {
+          freshState.workers[slotName].mode = 'print';
+          freshState.workers[slotName].pid = launchResult.pid;
+          freshState.workers[slotName].outputFile = launchResult.outputFile;
+          freshState.workers[slotName].sessionId = launchResult.sessionId || null;
+          freshState.workers[slotName].exitCode = null;
+          writeState(this.ctx.paths.stateFile, freshState, 'pipeline-launch-print');
+        }
+
+        // Async: extract session ID from output once available
+        this.extractSessionIdAsync(sessionName, slotName, launchResult);
+      }
+
       this.log.ok(`Step 6: Worker launched in session ${sessionName} for seq ${seq}`);
 
       if (this.notifier) {
@@ -587,7 +604,8 @@ export class ExecutionEngine {
     }
 
     // .jarvis_task_prompt.txt — project rules + task-specific prompt
-    // Sent to worker via tmux paste, ensuring rules are always fresh
+    // Print mode: piped via stdin to `claude -p` / `codex exec`
+    // Interactive mode: pasted via tmux buffer
     const sections: string[] = [];
 
     if (projectRules) {
@@ -612,7 +630,9 @@ Requirements:
 2. Self-test your changes
 3. git add, commit, and push to branch ${branchName}
 4. Create a Merge Request targeting ${this.ctx.mergeBranch}
-5. Say "done" when finished`);
+5. Say "done" when finished
+
+IMPORTANT: After creating the MR, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, python -m http.server, docker compose up, or any dev server / watch mode). These block the pipeline.`);
 
     writeFileSync(
       resolve(worktreePath, '.jarvis_task_prompt.txt'),
@@ -639,6 +659,11 @@ Requirements:
           tmuxSession: null,
           claimedAt: null,
           lastHeartbeat: null,
+          mode: null,
+          sessionId: null,
+          pid: null,
+          outputFile: null,
+          exitCode: null,
         };
       }
       delete state.activeCards[seq];
@@ -647,6 +672,37 @@ Requirements:
     } catch {
       this.log.warn(`Failed to release slot ${slotName} for seq ${seq}`);
     }
+  }
+
+  /**
+   * Asynchronously extract session ID from print-mode output and update state.
+   * Runs in background — does not block the tick.
+   */
+  private extractSessionIdAsync(
+    sessionName: string,
+    slotName: string,
+    launchResult: LaunchResult,
+  ): void {
+    if (launchResult.sessionId) return; // already known (resume)
+
+    // Check output file for session ID after a delay
+    setTimeout(async () => {
+      try {
+        const { parseClaudeSessionId, parseCodexSessionId } = await import('../providers/outputParser.js');
+        const parser = this.ctx.config.WORKER_TOOL === 'claude'
+          ? parseClaudeSessionId
+          : parseCodexSessionId;
+        const sid = parser(launchResult.outputFile);
+        if (sid) {
+          const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+          if (state.workers[slotName]?.pid === launchResult.pid) {
+            state.workers[slotName].sessionId = sid;
+            writeState(this.ctx.paths.stateFile, state, 'pipeline-session-id');
+            this.log.info(`Extracted session ID for ${sessionName}: ${sid.slice(0, 8)}...`);
+          }
+        }
+      } catch { /* non-fatal */ }
+    }, 5_000);
   }
 
   private logEvent(action: string, seq: string, result: 'ok' | 'fail', meta?: Record<string, unknown>): void {
