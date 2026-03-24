@@ -437,6 +437,31 @@ const TRELLO_STATES: { name: string; confField: string }[] = [
   { name: 'Done',       confField: 'TRELLO_LIST_DONE' },
 ];
 
+/** curl-based HTTP GET that returns parsed JSON. Works on Node < 18. */
+function curlGet<T>(url: string, headers: Record<string, string> = {}): T {
+  const headerArgs = Object.entries(headers).flatMap(([k, v]) => ['-H', `${k}: ${v}`]);
+  const output = execSync(
+    ['curl', '-sk', '--fail-with-body', '-o', '-', ...headerArgs, url]
+      .map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' '),
+    { encoding: 'utf-8', timeout: 15000 },
+  );
+  return JSON.parse(output) as T;
+}
+
+/** curl-based HTTP POST that returns parsed JSON. Works on Node < 18. */
+function curlPost<T>(url: string, body: unknown, headers: Record<string, string> = {}): T {
+  const headerArgs = Object.entries(headers).flatMap(([k, v]) => ['-H', `${k}: ${v}`]);
+  const jsonBody = JSON.stringify(body);
+  const output = execSync(
+    ['curl', '-sk', '--fail-with-body', '-o', '-', '-X', 'POST',
+     ...headerArgs, '-H', 'Content-Type: application/json',
+     '-d', jsonBody, url]
+      .map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' '),
+    { encoding: 'utf-8', timeout: 15000 },
+  );
+  return JSON.parse(output) as T;
+}
+
 async function checkPmStates(
   ctx: ProjectContext,
   checks: CheckResult[],
@@ -444,19 +469,19 @@ async function checkPmStates(
   doFix: boolean,
 ): Promise<void> {
   if (ctx.pmTool === 'plane') {
-    await checkPlaneStates(ctx, checks, fixes, doFix);
+    checkPlaneStates(ctx, checks, fixes, doFix);
   } else if (ctx.pmTool === 'trello') {
-    await checkTrelloLists(ctx, checks, fixes, doFix);
+    checkTrelloLists(ctx, checks, fixes, doFix);
   }
   // markdown: no remote state to validate
 }
 
-async function checkPlaneStates(
+function checkPlaneStates(
   ctx: ProjectContext,
   checks: CheckResult[],
   fixes: string[],
   doFix: boolean,
-): Promise<void> {
+): void {
   const raw = ctx.config.raw;
   const apiUrl = raw.PLANE_API_URL;
   const apiKey = raw.PLANE_API_KEY;
@@ -468,20 +493,12 @@ async function checkPlaneStates(
     return;
   }
 
-  // Fetch existing states from Plane
   interface PlaneState { id: string; name: string; group: string }
   const baseUrl = `${apiUrl}/api/v1/workspaces/${workspace}/projects/${projectId}`;
 
   let existingStates: PlaneState[];
   try {
-    const res = await fetch(`${baseUrl}/states/`, {
-      headers: { 'X-API-Key': apiKey },
-    });
-    if (!res.ok) {
-      checks.push({ name: 'pm-states', status: 'fail', message: `Plane states API returned HTTP ${res.status}` });
-      return;
-    }
-    const data = await res.json() as { results: PlaneState[] };
+    const data = curlGet<{ results: PlaneState[] }>(`${baseUrl}/states/`, { 'X-API-Key': apiKey });
     existingStates = data.results;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -489,24 +506,19 @@ async function checkPlaneStates(
     return;
   }
 
-  // Check each required state
   const missing: typeof SPS_STATES = [];
   const confUpdates: string[] = [];
 
   for (const req of SPS_STATES) {
     const confValue = raw[req.confField];
     if (confValue && confValue !== `__${req.confField}__`) {
-      // UUID configured — verify it exists in Plane
       const found = existingStates.find((s) => s.id === confValue);
       if (found) continue;
-      // UUID configured but doesn't exist in Plane
       checks.push({ name: 'pm-states', status: 'warn', message: `${req.confField}=${confValue} not found in Plane (stale UUID?)` });
       missing.push(req);
     } else {
-      // Not configured — check if a matching state exists by name
       const byName = existingStates.find((s) => s.name.toLowerCase() === req.name.toLowerCase());
       if (byName) {
-        // State exists in Plane but not configured in conf
         if (doFix) {
           confUpdates.push(`export ${req.confField}="${byName.id}"`);
         } else {
@@ -523,17 +535,11 @@ async function checkPlaneStates(
     if (doFix) {
       for (const req of missing) {
         try {
-          const res = await fetch(`${baseUrl}/states/`, {
-            method: 'POST',
-            headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: req.name, group: req.planeGroup, color: '#6B7280' }),
-          });
-          if (!res.ok) {
-            const text = await res.text().catch(() => '');
-            checks.push({ name: 'pm-states', status: 'fail', message: `Failed to create Plane state "${req.name}": HTTP ${res.status} ${text}` });
-            continue;
-          }
-          const created = await res.json() as PlaneState;
+          const created = curlPost<PlaneState>(
+            `${baseUrl}/states/`,
+            { name: req.name, group: req.planeGroup, color: '#6B7280' },
+            { 'X-API-Key': apiKey },
+          );
           confUpdates.push(`export ${req.confField}="${created.id}"`);
           checks.push({ name: 'pm-states', status: 'pass', message: `Created Plane state "${req.name}" (${created.id})` });
         } catch (err) {
@@ -549,46 +555,7 @@ async function checkPlaneStates(
 
   // Write conf updates
   if (confUpdates.length > 0 && doFix) {
-    try {
-      const confContent = readFileSync(ctx.paths.confFile, 'utf-8');
-      const lines: string[] = [];
-      for (const update of confUpdates) {
-        const field = update.match(/export (\w+)=/)?.[1];
-        if (field && confContent.includes(`${field}=`)) {
-          // Replace existing placeholder or stale value
-          const regex = new RegExp(`^export ${field}=.*$`, 'm');
-          const current = confContent.match(regex);
-          if (current) {
-            // Will be handled by sed-like replacement below
-          }
-        }
-      }
-      // Append new mappings to conf
-      const appendLines = ['\n# ── Plane State UUIDs (auto-configured by doctor --fix) ──'];
-      for (const update of confUpdates) {
-        const field = update.match(/export (\w+)=/)?.[1];
-        if (!field) continue;
-        // Check if field already exists in conf (even as placeholder)
-        if (confContent.includes(`${field}=`)) {
-          // Replace in-place
-          const newContent = confContent.replace(
-            new RegExp(`^(export )?${field}=.*$`, 'm'),
-            update,
-          );
-          writeFileSync(ctx.paths.confFile, newContent);
-        } else {
-          appendLines.push(update);
-        }
-      }
-      if (appendLines.length > 1) {
-        appendFileSync(ctx.paths.confFile, appendLines.join('\n') + '\n');
-      }
-      fixes.push(`Updated ${confUpdates.length} Plane state UUID(s) in conf`);
-      checks.push({ name: 'pm-states', status: 'pass', message: `Configured ${confUpdates.length} Plane state UUID(s)` });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      checks.push({ name: 'pm-states', status: 'fail', message: `Failed to update conf: ${msg}` });
-    }
+    writeConfUpdates(ctx.paths.confFile, confUpdates, 'Plane State UUIDs', 'pm-states', checks, fixes);
   }
 
   if (missing.length === 0 && confUpdates.length === 0) {
@@ -596,12 +563,12 @@ async function checkPlaneStates(
   }
 }
 
-async function checkTrelloLists(
+function checkTrelloLists(
   ctx: ProjectContext,
   checks: CheckResult[],
   fixes: string[],
   doFix: boolean,
-): Promise<void> {
+): void {
   const raw = ctx.config.raw;
   const apiKey = raw.TRELLO_API_KEY;
   const apiToken = raw.TRELLO_TOKEN;
@@ -612,18 +579,12 @@ async function checkTrelloLists(
     return;
   }
 
-  // Fetch existing lists
   interface TrelloList { id: string; name: string; closed: boolean }
   let existingLists: TrelloList[];
   try {
-    const res = await fetch(
+    existingLists = curlGet<TrelloList[]>(
       `https://api.trello.com/1/boards/${boardId}/lists?key=${apiKey}&token=${apiToken}`,
     );
-    if (!res.ok) {
-      checks.push({ name: 'pm-lists', status: 'fail', message: `Trello lists API returned HTTP ${res.status}` });
-      return;
-    }
-    existingLists = await res.json() as TrelloList[];
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     checks.push({ name: 'pm-lists', status: 'fail', message: `Cannot fetch Trello lists: ${msg}` });
@@ -655,24 +616,14 @@ async function checkTrelloLists(
     }
   }
 
-  // Auto-create missing lists if --fix
   if (missing.length > 0) {
     if (doFix) {
       for (const req of missing) {
         try {
-          const res = await fetch(
+          const created = curlPost<TrelloList>(
             `https://api.trello.com/1/lists?key=${apiKey}&token=${apiToken}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: req.name, idBoard: boardId }),
-            },
+            { name: req.name, idBoard: boardId },
           );
-          if (!res.ok) {
-            checks.push({ name: 'pm-lists', status: 'fail', message: `Failed to create Trello list "${req.name}": HTTP ${res.status}` });
-            continue;
-          }
-          const created = await res.json() as TrelloList;
           confUpdates.push(`export ${req.confField}="${created.id}"`);
           checks.push({ name: 'pm-lists', status: 'pass', message: `Created Trello list "${req.name}" (${created.id})` });
         } catch (err) {
@@ -686,34 +637,45 @@ async function checkTrelloLists(
     }
   }
 
-  // Write conf updates
   if (confUpdates.length > 0 && doFix) {
-    try {
-      let confContent = readFileSync(ctx.paths.confFile, 'utf-8');
-      const appendLines: string[] = [];
-      for (const update of confUpdates) {
-        const field = update.match(/export (\w+)=/)?.[1];
-        if (!field) continue;
-        if (confContent.includes(`${field}=`)) {
-          confContent = confContent.replace(new RegExp(`^(export )?${field}=.*$`, 'm'), update);
-        } else {
-          appendLines.push(update);
-        }
-      }
-      writeFileSync(ctx.paths.confFile, confContent);
-      if (appendLines.length > 0) {
-        appendFileSync(ctx.paths.confFile, '\n# ── Trello List IDs (auto-configured by doctor --fix) ──\n' + appendLines.join('\n') + '\n');
-      }
-      fixes.push(`Updated ${confUpdates.length} Trello list ID(s) in conf`);
-      checks.push({ name: 'pm-lists', status: 'pass', message: `Configured ${confUpdates.length} Trello list ID(s)` });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      checks.push({ name: 'pm-lists', status: 'fail', message: `Failed to update conf: ${msg}` });
-    }
+    writeConfUpdates(ctx.paths.confFile, confUpdates, 'Trello List IDs', 'pm-lists', checks, fixes);
   }
 
   if (missing.length === 0 && confUpdates.length === 0) {
     checks.push({ name: 'pm-lists', status: 'pass', message: 'All 6 Trello lists configured and valid' });
+  }
+}
+
+/** Write conf updates: replace existing fields in-place, append new ones. */
+function writeConfUpdates(
+  confFile: string,
+  updates: string[],
+  section: string,
+  checkName: string,
+  checks: CheckResult[],
+  fixes: string[],
+): void {
+  try {
+    let confContent = readFileSync(confFile, 'utf-8');
+    const appendLines: string[] = [];
+    for (const update of updates) {
+      const field = update.match(/export (\w+)=/)?.[1];
+      if (!field) continue;
+      if (confContent.includes(`${field}=`)) {
+        confContent = confContent.replace(new RegExp(`^(export )?${field}=.*$`, 'm'), update);
+      } else {
+        appendLines.push(update);
+      }
+    }
+    writeFileSync(confFile, confContent);
+    if (appendLines.length > 0) {
+      appendFileSync(confFile, `\n# ── ${section} (auto-configured by doctor --fix) ──\n${appendLines.join('\n')}\n`);
+    }
+    fixes.push(`Updated ${updates.length} ${section} in conf`);
+    checks.push({ name: checkName, status: 'pass', message: `Configured ${updates.length} ${section}` });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({ name: checkName, status: 'fail', message: `Failed to update conf: ${msg}` });
   }
 }
 

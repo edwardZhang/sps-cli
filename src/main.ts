@@ -1,5 +1,25 @@
 #!/usr/bin/env node
 
+// Polyfill fetch for Node.js < 18.13 where it's not globally available.
+if (typeof globalThis.fetch === 'undefined') {
+  try {
+    // Node 16.15+ / 18+ have undici bundled; use it as polyfill
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const undici = require('undici') as Record<string, unknown>;
+    Object.assign(globalThis, {
+      fetch: undici.fetch,
+      Request: undici.Request,
+      Response: undici.Response,
+      Headers: undici.Headers,
+    });
+  } catch {
+    process.stderr.write(
+      'Warning: fetch is not available. Upgrade to Node.js >= 18.13 or install undici.\n' +
+      'Some features (Plane, Trello, GitLab API, Matrix) will not work.\n',
+    );
+  }
+}
+
 import { executeDoctor } from './commands/doctor.js';
 import { executeTick } from './commands/tick.js';
 import { executeSchedulerTick } from './commands/schedulerTick.js';
@@ -13,7 +33,7 @@ import { executeCardAdd } from './commands/cardAdd.js';
 import { executeSetup } from './commands/setup.js';
 import { executeWorkerDashboard } from './commands/workerDashboard.js';
 
-const VERSION = '0.10.0';
+const VERSION = '0.10.1';
 
 const COMMANDS: Record<string, { desc: string; usage: string }> = {
   setup:     { desc: 'Initial environment setup (credentials, directories)', usage: 'sps setup [--force]' },
