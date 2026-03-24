@@ -684,6 +684,8 @@ sps monitor tick my-project --json
 | `AGENTS.md` | Codex Worker 的项目规则 | 是 |
 | `.jarvis_task_prompt.txt` | 每次任务的具体描述（每个 worktree 独立生成） | 否（.gitignore） |
 | `.jarvis/merge.sh` | 合并脚本（MR_MODE=none 时做 git merge，MR_MODE=create 时调 GitLab API 创建 MR） | 否（.gitignore） |
+| `docs/DECISIONS.md` | 项目知识库——架构决策和技术选择 | 是（Worker 自动维护） |
+| `docs/CHANGELOG.md` | 项目知识库——变更记录 | 是（Worker 自动维护） |
 
 ### 工作原理
 
@@ -692,6 +694,15 @@ sps monitor tick my-project --json
 3. Worker 启动时读取 CLAUDE.md 了解项目规则（interactive 模式自动发现；print 模式在 cwd 中自动加载）
 4. 任务特有信息（seq、分支名、描述）写入 `.jarvis_task_prompt.txt`，通过 stdin 传给 Worker（print 模式）或通过 tmux paste 传入（interactive 模式）
 5. `.jarvis/merge.sh` 在每个 worktree 中自动生成，Worker 在 push 后运行此脚本完成合并或 MR 创建
+
+### 项目知识库
+
+每个 Worker 在任务 prompt 中被要求：
+
+- **开始前**：阅读 `docs/DECISIONS.md` 和 `docs/CHANGELOG.md`，了解前序任务的决策和变更
+- **完成后**：将自己的架构决策追加到 `docs/DECISIONS.md`，变更摘要追加到 `docs/CHANGELOG.md`
+
+这些文件随代码一起合并到目标分支，下一个 Worker 创建 worktree 时自动继承，实现跨任务的知识传递。
 
 ### 自定义项目规则
 
