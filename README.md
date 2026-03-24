@@ -55,8 +55,8 @@ npx tsx src/main.ts --help
 |------|---------|------|
 | Node.js | 18+ | CLI 运行环境 |
 | git | 2.x | 分支与 worktree 管理 |
-| tmux | 3.x | Worker 会话管理 |
 | Claude Code CLI 或 Codex CLI | 最新 | AI Worker |
+| tmux | 3.x | 仅 `WORKER_MODE=interactive` 时需要 |
 
 ## 快速开始
 
@@ -229,7 +229,7 @@ sps doctor <project> [--fix] [--json] [--skip-remote]
 | gitlab | GitLab API 连通性 |
 | plane | Plane API 连通性（仅 PM_TOOL=plane） |
 | worker-tool | Claude Code / Codex CLI 是否在 PATH 中 |
-| tmux | tmux 是否可用 |
+| tmux | tmux 是否可用（仅 `WORKER_MODE=interactive` 时必需） |
 
 | 选项 | 说明 |
 |------|------|
@@ -392,7 +392,7 @@ sps pipeline tick <project> [--json] [--dry-run]
 2. **处理 Backlog 卡片** — 创建分支 + 创建 worktree → 推入 Todo
 3. **处理 Todo 卡片** — 分配 Worker slot + 构建任务上下文 + 启动 Worker → 推入 Inprogress
 
-受 `MAX_ACTIONS_PER_TICK` 限制（默认 1），防止单轮 tick 同时启动过多 Worker。多个 Worker 启动之间有 10 秒间隔。
+受 `MAX_ACTIONS_PER_TICK` 限制（默认 1），防止单轮 tick 同时启动过多 Worker。多个 Worker 启动之间有间隔（print 模式 2 秒，interactive 模式 10 秒）。
 
 带有 `BLOCKED`、`NEEDS-FIX`、`CONFLICT`、`WAITING-CONFIRMATION`、`STALE-RUNTIME` 标签的卡片会被跳过。
 
@@ -421,14 +421,46 @@ sps worker launch <project> <seq> [--json] [--dry-run]
 
 **启动流程：**
 
-1. 分配空闲 Worker slot（优先复用有存活 tmux session 的 slot）
+1. 分配空闲 Worker slot
 2. 写入 `.jarvis_task_prompt.txt` 到 worktree
-3. 在 tmux session 中启动 Claude Code / Codex
-4. 等待 Worker 就绪（最长 90 秒）
-5. 发送任务 prompt
-6. 卡片推入 Inprogress
+3. 启动 Worker 进程
+4. 卡片推入 Inprogress
 
-**tmux session 复用策略（`WORKER_SESSION_REUSE=true`）：**
+**Worker 执行模式（`WORKER_MODE`）：**
+
+| 模式 | 默认 | 说明 |
+|------|------|------|
+| `print` | **是** | 一次性执行，进程退出 = 任务完成，不依赖 tmux |
+| `interactive` | 否 | 传统 tmux TUI 交互模式（降级方案） |
+
+**Print 模式（推荐）：**
+
+Worker 以子进程方式运行，prompt 通过 stdin 传入，输出写入 JSONL 文件：
+
+```
+Claude:  claude -p --output-format stream-json --dangerously-skip-permissions
+Codex:   codex exec - --json --dangerously-bypass-approvals-and-sandbox
+```
+
+核心优势：
+- **不会卡住** — 无 TUI 交互，进程退出即完成
+- **不需要确认** — 权限参数跳过所有确认弹窗
+- **上下文延续** — 通过 `--resume <sessionId>` 实现跨任务上下文复用（命中 prompt cache，节省 token）
+- **不依赖 tmux** — 纯进程管理，适合 CI/CD 环境
+
+**Session Resume 链：**
+
+同一 worktree 上的多次任务（初始实现 → CI 修复 → 冲突解决）共享同一个 session：
+
+```
+任务1: claude -p "实现功能"              → session_id_1（存入 state.json）
+CI修复: claude -p "修复CI" --resume sid  → 继承任务1的完整上下文
+冲突:   claude -p "解冲突" --resume sid  → 继承所有历史上下文
+```
+
+**Interactive 模式（降级方案）：**
+
+设置 `WORKER_MODE=interactive` 回退到 tmux 交互模式。此模式下复用策略：
 
 | 场景 | 行为 |
 |------|------|
@@ -455,14 +487,16 @@ sps worker dashboard [project1] [project2] ... [--once] [--json]
 |------|------|
 | （无参数） | 自动发现 `~/.projects/` 下所有项目 |
 | `--once` | 输出一次快照后退出（不进入实时模式） |
-| `--json` | 输出 JSON 格式（所有项目、所有 Worker slot 状态 + tmux pane 预览） |
+| `--json` | 输出 JSON 格式（所有项目、所有 Worker slot 状态 + 输出预览） |
 
 **实时模式：**
 
 - 默认每 3 秒刷新（可通过 `SPS_DASHBOARD_INTERVAL` 环境变量调整）
 - 按 `q` 退出，按 `r` 强制刷新
+- 使用 alternate screen buffer（不污染终端 scrollback）
 - 自适应网格布局，每个 Worker 一个面板
-- 面板显示：状态图标、项目名/slot、seq、分支名、运行时长、tmux 实时输出
+- Print 模式面板显示：PID、exit code、JSONL 渲染后的可读输出
+- Interactive 模式面板显示：tmux pane 实时输出
 
 **示例：**
 
@@ -580,7 +614,7 @@ sps qa tick <project> [--json]
 | MR 不存在 | 标记 `NEEDS-FIX` |
 | MR 已 merged | 释放资源 → Done |
 | MR open + CI 成功 + 可合并 | 自动 merge |
-| MR open + CI 失败 | 尝试自动修复或标记 `NEEDS-FIX` |
+| MR open + CI 失败 | 自动修复（print 模式通过 `--resume` 延续上下文）或标记 `NEEDS-FIX` |
 | MR open + CI 运行中 | 跳过，下轮再检查 |
 | MR open + 不可合并 | 标记 `CONFLICT` |
 | MR 已关闭（未 merge） | 标记 `NEEDS-FIX` |
@@ -616,10 +650,10 @@ sps monitor tick <project> [--json]
 
 | 检查 | 说明 |
 |------|------|
-| 孤儿 slot 清理 | tmux session 已死但 slot 仍标记 active |
+| 孤儿 slot 清理 | 进程/tmux session 已死但 slot 仍标记 active |
 | 超时检测 | Inprogress 超过 `INPROGRESS_TIMEOUT_HOURS` |
-| 等待确认检测 | Worker 等待用户确认（自动处理非破坏性确认） |
-| 阻塞检测 | Worker 遇到 error/fatal/stuck 等 |
+| 等待确认检测 | Worker 等待用户确认（仅 interactive 模式；print 模式无确认） |
+| 阻塞检测 | Worker 遇到 error/fatal/stuck 等（仅 interactive 模式） |
 | 状态对齐 | PM 状态与 runtime 状态是否一致 |
 
 **示例：**
@@ -645,8 +679,8 @@ sps monitor tick my-project --json
 
 1. `CLAUDE.md` 和 `AGENTS.md` 提交到仓库主分支
 2. 创建 git worktree 时自动继承这些文件
-3. Worker 启动时读取 CLAUDE.md 了解项目规则
-4. 任务特有信息（seq、分支名、描述）写入 `.jarvis_task_prompt.txt`
+3. Worker 启动时读取 CLAUDE.md 了解项目规则（interactive 模式自动发现；print 模式在 cwd 中自动加载）
+4. 任务特有信息（seq、分支名、描述）写入 `.jarvis_task_prompt.txt`，通过 stdin 传给 Worker（print 模式）或通过 tmux paste 传入（interactive 模式）
 
 ### 自定义项目规则
 
@@ -706,10 +740,11 @@ SPS 不会覆盖已存在的 CLAUDE.md / AGENTS.md。
 | 字段 | 必填 | 默认值 | 说明 |
 |------|------|-------|------|
 | `WORKER_TOOL` | 否 | `claude` | Worker 类型：`claude` / `codex` |
+| `WORKER_MODE` | 否 | `print` | 执行模式：`print`（一次性进程） / `interactive`（tmux TUI） |
 | `MAX_CONCURRENT_WORKERS` | 否 | `3` | 最大并行 Worker 数 |
 | `WORKER_RESTART_LIMIT` | 否 | `2` | Worker 死亡后最大重启次数 |
 | `AUTOFIX_ATTEMPTS` | 否 | `2` | CI 失败自动修复尝试次数 |
-| `WORKER_SESSION_REUSE` | 否 | `true` | 是否复用 tmux session |
+| `WORKER_SESSION_REUSE` | 否 | `true` | 是否复用 tmux session（仅 interactive 模式） |
 | `MAX_ACTIONS_PER_TICK` | 否 | `1` | 每轮 tick 最大操作数 |
 
 #### 超时与策略
@@ -752,8 +787,8 @@ PLANE_PROJECT_ID="project-uuid-here"
 
 # Worker
 WORKER_TOOL="claude"
+WORKER_MODE="print"              # print（推荐）或 interactive（tmux 降级）
 MAX_CONCURRENT_WORKERS=3
-WORKER_SESSION_REUSE=true
 MAX_ACTIONS_PER_TICK=1
 ```
 
@@ -800,7 +835,8 @@ Layer 0  Core Runtime          配置、路径、状态、锁、日志
 |------|----------|------|
 | PM 后端 | Plane CE / Trello / Markdown | TaskBackend |
 | 代码托管 | GitLab | RepoBackend |
-| AI Worker | Claude Code / Codex CLI | WorkerProvider |
+| AI Worker (print) | ClaudePrintProvider / CodexExecProvider | WorkerProvider |
+| AI Worker (interactive) | ClaudeTmuxProvider / CodexTmuxProvider | WorkerProvider |
 | 通知 | Matrix | Notifier |
 
 ### 引擎
@@ -855,12 +891,16 @@ workflow-cli/
 │   ├── models/                 # 类型定义
 │   │   └── types.ts            #   Card, CommandResult, WorkerStatus 等
 │   └── providers/              # 具体实现
-│       ├── registry.ts         #   Provider 工厂
+│       ├── registry.ts         #   Provider 工厂（按 WORKER_MODE × WORKER_TOOL 路由）
 │       ├── PlaneTaskBackend.ts
 │       ├── TrelloTaskBackend.ts
 │       ├── MarkdownTaskBackend.ts
-│       ├── ClaudeWorkerProvider.ts
-│       ├── CodexWorkerProvider.ts
+│       ├── ClaudePrintProvider.ts   # claude -p 一次性执行（默认）
+│       ├── CodexExecProvider.ts     # codex exec 一次性执行（默认）
+│       ├── ClaudeTmuxProvider.ts    # tmux 交互模式（降级方案）
+│       ├── CodexTmuxProvider.ts     # tmux 交互模式（降级方案）
+│       ├── outputParser.ts      #   JSONL 输出解析、进程管理工具
+│       ├── streamRenderer.ts    #   JSONL → 人类可读文本（Dashboard 用）
 │       ├── GitLabRepoBackend.ts
 │       └── MatrixNotifier.ts
 ├── package.json
