@@ -115,17 +115,37 @@ export class CloseoutEngine {
     const mrStatus = await this.repoBackend.getMrStatus(branchName);
 
     if (!mrStatus.exists || mrStatus.state === 'not_found') {
-      // MR not found → NEEDS-FIX
-      this.log.warn(`seq ${seq}: MR not found for branch ${branchName}`);
-      await this.markNeedsFix(seq, 'MR not found — worker may not have created it');
-      actions.push({
-        action: 'mark-needs-fix',
-        entity: `seq:${seq}`,
-        result: 'ok',
-        message: 'MR not found',
-      });
-      this.logEvent('closeout-no-mr', seq, 'ok');
-      return;
+      // MR not found → auto-create it (worker may have pushed but not created MR)
+      this.log.warn(`seq ${seq}: MR not found for branch ${branchName}, auto-creating`);
+      try {
+        const mrResult = await this.repoBackend.createOrUpdateMr(
+          branchName,
+          `${card.seq}: ${card.name}`,
+          `Auto-created by CloseoutEngine for seq:${card.seq}.\n\nBranch: ${branchName}`,
+        );
+        this.log.ok(`seq ${seq}: Auto-created MR ${mrResult.url} (iid=${mrResult.iid})`);
+        actions.push({
+          action: 'auto-create-mr',
+          entity: `seq:${seq}`,
+          result: 'ok',
+          message: `Auto-created MR (iid=${mrResult.iid})`,
+        });
+        this.logEvent('closeout-auto-mr', seq, 'ok', { url: mrResult.url, iid: mrResult.iid });
+        // Re-check MR status and process it on next tick
+        return;
+      } catch (mrErr) {
+        const mrMsg = mrErr instanceof Error ? mrErr.message : String(mrErr);
+        this.log.error(`seq ${seq}: Failed to auto-create MR: ${mrMsg}`);
+        await this.markNeedsFix(seq, `MR not found and auto-creation failed: ${mrMsg}`);
+        actions.push({
+          action: 'mark-needs-fix',
+          entity: `seq:${seq}`,
+          result: 'ok',
+          message: `MR auto-creation failed: ${mrMsg}`,
+        });
+        this.logEvent('closeout-no-mr', seq, 'ok');
+        return;
+      }
     }
 
     // MR exists — check state

@@ -3,7 +3,7 @@ import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
 import type { Notifier } from '../interfaces/Notifier.js';
-import type { CommandResult, ActionRecord, CheckResult, RecommendedAction } from '../models/types.js';
+import type { CommandResult, ActionRecord, CheckResult, RecommendedAction, WorkerStatus } from '../models/types.js';
 import { existsSync, statSync } from 'node:fs';
 import { readState, writeState } from '../core/state.js';
 import { Logger } from '../core/logger.js';
@@ -101,9 +101,19 @@ export class MonitorEngine {
           process.kill(slotState.pid, 0); // signal 0 = check alive
           continue; // PID alive → not orphan
         } catch {
-          // PID dead → fall through to orphan cleanup
+          // PID dead — but did the worker actually complete its task?
+          const completionStatus = await this.checkPrintWorkerCompletion(slotState);
+          if (completionStatus === 'COMPLETED') {
+            this.log.ok(
+              `Orphan slot ${slotName}: print-mode pid ${slotState.pid} is dead but task COMPLETED, handling as completion`,
+            );
+            const handled = await this.handleCompletedWorker(slotName, slotState, state, actions);
+            if (handled) orphansFound++; // only count if slot was actually released
+            continue;
+          }
+          // Not completed → fall through to orphan cleanup
           this.log.warn(
-            `Orphan slot ${slotName}: print-mode pid ${slotState.pid} is dead, releasing`,
+            `Orphan slot ${slotName}: print-mode pid ${slotState.pid} is dead (status=${completionStatus}), releasing`,
           );
         }
       } else if (slotState.mode === 'print' && !slotState.pid) {
@@ -204,7 +214,7 @@ export class MonitorEngine {
         continue;
       }
 
-      const [, slotState] = slotEntry;
+      const [slotName, slotState] = slotEntry;
       if (!slotState.tmuxSession) continue;
 
       // Determine if worker is alive
@@ -233,7 +243,22 @@ export class MonitorEngine {
       }
 
       if (!workerAlive) {
-        // Worker dead + card still Inprogress → check if MR exists
+        // Worker dead + card still Inprogress
+        // For print-mode workers, use full completion detection first
+        if (slotState.mode === 'print') {
+          const completionStatus = await this.checkPrintWorkerCompletion(slotState);
+          if (completionStatus === 'COMPLETED') {
+            this.log.ok(`seq ${card.seq}: Worker dead but detectCompleted → COMPLETED`);
+            const handled = await this.handleCompletedWorker(slotName, slotState, state, actions);
+            if (handled) {
+              try { writeState(this.ctx.paths.stateFile, state, 'monitor-stale-completed'); } catch { /* logged */ }
+            }
+            staleCount++;
+            continue;
+          }
+        }
+
+        // Fall back to MR-only check
         const branchName = slotState.branch || this.buildBranchName(card);
         const mrStatus = await this.repoBackend.getMrStatus(branchName);
 
@@ -606,10 +631,25 @@ export class MonitorEngine {
       }
 
       if (!pidAlive) {
-        // PID dead → auto-retry
+        // PID dead — but check if the worker actually completed its task first
+        const completionStatus = await this.checkPrintWorkerCompletion(slotState);
+        if (completionStatus === 'COMPLETED') {
+          this.log.ok(
+            `Worker health: ${slotName} pid ${slotState.pid} is dead but task COMPLETED`,
+          );
+          const handled = await this.handleCompletedWorker(slotName, slotState, state, actions);
+          if (handled) {
+            try { writeState(this.ctx.paths.stateFile, state, 'monitor-health-completed'); } catch { /* logged */ }
+            continue; // worker finished successfully
+          }
+          // Move-to-Done failed — fall through to auto-retry
+          this.log.warn(`Worker health: ${slotName} completed but move-to-Done failed, will auto-retry`);
+        }
+
+        // Not completed → auto-retry
         const seq = slotState.seq != null ? String(slotState.seq) : null;
         if (seq) {
-          this.log.warn(`Worker health: ${slotName} pid ${slotState.pid} is dead, auto-retrying seq ${seq}`);
+          this.log.warn(`Worker health: ${slotName} pid ${slotState.pid} is dead (status=${completionStatus}), auto-retrying seq ${seq}`);
           await this.autoRetry(seq, slotName, state, actions, 'Worker process died');
           issues++;
         }
@@ -791,6 +831,98 @@ export class MonitorEngine {
     try {
       await this.taskBackend.removeLabel(seq, label);
     } catch { /* best effort */ }
+  }
+
+  // ─── Completion-aware helpers for dead print-mode workers ─────
+
+  /**
+   * Check if a dead print-mode worker actually completed its task.
+   * Uses workerProvider.detectCompleted() with the slot's session/branch info.
+   */
+  private async checkPrintWorkerCompletion(
+    slotState: import('../core/state.js').WorkerSlotState,
+  ): Promise<WorkerStatus> {
+    if (!slotState.tmuxSession) return 'DEAD';
+    const branch = slotState.branch || '';
+    const logDir = this.ctx.paths.logsDir;
+    try {
+      return await this.workerProvider.detectCompleted(
+        slotState.tmuxSession,
+        logDir,
+        branch,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.debug(`detectCompleted failed for ${slotState.tmuxSession}: ${msg}`);
+      return 'DEAD';
+    }
+  }
+
+  /**
+   * Handle a dead print-mode worker that has been confirmed as COMPLETED.
+   * Mutates state in-place (releases slot, updates activeCards).
+   * Does NOT call writeState — caller is responsible for flushing state.
+   */
+  /**
+   * Handle a dead print-mode worker confirmed as COMPLETED.
+   * Returns true if card moved to Done + slot released (state mutated).
+   * Returns false if move failed (state NOT mutated, caller should not count as handled).
+   */
+  private async handleCompletedWorker(
+    slotName: string,
+    slotState: import('../core/state.js').WorkerSlotState,
+    state: import('../core/state.js').RuntimeState,
+    actions: ActionRecord[],
+  ): Promise<boolean> {
+    const seq = slotState.seq != null ? String(slotState.seq) : null;
+    if (!seq) return false;
+
+    // 1. Move card to Done FIRST — if this fails, don't touch state
+    const targetState = 'Done' as const;
+    try {
+      await this.taskBackend.move(seq, targetState);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`seq ${seq}: Failed to move to ${targetState}: ${msg}. Slot NOT released.`);
+      actions.push({
+        action: 'complete',
+        entity: `seq:${seq}`,
+        result: 'fail',
+        message: `Move to ${targetState} failed: ${msg}`,
+      });
+      return false;
+    }
+
+    // 2. Done confirmed — now release slot + cleanup (mutate state)
+    state.workers[slotName] = {
+      status: 'idle', seq: null, branch: null, worktree: null,
+      tmuxSession: null, claimedAt: null, lastHeartbeat: null,
+      mode: null, sessionId: null, pid: null, outputFile: null, exitCode: null,
+    };
+    delete state.activeCards[seq];
+    try { await this.taskBackend.releaseClaim(seq); } catch { /* best effort */ }
+
+    // 3. Mark worktree for cleanup
+    const branch = slotState.branch || '';
+    const worktreePath = slotState.worktree || '';
+    if (branch && worktreePath) {
+      const cleanup = state.worktreeCleanup ?? [];
+      if (!cleanup.some((e: { branch: string }) => e.branch === branch)) {
+        cleanup.push({ branch, worktreePath, markedAt: new Date().toISOString() });
+        state.worktreeCleanup = cleanup;
+      }
+    }
+
+    this.log.ok(`seq ${seq}: Worker completed (detected by monitor), moved to ${targetState}`);
+    await this.notifySafe(`seq:${seq} worker completed, moved to ${targetState}`, 'success');
+    actions.push({
+      action: 'complete',
+      entity: `seq:${seq}`,
+      result: 'ok',
+      message: `Worker completed (PID dead, artifacts verified) → ${targetState}`,
+    });
+    this.logEvent('complete', seq, 'ok', { detectedBy: 'monitor' });
+    return true;
   }
 
   // ─── Helpers ───────────────────────────────────────────────────

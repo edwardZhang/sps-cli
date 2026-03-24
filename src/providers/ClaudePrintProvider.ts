@@ -158,10 +158,32 @@ export class ClaudePrintProvider implements WorkerProvider {
         // ExecutionEngine will additionally check MR existence before moving to QA.
         return 'COMPLETED';
       }
+
+      // Worker may have committed locally but not pushed.
+      // Auto-push to avoid losing work and enable MR creation.
+      if (!pushed) {
+        const localAhead = branchCommitsAhead(worktree, branch, baseBranch);
+        if (localAhead > 0) {
+          this.log(`Branch ${branch} has ${localAhead} local commits but not pushed, auto-pushing`);
+          try {
+            execFileSync('git', ['-C', worktree, 'push', '-u', 'origin', branch], {
+              encoding: 'utf-8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            this.log(`Auto-push succeeded for branch ${branch}`);
+            return 'COMPLETED';
+          } catch (pushErr) {
+            this.log(`Auto-push failed for branch ${branch}: ${pushErr}`);
+            // Fall through to other checks
+          }
+        }
+      }
     }
 
-    // Check output text for completion keywords as secondary signal
-    if (outputFile) {
+    // Check output text for completion keywords — only when git verification
+    // is unavailable (no worktree or branch). If git checks ran and found
+    // no artifacts, keywords alone are not reliable (worker may have said
+    // "done" without actually pushing).
+    if (outputFile && (!worktree || !branch)) {
       const lastText = extractLastAssistantText(outputFile);
       if (COMPLETION_KEYWORDS.test(lastText)) {
         return 'COMPLETED';

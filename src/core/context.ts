@@ -31,5 +31,6 @@ export class ProjectContext {
   get workerTool() { return this.config.WORKER_TOOL; }
   get maxWorkers() { return this.config.MAX_CONCURRENT_WORKERS; }
   get ciMode() { return this.config.CI_MODE; }
+  get mrMode() { return this.config.MR_MODE; }
   get mergeBranch() { return this.config.GITLAB_MERGE_BRANCH; }
 }

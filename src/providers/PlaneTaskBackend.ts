@@ -257,7 +257,7 @@ export class PlaneTaskBackend implements TaskBackend {
 
   async comment(seq: string, text: string): Promise<void> {
     const issue = await this.resolveIssue(seq);
-    await this.request('POST', `/issues/${issue.id}/activities/`, {
+    await this.request('POST', `/issues/${issue.id}/comments/`, {
       comment_html: `<p>${escapeHtml(text)}</p>`,
     });
   }

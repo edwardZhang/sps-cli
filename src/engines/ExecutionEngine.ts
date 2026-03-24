@@ -235,38 +235,102 @@ export class ExecutionEngine {
           return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'dry-run: would move to QA' };
         }
 
-        // Check if MR exists before moving to QA — worker may still be creating it
-        try {
-          const mrStatus = await this.repoBackend.getMrStatus(branch);
-          if (!mrStatus.exists) {
-            this.log.info(`seq ${seq}: Worker completed but MR not yet created, waiting`);
-            return null; // retry next tick
-          }
-        } catch {
-          // Can't check MR — proceed anyway, closeout will handle it
-        }
-
-        // Move card to QA
-        try {
-          await this.taskBackend.move(seq, 'QA');
-          this.log.ok(`seq ${seq}: Worker completed, moved Inprogress → QA`);
-
-          // Update state.json
-          const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-          if (freshState.activeCards[seq]) {
-            freshState.activeCards[seq].state = 'QA';
-            writeState(this.ctx.paths.stateFile, freshState, 'pipeline-complete');
+        if (this.ctx.mrMode === 'none') {
+          // ── MR_MODE=none: worker merges directly to target branch ──
+          // Check if feature branch is merged into target
+          const worktree = slotState.worktree;
+          let isMerged = false;
+          if (worktree) {
+            try {
+              // Fetch latest and check if feature commits are in target
+              const { execFileSync } = await import('node:child_process');
+              try { execFileSync('git', ['-C', worktree, 'fetch', 'origin', '--quiet'], { timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* offline ok */ }
+              const unmerged = execFileSync('git', ['-C', worktree, 'rev-list', '--count', `origin/${this.ctx.mergeBranch}..${branch}`], { encoding: 'utf-8', timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+              isMerged = parseInt(unmerged, 10) === 0;
+            } catch { /* git error, fall through */ }
           }
 
-          this.logEvent('complete', seq, 'ok', { worker: slotName });
-          if (this.notifier) {
-            await this.notifier.sendSuccess(`[${this.ctx.projectName}] seq:${seq} worker completed, moved to QA`).catch(() => {});
+          if (!isMerged) {
+            // Worker pushed but didn't merge to target yet — resume it
+            this.log.info(`seq ${seq}: Branch not merged into ${this.ctx.mergeBranch}, resuming worker`);
+            const isPrintMode = slotState.mode === 'print';
+            if (isPrintMode && slotState.sessionId) {
+              const resumeResult = await this.attemptMergeResume(seq, slotName, slotState, card);
+              if (resumeResult) return resumeResult;
+            }
+            // Resume not possible — system merges directly as fallback
+            this.log.info(`seq ${seq}: Resume not possible, system merging directly`);
+            let mergeFailed = true;
+            if (worktree) {
+              try {
+                await this.repoBackend.rebase(worktree, this.ctx.mergeBranch);
+                await this.repoBackend.push(worktree, branch, true);
+                const { execFileSync } = await import('node:child_process');
+                execFileSync('git', ['-C', worktree, 'checkout', this.ctx.mergeBranch], { timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] });
+                execFileSync('git', ['-C', worktree, 'merge', '--no-ff', branch, '-m', `Merge ${branch} into ${this.ctx.mergeBranch}`], { timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] });
+                execFileSync('git', ['-C', worktree, 'push', 'origin', this.ctx.mergeBranch], { timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
+                this.log.ok(`seq ${seq}: System fallback merged ${branch} into ${this.ctx.mergeBranch}`);
+                mergeFailed = false;
+              } catch (mergeErr) {
+                const msg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
+                this.log.error(`seq ${seq}: System fallback merge failed: ${msg}`);
+              }
+            }
+            if (mergeFailed) {
+              // Merge failed — mark NEEDS-FIX, don't move to Done
+              try { await this.taskBackend.addLabel(seq, 'NEEDS-FIX'); } catch { /* best effort */ }
+              try { await this.taskBackend.comment(seq, `Branch pushed but merge to ${this.ctx.mergeBranch} failed. Manual merge needed.`); } catch { /* best effort */ }
+              this.logEvent('merge-failed', seq, 'fail');
+              return { action: 'mark-needs-fix', entity: `seq:${seq}`, result: 'ok', message: `System merge to ${this.ctx.mergeBranch} failed — NEEDS-FIX` };
+            }
           }
-          return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Inprogress → QA (worker completed)' };
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          this.log.error(`Failed to move seq ${seq} to QA: ${msg}`);
-          return { action: 'complete', entity: `seq:${seq}`, result: 'fail', message: `Move to QA failed: ${msg}` };
+
+          // Merge confirmed — move to Done + release resources + cleanup worktree
+          return await this.completeAndRelease(card, slotName, slotState);
+
+        } else {
+          // ── MR_MODE=create: worker creates MR, task is done ──
+          let mrExists = false;
+          try {
+            const mrStatus = await this.repoBackend.getMrStatus(branch);
+            mrExists = mrStatus.exists;
+          } catch { /* can't check */ }
+
+          if (!mrExists) {
+            // MR not found — try resume worker to create it
+            this.log.info(`seq ${seq}: MR not found, resuming worker to create it`);
+            const isPrintMode = slotState.mode === 'print';
+            if (isPrintMode && slotState.sessionId) {
+              const resumeResult = await this.attemptMergeResume(seq, slotName, slotState, card);
+              if (resumeResult) return resumeResult;
+            }
+            // Fallback: system creates MR
+            this.log.info(`seq ${seq}: Resume not possible, system creating MR`);
+            try {
+              await this.repoBackend.createOrUpdateMr(
+                branch,
+                `${card.seq}: ${card.name}`,
+                `Auto-created by pipeline for seq:${card.seq}.\n\nBranch: ${branch}`,
+              );
+              this.log.ok(`seq ${seq}: System created MR for branch ${branch}`);
+              mrExists = true;
+            } catch (mrErr) {
+              const mrMsg = mrErr instanceof Error ? mrErr.message : String(mrErr);
+              this.log.error(`seq ${seq}: System MR creation failed: ${mrMsg}`);
+            }
+          }
+
+          if (!mrExists) {
+            // MR creation failed — mark NEEDS-FIX
+            this.log.error(`seq ${seq}: MR creation failed after all attempts`);
+            try { await this.taskBackend.addLabel(seq, 'NEEDS-FIX'); } catch { /* best effort */ }
+            try { await this.taskBackend.comment(seq, 'Branch pushed but MR creation failed. Manual MR needed.'); } catch { /* best effort */ }
+            this.logEvent('mr-creation-failed', seq, 'fail');
+            return { action: 'mark-needs-fix', entity: `seq:${seq}`, result: 'ok', message: 'MR creation failed — NEEDS-FIX' };
+          }
+
+          // MR confirmed — task is done, release resources
+          return await this.completeAndRelease(card, slotName, slotState);
         }
       }
 
@@ -626,13 +690,18 @@ export class ExecutionEngine {
 
     const branchName = this.buildBranchName(card);
 
-    // Read project rules from CLAUDE.md (if exists)
+    // Read project rules from CLAUDE.md + AGENTS.md (if exist)
     const claudeMdPath = resolve(worktreePath, 'CLAUDE.md');
+    const agentsMdPath = resolve(worktreePath, 'AGENTS.md');
     let projectRules = '';
     if (existsSync(claudeMdPath)) {
       projectRules = readFileSync(claudeMdPath, 'utf-8').trim();
     } else {
       this.log.warn(`CLAUDE.md not found in worktree — run: sps doctor ${this.ctx.projectName} --fix`);
+    }
+    if (existsSync(agentsMdPath)) {
+      const agentsRules = readFileSync(agentsMdPath, 'utf-8').trim();
+      projectRules = projectRules ? `${projectRules}\n\n${agentsRules}` : agentsRules;
     }
 
     // .jarvis_task_prompt.txt — project rules + task-specific prompt
@@ -645,31 +714,30 @@ export class ExecutionEngine {
       sections.push('---');
     }
 
-    // Build requirements based on CI mode
-    const ciMode = this.ctx.config.CI_MODE;
-    const hasCI = ciMode === 'gitlab' || ciMode === 'local';
+    // Build requirements based on MR mode
+    const mrMode = this.ctx.mrMode;   // 'none' | 'create'
+    const createMR = mrMode === 'create';
+
+    // Generate .jarvis/merge.sh — direct merge (MR_MODE=none) or create MR (MR_MODE=create).
+    this.writeMergeScript(worktreePath, branchName, card, createMR);
+
+    const mergeStepDesc = createMR
+      ? 'Create the Merge Request'
+      : `Merge your changes into ${this.ctx.mergeBranch}`;
 
     const requirements = [
       '1. Implement the changes described above',
       '2. Self-test your changes (run existing tests if any, ensure no regressions)',
       `3. git add, commit, and push to branch ${branchName}`,
-      `4. Create a Merge Request targeting ${this.ctx.mergeBranch}`,
+      `4. ${mergeStepDesc} by running:`,
+      '   ```bash',
+      '   bash .jarvis/merge.sh',
+      '   ```',
+      '5. Verify the script output shows success, then say "done"',
     ];
 
-    if (hasCI) {
-      // CI configured — Worker creates MR, pipeline handles CI wait + merge
-      requirements.push('5. Say "done" when finished');
-      requirements.push('');
-      requirements.push('NOTE: CI pipeline will run automatically after you push. Do NOT wait for CI — just create the MR and say "done". The pipeline will handle CI monitoring and auto-merge.');
-    } else {
-      // No CI — Worker should merge the MR itself after verifying
-      requirements.push('5. Verify the MR can be merged (no conflicts)');
-      requirements.push('6. Merge the MR via GitLab API or git merge');
-      requirements.push('7. Say "done" when finished');
-    }
-
     requirements.push('');
-    requirements.push('IMPORTANT: After completing, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, python -m http.server, docker compose up, or any dev server / watch mode). These block the pipeline.');
+    requirements.push('IMPORTANT: You MUST complete ALL steps above. Step 4 (bash .jarvis/merge.sh) is MANDATORY — just pushing code is NOT enough. After completing, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, docker compose up, or any dev server / watch mode).');
 
     sections.push(`# Current Task
 
@@ -679,7 +747,7 @@ Branch: ${branchName}
 Target Branch: ${this.ctx.mergeBranch}
 Card Full ID: ${card.id}
 GitLab Project ID: ${this.ctx.config.GITLAB_PROJECT_ID}
-CI Mode: ${ciMode}
+MR Mode: ${mrMode}
 
 Description:
 ${card.desc || '(no description)'}
@@ -691,6 +759,192 @@ ${requirements.join('\n')}`);
       resolve(worktreePath, '.jarvis_task_prompt.txt'),
       sections.join('\n\n') + '\n',
     );
+  }
+
+  /**
+   * Write .jarvis/merge.sh into the worktree.
+   * A self-contained script that creates MR and (if no CI) merges it.
+   * Worker just runs: bash .jarvis/merge.sh
+   */
+  private writeMergeScript(
+    worktreePath: string,
+    branchName: string,
+    card: Card,
+    createMR: boolean,
+  ): void {
+    const jarvisDir = resolve(worktreePath, '.jarvis');
+    if (!existsSync(jarvisDir)) {
+      mkdirSync(jarvisDir, { recursive: true });
+    }
+
+    const gitlabProjectId = this.ctx.config.GITLAB_PROJECT_ID;
+    const gitlabUrl = this.ctx.config.raw.GITLAB_URL || process.env.GITLAB_URL || '';
+    const gitlabToken = this.ctx.config.raw.GITLAB_TOKEN || process.env.GITLAB_TOKEN || '';
+    const targetBranch = this.ctx.mergeBranch;
+    const title = `${card.seq}: ${card.name}`.replace(/"/g, '\\"');
+
+    let lines: string[];
+
+    if (!createMR) {
+      // ── MR_MODE=none: direct git merge to target branch ──
+      lines = [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        '',
+        '# Auto-generated by sps pipeline. Merges feature branch directly into target.',
+        '',
+        `SOURCE_BRANCH="${branchName}"`,
+        `TARGET_BRANCH="${targetBranch}"`,
+        '',
+        'echo "Merging $SOURCE_BRANCH → $TARGET_BRANCH"',
+        '',
+        '# Ensure we have latest target',
+        'git fetch origin "$TARGET_BRANCH"',
+        '',
+        '# Rebase feature onto latest target to avoid conflicts',
+        'git rebase "origin/$TARGET_BRANCH" || {',
+        '  echo "Rebase conflict — attempting to resolve..."',
+        '  git rebase --abort 2>/dev/null || true',
+        '  echo "ERROR: Rebase failed. Please resolve conflicts manually."',
+        '  exit 1',
+        '}',
+        '',
+        '# Switch to target, merge, push',
+        'git checkout "$TARGET_BRANCH"',
+        'git pull origin "$TARGET_BRANCH"',
+        `git merge --no-ff "$SOURCE_BRANCH" -m "Merge ${branchName} into ${targetBranch}"`,
+        'git push origin "$TARGET_BRANCH"',
+        '',
+        'echo "Successfully merged $SOURCE_BRANCH into $TARGET_BRANCH"',
+        'echo "done"',
+      ];
+    } else {
+      // ── MR_MODE=create: create MR via GitLab API ──
+      lines = [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        '',
+        '# Auto-generated by sps pipeline. Creates MR for CI.',
+        '',
+        `GITLAB_URL="${gitlabUrl}"`,
+        `GITLAB_TOKEN="${gitlabToken}"`,
+        `PROJECT_ID="${gitlabProjectId}"`,
+        `SOURCE_BRANCH="${branchName}"`,
+        `TARGET_BRANCH="${targetBranch}"`,
+        `TITLE="${title}"`,
+        '',
+        'API="$GITLAB_URL/api/v4/projects/$PROJECT_ID"',
+        '',
+        'echo "Creating MR: $SOURCE_BRANCH → $TARGET_BRANCH"',
+        'MR_RESPONSE=$(curl -sf -X POST \\',
+        '  -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \\',
+        '  -H "Content-Type: application/json" \\',
+        '  -d "{',
+        '    \\"source_branch\\": \\"$SOURCE_BRANCH\\",',
+        '    \\"target_branch\\": \\"$TARGET_BRANCH\\",',
+        '    \\"title\\": \\"$TITLE\\"',
+        '  }" \\',
+        '  "$API/merge_requests" 2>&1) || {',
+        '  echo "Create failed, looking for existing MR..."',
+        '  MR_RESPONSE=$(curl -sf \\',
+        '    -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \\',
+        '    "$API/merge_requests?source_branch=$SOURCE_BRANCH&target_branch=$TARGET_BRANCH&state=opened" \\',
+        '    | sed "s/^\\[//;s/\\]$//")',
+        '}',
+        '',
+        'MR_IID=$(echo "$MR_RESPONSE" | grep -o \'"iid":[0-9]*\' | head -1 | grep -o \'[0-9]*\')',
+        '',
+        'if [ -z "$MR_IID" ]; then',
+        '  echo "ERROR: Failed to create or find MR"',
+        '  exit 1',
+        'fi',
+        '',
+        'echo "MR created (iid=$MR_IID)"',
+        'echo "done"',
+      ];
+    }
+
+    writeFileSync(resolve(jarvisDir, 'merge.sh'), lines.join('\n') + '\n', { mode: 0o755 });
+  }
+
+  /**
+   * Complete a card directly: Done + release slot + mark worktree for cleanup.
+   * Used for CI_MODE=none where worker merges directly (no QA/CloseoutEngine needed).
+   */
+  private async completeAndRelease(
+    card: Card,
+    slotName: string,
+    slotState: import('../core/state.js').WorkerSlotState,
+  ): Promise<ActionRecord> {
+    const seq = card.seq;
+    const errors: string[] = [];
+
+    // 1. Move card to Done — if this fails, abort (don't release slot)
+    try {
+      await this.taskBackend.move(seq, 'Done');
+      this.log.ok(`seq ${seq}: Moved Inprogress → Done`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`seq ${seq}: Failed to move to Done: ${msg}. Slot NOT released.`);
+      return { action: 'complete-direct', entity: `seq:${seq}`, result: 'fail', message: `Move to Done failed: ${msg}` };
+    }
+
+    // 2. Release claim
+    try {
+      await this.taskBackend.releaseClaim(seq);
+    } catch { /* best effort */ }
+
+    // 3. Release worker slot (only after Done confirmed)
+    try {
+      const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+      if (state.workers[slotName]) {
+        const sessionName = state.workers[slotName].tmuxSession;
+        state.workers[slotName] = {
+          status: 'idle', seq: null, branch: null, worktree: null,
+          tmuxSession: null, claimedAt: null, lastHeartbeat: null,
+          mode: null, sessionId: null, pid: null, outputFile: null, exitCode: null,
+        };
+        delete state.activeCards[seq];
+
+        // 4. Mark worktree for cleanup
+        const branchName = slotState.branch || this.buildBranchName(card);
+        const worktreePath = slotState.worktree || resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
+        const cleanup = state.worktreeCleanup ?? [];
+        if (!cleanup.some((e: { branch: string }) => e.branch === branchName)) {
+          cleanup.push({ branch: branchName, worktreePath, markedAt: new Date().toISOString() });
+          state.worktreeCleanup = cleanup;
+        }
+
+        writeState(this.ctx.paths.stateFile, state, 'pipeline-complete-release');
+        this.log.ok(`seq ${seq}: Slot ${slotName} released, worktree marked for cleanup`);
+
+        // 5. Stop worker session
+        if (sessionName) {
+          this.workerProvider.stop(sessionName).catch(() => {});
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`seq ${seq}: Failed to release resources: ${msg}`);
+      errors.push(`release: ${msg}`);
+    }
+
+    this.logEvent('complete-direct', seq, errors.length === 0 ? 'ok' : 'fail', { slotName });
+    if (this.notifier) {
+      const statusMsg = errors.length === 0
+        ? `seq:${seq} completed — merged to ${this.ctx.mergeBranch}, resources released`
+        : `seq:${seq} completed with errors: ${errors.join('; ')}`;
+      await this.notifier.sendSuccess(`[${this.ctx.projectName}] ${statusMsg}`).catch(() => {});
+    }
+
+    return {
+      action: 'complete-direct',
+      entity: `seq:${seq}`,
+      result: errors.length === 0 ? 'ok' : 'fail',
+      message: errors.length === 0
+        ? `Inprogress → Done (merged to ${this.ctx.mergeBranch}, resources released)`
+        : `Completed with errors: ${errors.join('; ')}`,
+    };
   }
 
   /**
@@ -807,15 +1061,15 @@ ${requirements.join('\n')}`);
         `Branch: ${branch}`,
         `Target: ${this.ctx.mergeBranch}`,
         '',
-        'Please check the current state of the code and continue:',
-        '1. Review what has been done so far (git log, existing files)',
+        'Please check the current state and continue:',
+        '1. Review what has been done (git log, git status)',
         '2. Complete any remaining implementation',
         '3. Self-test your changes',
-        '4. git add, commit, and push to the branch',
-        '5. Create a Merge Request if not already created',
+        `4. git add, commit, and push to branch ${branch}`,
+        '5. Create and merge the MR by running: bash .jarvis/merge.sh',
         '6. Say "done" when finished',
         '',
-        'IMPORTANT: After creating the MR, say "done" and STOP. Do NOT run dev servers or watch commands.',
+        'IMPORTANT: Step 5 (bash .jarvis/merge.sh) is MANDATORY. Do NOT skip it.',
       ].join('\n');
 
       const resumeResult = await this.workerProvider.sendFix(session, continuePrompt, sessionId);
@@ -859,6 +1113,85 @@ ${requirements.join('\n')}`);
       const msg = err instanceof Error ? err.message : String(err);
       this.log.error(`seq ${seq}: Resume failed: ${msg}`);
       return null; // caller handles NEEDS-FIX
+    }
+  }
+
+  /**
+   * Resume a worker specifically to create MR and merge it.
+   * Used when worker completed coding + push but didn't create/merge MR.
+   */
+  private async attemptMergeResume(
+    seq: string,
+    slotName: string,
+    slotState: import('../core/state.js').WorkerSlotState,
+    card: Card,
+  ): Promise<ActionRecord | null> {
+    const session = slotState.tmuxSession;
+    const sessionId = slotState.sessionId;
+    if (!session || !sessionId) return null;
+
+    // Guard against infinite merge-resume loop
+    const maxRetries = this.ctx.config.WORKER_RESTART_LIMIT;
+    let meta: Record<string, unknown>;
+    try { meta = await this.taskBackend.metaRead(seq); } catch { meta = {}; }
+    const mergeAttempts = typeof meta.mergeResumeAttempts === 'number' ? meta.mergeResumeAttempts : 0;
+    if (mergeAttempts >= maxRetries) {
+      this.log.warn(`seq ${seq}: Merge resume retries exhausted (${mergeAttempts}/${maxRetries})`);
+      return null; // fall through to system fallback
+    }
+
+    const branch = slotState.branch || this.buildBranchName(card);
+    const gitlabProjectId = this.ctx.config.GITLAB_PROJECT_ID;
+
+    const mergePrompt = [
+      'Your code changes are complete and pushed, but the Merge Request has not been created/merged yet.',
+      '',
+      `Task: ${card.name}`,
+      `Branch: ${branch}`,
+      `Target: ${this.ctx.mergeBranch}`,
+      '',
+      'Run this ONE command to create and merge the MR:',
+      '',
+      '  bash .jarvis/merge.sh',
+      '',
+      'Then say "done".',
+    ].join('\n');
+
+    try {
+      const resumeResult = await this.workerProvider.sendFix(session, mergePrompt, sessionId);
+
+      if (resumeResult && typeof resumeResult === 'object' && 'pid' in resumeResult) {
+        const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+        if (freshState.workers[slotName]) {
+          freshState.workers[slotName].pid = resumeResult.pid;
+          freshState.workers[slotName].outputFile = resumeResult.outputFile;
+          if (resumeResult.sessionId) {
+            freshState.workers[slotName].sessionId = resumeResult.sessionId;
+          }
+          freshState.workers[slotName].exitCode = null;
+          freshState.workers[slotName].lastHeartbeat = new Date().toISOString();
+          writeState(this.ctx.paths.stateFile, freshState, 'pipeline-merge-resume');
+        }
+      }
+
+      // Increment merge resume counter
+      await this.taskBackend.metaWrite(seq, {
+        ...meta,
+        mergeResumeAttempts: mergeAttempts + 1,
+      });
+
+      this.log.info(`seq ${seq}: Resumed worker to create/merge MR (attempt ${mergeAttempts + 1}/${maxRetries})`);
+      this.logEvent('merge-resume', seq, 'ok', { branch, attempt: mergeAttempts + 1 });
+      return {
+        action: 'merge-resume',
+        entity: `seq:${seq}`,
+        result: 'ok',
+        message: `Worker resumed to create/merge MR (${mergeAttempts + 1}/${maxRetries})`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`seq ${seq}: Merge resume failed: ${msg}`);
+      return null;
     }
   }
 

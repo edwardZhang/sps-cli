@@ -2,10 +2,10 @@
 
 [![npm](https://img.shields.io/npm/v/@coralai/sps-cli)](https://www.npmjs.com/package/@coralai/sps-cli)
 
-SPS（Smart Pipeline System）是一套 AI Agent 驱动的全自动开发流水线 CLI 工具。从任务卡片创建到代码合并部署，全程无人值守。
+SPS（Smart Pipeline System）是一套 AI Agent 驱动的全自动开发流水线 CLI 工具。从任务卡片创建到代码合并，全程无人值守。
 
 ```
-创建卡片 → 启动 pipeline → AI 自动编码 → 自动创建 MR → 自动 merge → 通知完成
+创建卡片 → 启动 pipeline → AI 自动编码 → 自动合并到目标分支 → 通知完成
 ```
 
 ## 目录
@@ -96,17 +96,34 @@ sps worker dashboard
 
 每张任务卡片按以下状态机流转，全程由 SPS 自动驱动：
 
+### MR_MODE=none（默认，推荐）
+
+Worker 完成编码后直接合并到目标分支，跳过 MR/CI/QA 环节：
+
 ```
-Planning → Backlog → Todo → Inprogress → QA → Done
+Planning → Backlog → Todo → Inprogress → Done
 ```
 
 | 阶段 | 触发引擎 | 操作 |
 |------|---------|------|
 | Planning → Backlog | SchedulerEngine | 选卡入队，检查准入条件 |
-| Backlog → Todo | ExecutionEngine | 创建分支、创建 worktree |
+| Backlog → Todo | ExecutionEngine | 创建分支、创建 worktree、生成 `.jarvis/merge.sh` |
 | Todo → Inprogress | ExecutionEngine | 分配 Worker slot、构建任务上下文、启动 AI Worker |
-| Inprogress → QA | ExecutionEngine | 检测 Worker 完成、确认 MR 已创建 |
-| QA → Done | CloseoutEngine | CI 检查、自动 merge、释放资源、清理 worktree |
+| Inprogress → Done | ExecutionEngine | 检测 Worker 完成（代码已合并到目标分支）、释放资源、清理 worktree |
+
+Worker 执行的最后一步是运行 `bash .jarvis/merge.sh`，该脚本自动将 feature branch rebase 并合并到目标分支。
+
+### MR_MODE=create（可选）
+
+Worker 完成编码后创建 MR，任务即完成。MR 审核由后续流程处理（待开发）：
+
+```
+Planning → Backlog → Todo → Inprogress → Done（MR 已创建）
+```
+
+| 阶段 | 触发引擎 | 操作 |
+|------|---------|------|
+| Inprogress → Done | ExecutionEngine | 检测 Worker 完成（MR 已创建）、释放资源、清理 worktree |
 
 ### 辅助状态标签
 
@@ -388,8 +405,8 @@ sps pipeline tick <project> [--json] [--dry-run]
 
 **内部步骤：**
 
-1. **检查 Inprogress 卡片** — 检测 Worker 完成状态，完成的卡片推入 QA
-2. **处理 Backlog 卡片** — 创建分支 + 创建 worktree → 推入 Todo
+1. **检查 Inprogress 卡片** — 检测 Worker 完成状态，MR_MODE=none 直接推入 Done，MR_MODE=create 确认 MR 后推入 Done
+2. **处理 Backlog 卡片** — 创建分支 + 创建 worktree + 生成 `.jarvis/merge.sh` → 推入 Todo
 3. **处理 Todo 卡片** — 分配 Worker slot + 构建任务上下文 + 启动 Worker → 推入 Inprogress
 
 受 `MAX_ACTIONS_PER_TICK` 限制（默认 1），防止单轮 tick 同时启动过多 Worker。多个 Worker 启动之间有间隔（print 模式 2 秒，interactive 模式 10 秒）。
@@ -601,23 +618,15 @@ sps pm checklist check my-project 24 item-001
 
 ### sps qa tick
 
-手动执行 QA 闭环：QA → merge → Done → 清理 worktree。
+QA 闭环与 worktree 清理。
 
 ```bash
 sps qa tick <project> [--json]
 ```
 
-**每张 QA 卡片的决策树：**
+**MR_MODE=none 时：** QA 阶段主要负责 worktree 清理。Worker 完成后由 ExecutionEngine 直接推入 Done。
 
-| 条件 | 操作 |
-|------|------|
-| MR 不存在 | 标记 `NEEDS-FIX` |
-| MR 已 merged | 释放资源 → Done |
-| MR open + CI 成功 + 可合并 | 自动 merge |
-| MR open + CI 失败 | 自动修复（print 模式通过 `--resume` 延续上下文）或标记 `NEEDS-FIX` |
-| MR open + CI 运行中 | 跳过，下轮再检查 |
-| MR open + 不可合并 | 标记 `CONFLICT` |
-| MR 已关闭（未 merge） | 标记 `NEEDS-FIX` |
+**MR_MODE=create 时：** QA 作为遗留兼容路径，处理到达 QA 状态的卡片（自动创建 MR 或标记 `NEEDS-FIX`）。
 
 **Worktree 自动清理：**
 
@@ -674,6 +683,7 @@ sps monitor tick my-project --json
 | `CLAUDE.md` | Claude Code Worker 的项目规则 | 是 |
 | `AGENTS.md` | Codex Worker 的项目规则 | 是 |
 | `.jarvis_task_prompt.txt` | 每次任务的具体描述（每个 worktree 独立生成） | 否（.gitignore） |
+| `.jarvis/merge.sh` | 合并脚本（MR_MODE=none 时做 git merge，MR_MODE=create 时调 GitLab API 创建 MR） | 否（.gitignore） |
 
 ### 工作原理
 
@@ -681,6 +691,7 @@ sps monitor tick my-project --json
 2. 创建 git worktree 时自动继承这些文件
 3. Worker 启动时读取 CLAUDE.md 了解项目规则（interactive 模式自动发现；print 模式在 cwd 中自动加载）
 4. 任务特有信息（seq、分支名、描述）写入 `.jarvis_task_prompt.txt`，通过 stdin 传给 Worker（print 模式）或通过 tmux paste 传入（interactive 模式）
+5. `.jarvis/merge.sh` 在每个 worktree 中自动生成，Worker 在 push 后运行此脚本完成合并或 MR 创建
 
 ### 自定义项目规则
 
@@ -734,6 +745,7 @@ SPS 不会覆盖已存在的 CLAUDE.md / AGENTS.md。
 |------|------|-------|------|
 | `PM_TOOL` | 否 | `trello` | PM 后端类型：`plane` / `trello` / `markdown` |
 | `PIPELINE_LABEL` | 否 | `AI-PIPELINE` | Pipeline 卡片标签 |
+| `MR_MODE` | 否 | `none` | 合并模式：`none`（直接合并到目标分支） / `create`（创建 MR，审核流程待开发） |
 
 #### Worker
 
@@ -790,6 +802,9 @@ WORKER_TOOL="claude"
 WORKER_MODE="print"              # print（推荐）或 interactive（tmux 降级）
 MAX_CONCURRENT_WORKERS=3
 MAX_ACTIONS_PER_TICK=1
+
+# 合并模式
+MR_MODE="none"                   # none（直接合并）或 create（创建 MR）
 ```
 
 ---
@@ -844,9 +859,9 @@ Layer 0  Core Runtime          配置、路径、状态、锁、日志
 | 引擎 | 职责 |
 |------|------|
 | SchedulerEngine | Planning → Backlog（选卡、排序、准入检查） |
-| ExecutionEngine | Backlog → Todo → Inprogress（准备环境、启动 Worker、检测完成） |
-| CloseoutEngine | QA → merge → Done（CI 检查、自动 merge、资源释放、worktree 清理） |
-| MonitorEngine | 异常检测（孤儿清理、超时、阻塞、状态对齐） |
+| ExecutionEngine | Backlog → Todo → Inprogress → Done（准备环境、启动 Worker、检测完成、释放资源） |
+| CloseoutEngine | worktree 清理（MR_MODE=create 时兼容处理 QA 卡片） |
+| MonitorEngine | 异常检测（孤儿清理、超时、阻塞、状态对齐、死亡 Worker 完成检测） |
 
 ---
 

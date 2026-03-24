@@ -15,6 +15,7 @@ import {
   parseCodexSessionId,
   isProcessAlive,
   killProcessGroup,
+  extractLastAssistantText,
   branchCommitsAhead,
   branchPushed,
 } from './outputParser.js';
@@ -128,6 +129,7 @@ export class CodexExecProvider implements WorkerProvider {
 
     // Process exited — verify with git artifacts
     const worktree = slotInfo?.worktree ?? null;
+    const outputFile = proc?.outputFile ?? slotInfo?.outputFile ?? null;
     const baseBranch = this.config.GITLAB_MERGE_BRANCH;
 
     if (worktree && branch) {
@@ -137,6 +139,34 @@ export class CodexExecProvider implements WorkerProvider {
         : 0;
 
       if (pushed && commitsAhead > 0) {
+        return 'COMPLETED';
+      }
+
+      // Worker may have committed locally but not pushed.
+      // Check for local commits ahead of base and auto-push.
+      if (!pushed) {
+        const localAhead = branchCommitsAhead(worktree, branch, baseBranch);
+        if (localAhead > 0) {
+          this.log(`Branch ${branch} has ${localAhead} local commits but not pushed, auto-pushing`);
+          try {
+            execFileSync('git', ['-C', worktree, 'push', '-u', 'origin', branch], {
+              encoding: 'utf-8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            this.log(`Auto-push succeeded for branch ${branch}`);
+            return 'COMPLETED';
+          } catch (pushErr) {
+            this.log(`Auto-push failed for branch ${branch}: ${pushErr}`);
+            // Fall through to other checks
+          }
+        }
+      }
+    }
+
+    // Check output text for completion keywords — only when git verification
+    // is unavailable (no worktree or branch).
+    if (outputFile && (!worktree || !branch)) {
+      const lastText = extractLastAssistantText(outputFile);
+      if (COMPLETION_KEYWORDS.test(lastText)) {
         return 'COMPLETED';
       }
     }
