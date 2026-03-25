@@ -65,6 +65,20 @@ export class CompletionJudge {
       if (ahead > 0) {
         return { status: 'completed', reason: 'branch_pushed' };
       }
+
+      // 2b. Branch pushed but commits ahead = 0 → may already be merged into target
+      // This happens when worker ran merge.sh successfully (MR_MODE=none)
+      try {
+        const mergeCheck = execFileSync('git', [
+          '-C', worktree, 'log', '--oneline', '--grep',
+          `Merge.*${branch.replace('feature/', '')}`,
+          `origin/${baseBranch}`, '-1',
+        ], { encoding: 'utf-8', timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+        if (mergeCheck) {
+          this.log(`Branch ${branch} already merged into ${baseBranch}`);
+          return { status: 'completed', reason: 'already_merged' };
+        }
+      } catch { /* git error, fall through */ }
     }
 
     // 3. Local commits not pushed → auto-push
