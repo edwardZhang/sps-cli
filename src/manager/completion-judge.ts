@@ -67,18 +67,17 @@ export class CompletionJudge {
       }
 
       // 2b. Branch pushed but commits ahead = 0 → may already be merged into target
-      // This happens when worker ran merge.sh successfully (MR_MODE=none)
+      // Use merge-base --is-ancestor: if branch tip is ancestor of target, it's merged
       try {
-        const mergeCheck = execFileSync('git', [
-          '-C', worktree, 'log', '--oneline', '--grep',
-          `Merge.*${branch.replace('feature/', '')}`,
-          `origin/${baseBranch}`, '-1',
-        ], { encoding: 'utf-8', timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-        if (mergeCheck) {
-          this.log(`Branch ${branch} already merged into ${baseBranch}`);
-          return { status: 'completed', reason: 'already_merged' };
-        }
-      } catch { /* git error, fall through */ }
+        execFileSync('git', [
+          '-C', worktree, 'merge-base', '--is-ancestor', branch, `origin/${baseBranch}`,
+        ], { timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] });
+        // Exit code 0 = branch IS ancestor of target = already merged
+        this.log(`Branch ${branch} already merged into ${baseBranch}`);
+        return { status: 'completed', reason: 'already_merged' };
+      } catch {
+        // Exit code 1 = NOT ancestor = not merged (or git error)
+      }
     }
 
     // 3. Local commits not pushed → auto-push
