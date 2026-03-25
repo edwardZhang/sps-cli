@@ -1,5 +1,6 @@
 import { ProjectContext } from '../core/context.js';
 import { MonitorEngine } from '../engines/MonitorEngine.js';
+import { ProcessSupervisor } from '../manager/supervisor.js';
 import { createTaskBackend, createWorkerProvider, createRepoBackend, createNotifier } from '../providers/registry.js';
 import { Logger } from '../core/logger.js';
 
@@ -27,7 +28,8 @@ export async function executeMonitorTick(
   const workerProvider = createWorkerProvider(ctx.config);
   const repoBackend = createRepoBackend(ctx.config);
   const notifier = createNotifier(ctx.config);
-  const engine = new MonitorEngine(ctx, taskBackend, workerProvider, repoBackend, notifier);
+  const supervisor = new ProcessSupervisor();
+  const engine = new MonitorEngine(ctx, taskBackend, workerProvider, repoBackend, notifier, supervisor);
   const result = await engine.tick();
 
   if (jsonOutput) {

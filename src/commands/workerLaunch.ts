@@ -1,6 +1,11 @@
 import { ProjectContext } from '../core/context.js';
 import { ExecutionEngine } from '../engines/ExecutionEngine.js';
-import { createTaskBackend, createWorkerProvider, createRepoBackend, createNotifier } from '../providers/registry.js';
+import { createTaskBackend, createRepoBackend, createNotifier } from '../providers/registry.js';
+import { ProcessSupervisor } from '../manager/supervisor.js';
+import { CompletionJudge } from '../manager/completion-judge.js';
+import { PostActions } from '../manager/post-actions.js';
+import { ResourceLimiter } from '../manager/resource-limiter.js';
+import { createPMClient } from '../manager/pm-client.js';
 import { Logger } from '../core/logger.js';
 
 export async function executeWorkerLaunch(
@@ -35,10 +40,14 @@ export async function executeWorkerLaunch(
   }
 
   const taskBackend = createTaskBackend(ctx.config);
-  const workerProvider = createWorkerProvider(ctx.config);
   const repoBackend = createRepoBackend(ctx.config);
   const notifier = createNotifier(ctx.config);
-  const engine = new ExecutionEngine(ctx, taskBackend, workerProvider, repoBackend, notifier);
+  const supervisor = new ProcessSupervisor();
+  const completionJudge = new CompletionJudge();
+  const resourceLimiter = new ResourceLimiter();
+  const pmClient = createPMClient(ctx.config);
+  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier);
+  const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, supervisor, completionJudge, postActions, resourceLimiter, notifier);
   const result = await engine.launchSingle(seq, { dryRun });
 
   if (jsonOutput) {

@@ -2,14 +2,16 @@ import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ProjectContext } from '../core/context.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
-import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { CommandResult, ActionRecord, Card, AuxiliaryState } from '../models/types.js';
-import type { LaunchResult } from '../interfaces/WorkerProvider.js';
-import { readState, writeState, type WorkerSlotState } from '../core/state.js';
+import { readState, writeState } from '../core/state.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { Logger } from '../core/logger.js';
+import { ProcessSupervisor } from '../manager/supervisor.js';
+import { CompletionJudge } from '../manager/completion-judge.js';
+import { PostActions, type PostActionContext } from '../manager/post-actions.js';
+import { ResourceLimiter } from '../manager/resource-limiter.js';
 
 const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME'];
 
@@ -19,8 +21,11 @@ export class ExecutionEngine {
   constructor(
     private ctx: ProjectContext,
     private taskBackend: TaskBackend,
-    private workerProvider: WorkerProvider,
     private repoBackend: RepoBackend,
+    private supervisor: ProcessSupervisor,
+    private completionJudge: CompletionJudge,
+    private postActions: PostActions,
+    private resourceLimiter: ResourceLimiter,
     private notifier?: Notifier,
   ) {
     this.log = new Logger('pipeline', ctx.projectName, ctx.paths.logsDir);
@@ -77,7 +82,7 @@ export class ExecutionEngine {
       // 3. Process Todo cards (launch: claim + context + worker + move to Inprogress)
       //    This is the only step that consumes action quota — it starts
       //    resource-intensive AI workers that need system capacity.
-      //    Stagger launches to avoid overwhelming tmux/system.
+      //    Stagger launches to avoid overwhelming the system.
       const todoCards = await this.taskBackend.listByState('Todo');
       let launchedThisTick = 0;
       const failedSlots = new Set<string>(); // track slots that failed launch this tick
@@ -87,12 +92,7 @@ export class ExecutionEngine {
           actions.push({ action: 'skip', entity: `seq:${card.seq}`, result: 'skip', message: 'Has auxiliary state label' });
           continue;
         }
-        // Stagger: wait between worker launches (shorter for print mode)
-        if (launchedThisTick > 0) {
-          const delay = this.ctx.config.WORKER_MODE === 'print' ? 2_000 : 10_000;
-          this.log.info(`Waiting ${delay / 1000}s before next worker launch...`);
-          await new Promise((r) => setTimeout(r, delay));
-        }
+        // Stagger is handled by ResourceLimiter.enforceStagger() inside launchCard
         const launchResult = await this.launchCard(card, opts, failedSlots);
         actions.push(launchResult);
         if (launchResult.result === 'ok') {
@@ -180,20 +180,15 @@ export class ExecutionEngine {
     return SKIP_LABELS.some((label) => card.labels.includes(label));
   }
 
-  // ─── Inprogress Phase (detect completion → QA) ──────────────────
+  // ─── Inprogress Phase (detect completion → Done) ────────────────
 
   /**
-   * Check an Inprogress card: detect worker completion status and act.
-   * This is the critical Inprogress → QA bridge (01 §10.2).
+   * Check an Inprogress card: verify worker is still running or handled by exit callback.
    *
-   * Detection chain (12 §2):
-   *   COMPLETED      → move card to QA
-   *   AUTO_CONFIRM   → auto-confirm prompt, continue next tick
-   *   NEEDS_INPUT    → mark WAITING-CONFIRMATION, notify
-   *   BLOCKED        → mark BLOCKED
-   *   ALIVE          → no action (worker still working)
-   *   DEAD           → mark STALE-RUNTIME (handled by MonitorEngine)
-   *   DEAD_EXCEEDED  → mark STALE-RUNTIME, notify
+   * The Supervisor exit callback triggers CompletionJudge → PostActions automatically,
+   * so this method only needs to:
+   * - Update heartbeat if worker is still running
+   * - Confirm completion if PostActions already processed it
    */
   private async checkInprogressCard(
     card: Card,
@@ -202,226 +197,46 @@ export class ExecutionEngine {
     const seq = card.seq;
     const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
 
-    // Find this card's worker slot
     const slotEntry = Object.entries(state.workers).find(
       ([, w]) => w.seq === parseInt(seq, 10) && w.status === 'active',
     );
+
     if (!slotEntry) {
-      // No active slot — MonitorEngine handles orphan detection
+      // Slot already released (PostActions handled it via exit callback)
       return null;
     }
 
-    const [slotName, slotState] = slotEntry;
-    const session = slotState.tmuxSession;
-    if (!session) return null;
+    const [slotName] = slotEntry;
+    const workerId = `${this.ctx.projectName}:${slotName}:${seq}`;
+    const handle = this.supervisor.get(workerId);
 
-    // Determine logDir for completion marker detection
-    const logDir = this.ctx.paths.logsDir;
-    const branch = slotState.branch || this.buildBranchName(card);
-
-    let workerStatus: import('../models/types.js').WorkerStatus;
-    try {
-      workerStatus = await this.workerProvider.detectCompleted(session, logDir, branch);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.warn(`detectCompleted failed for seq ${seq}: ${msg}`);
+    if (handle && handle.exitCode === null) {
+      // Worker still running — update heartbeat
+      try {
+        const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+        if (freshState.workers[slotName]) {
+          freshState.workers[slotName].lastHeartbeat = new Date().toISOString();
+          writeState(this.ctx.paths.stateFile, freshState, 'pipeline-heartbeat');
+        }
+      } catch { /* non-fatal */ }
       return null;
     }
 
-    switch (workerStatus) {
-      case 'COMPLETED': {
-        if (opts.dryRun) {
-          this.log.info(`[dry-run] Would move seq ${seq} Inprogress → QA`);
-          return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'dry-run: would move to QA' };
-        }
-
-        if (this.ctx.mrMode === 'none') {
-          // ── MR_MODE=none: worker merges directly to target branch ──
-          // Check if feature branch is merged into target
-          const worktree = slotState.worktree;
-          let isMerged = false;
-          if (worktree) {
-            try {
-              // Fetch latest and check if feature commits are in target
-              const { execFileSync } = await import('node:child_process');
-              try { execFileSync('git', ['-C', worktree, 'fetch', 'origin', '--quiet'], { timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* offline ok */ }
-              const unmerged = execFileSync('git', ['-C', worktree, 'rev-list', '--count', `origin/${this.ctx.mergeBranch}..${branch}`], { encoding: 'utf-8', timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-              isMerged = parseInt(unmerged, 10) === 0;
-            } catch { /* git error, fall through */ }
-          }
-
-          if (!isMerged) {
-            // Worker pushed but didn't merge to target yet — resume it
-            this.log.info(`seq ${seq}: Branch not merged into ${this.ctx.mergeBranch}, resuming worker`);
-            const isPrintMode = slotState.mode === 'print';
-            if (isPrintMode && slotState.sessionId) {
-              const resumeResult = await this.attemptMergeResume(seq, slotName, slotState, card);
-              if (resumeResult) return resumeResult;
-            }
-            // Resume not possible — system merges directly as fallback
-            this.log.info(`seq ${seq}: Resume not possible, system merging directly`);
-            let mergeFailed = true;
-            if (worktree) {
-              try {
-                await this.repoBackend.rebase(worktree, this.ctx.mergeBranch);
-                await this.repoBackend.push(worktree, branch, true);
-                const { execFileSync } = await import('node:child_process');
-                execFileSync('git', ['-C', worktree, 'checkout', this.ctx.mergeBranch], { timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] });
-                execFileSync('git', ['-C', worktree, 'merge', '--no-ff', branch, '-m', `Merge ${branch} into ${this.ctx.mergeBranch}`], { timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] });
-                execFileSync('git', ['-C', worktree, 'push', 'origin', this.ctx.mergeBranch], { timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
-                this.log.ok(`seq ${seq}: System fallback merged ${branch} into ${this.ctx.mergeBranch}`);
-                mergeFailed = false;
-              } catch (mergeErr) {
-                const msg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
-                this.log.error(`seq ${seq}: System fallback merge failed: ${msg}`);
-              }
-            }
-            if (mergeFailed) {
-              // Merge failed — mark NEEDS-FIX, don't move to Done
-              try { await this.taskBackend.addLabel(seq, 'NEEDS-FIX'); } catch { /* best effort */ }
-              try { await this.taskBackend.comment(seq, `Branch pushed but merge to ${this.ctx.mergeBranch} failed. Manual merge needed.`); } catch { /* best effort */ }
-              this.logEvent('merge-failed', seq, 'fail');
-              return { action: 'mark-needs-fix', entity: `seq:${seq}`, result: 'ok', message: `System merge to ${this.ctx.mergeBranch} failed — NEEDS-FIX` };
-            }
-          }
-
-          // Merge confirmed — move to Done + release resources + cleanup worktree
-          return await this.completeAndRelease(card, slotName, slotState);
-
-        } else {
-          // ── MR_MODE=create: worker creates MR, task is done ──
-          let mrExists = false;
-          try {
-            const mrStatus = await this.repoBackend.getMrStatus(branch);
-            mrExists = mrStatus.exists;
-          } catch { /* can't check */ }
-
-          if (!mrExists) {
-            // MR not found — try resume worker to create it
-            this.log.info(`seq ${seq}: MR not found, resuming worker to create it`);
-            const isPrintMode = slotState.mode === 'print';
-            if (isPrintMode && slotState.sessionId) {
-              const resumeResult = await this.attemptMergeResume(seq, slotName, slotState, card);
-              if (resumeResult) return resumeResult;
-            }
-            // Fallback: system creates MR
-            this.log.info(`seq ${seq}: Resume not possible, system creating MR`);
-            try {
-              await this.repoBackend.createOrUpdateMr(
-                branch,
-                `${card.seq}: ${card.name}`,
-                `Auto-created by pipeline for seq:${card.seq}.\n\nBranch: ${branch}`,
-              );
-              this.log.ok(`seq ${seq}: System created MR for branch ${branch}`);
-              mrExists = true;
-            } catch (mrErr) {
-              const mrMsg = mrErr instanceof Error ? mrErr.message : String(mrErr);
-              this.log.error(`seq ${seq}: System MR creation failed: ${mrMsg}`);
-            }
-          }
-
-          if (!mrExists) {
-            // MR creation failed — mark NEEDS-FIX
-            this.log.error(`seq ${seq}: MR creation failed after all attempts`);
-            try { await this.taskBackend.addLabel(seq, 'NEEDS-FIX'); } catch { /* best effort */ }
-            try { await this.taskBackend.comment(seq, 'Branch pushed but MR creation failed. Manual MR needed.'); } catch { /* best effort */ }
-            this.logEvent('mr-creation-failed', seq, 'fail');
-            return { action: 'mark-needs-fix', entity: `seq:${seq}`, result: 'ok', message: 'MR creation failed — NEEDS-FIX' };
-          }
-
-          // MR confirmed — task is done, release resources
-          return await this.completeAndRelease(card, slotName, slotState);
-        }
+    if (handle && handle.exitCode !== null) {
+      // Worker exited but PostActions hasn't finished yet (or just finished)
+      // Check if slot is now idle
+      const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+      if (!freshState.workers[slotName] || freshState.workers[slotName].status === 'idle') {
+        this.log.ok(`seq ${seq}: Completed (handled by exit callback)`);
+        return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Completed via exit callback' };
       }
-
-      case 'AUTO_CONFIRM': {
-        // Non-destructive confirmation prompt → auto-confirm
-        this.log.info(`seq ${seq}: Worker waiting for non-destructive confirmation, auto-confirming`);
-        try {
-          await this.workerProvider.sendFix(session, 'y');
-          this.logEvent('auto-confirm', seq, 'ok');
-          if (this.notifier) {
-            await this.notifier.send(`[${this.ctx.projectName}] seq:${seq} auto-confirmed`, 'info').catch(() => {});
-          }
-        } catch {
-          this.log.warn(`seq ${seq}: Auto-confirm failed`);
-        }
-        return { action: 'auto-confirm', entity: `seq:${seq}`, result: 'ok', message: 'Auto-confirmed non-destructive prompt' };
-      }
-
-      case 'NEEDS_INPUT': {
-        // Destructive confirmation → mark WAITING-CONFIRMATION, notify Boss
-        this.log.warn(`seq ${seq}: Worker waiting for destructive confirmation`);
-        try {
-          await this.taskBackend.addLabel(seq, 'WAITING-CONFIRMATION');
-        } catch { /* best effort */ }
-        if (this.notifier) {
-          await this.notifier.sendWarning(`[${this.ctx.projectName}] seq:${seq} worker waiting for destructive confirmation`).catch(() => {});
-        }
-        this.logEvent('waiting-destructive', seq, 'ok');
-        return { action: 'mark-waiting', entity: `seq:${seq}`, result: 'ok', message: 'Destructive confirmation — waiting for human' };
-      }
-
-      case 'BLOCKED': {
-        this.log.warn(`seq ${seq}: Worker appears blocked`);
-        try {
-          await this.taskBackend.addLabel(seq, 'BLOCKED');
-        } catch { /* best effort */ }
-        this.logEvent('blocked', seq, 'ok');
-        return { action: 'mark-blocked', entity: `seq:${seq}`, result: 'ok', message: 'Worker blocked' };
-      }
-
-      case 'EXITED_INCOMPLETE':
-      case 'DEAD':
-      case 'DEAD_EXCEEDED': {
-        // Worker exited without completing. Attempt auto-resume if:
-        //   - Print mode (can --resume to continue context)
-        //   - Retry limit not exhausted
-        // Otherwise mark NEEDS-FIX.
-        const isPrintMode = slotState.mode === 'print';
-        const reason = workerStatus === 'EXITED_INCOMPLETE'
-          ? 'exited without artifacts (token limit / gave up)'
-          : `process died (${workerStatus})`;
-        this.log.warn(`seq ${seq}: Worker ${reason}`);
-
-        if (isPrintMode && slotState.sessionId) {
-          const retryResult = await this.attemptResume(
-            seq, slotName, slotState, card, reason,
-          );
-          if (retryResult) return retryResult;
-        }
-
-        // No resume possible or retries exhausted → NEEDS-FIX
-        if (workerStatus === 'DEAD' || workerStatus === 'DEAD_EXCEEDED') {
-          // Also defer to MonitorEngine for STALE-RUNTIME marking
-          return null;
-        }
-        try {
-          await this.taskBackend.addLabel(seq, 'NEEDS-FIX');
-          await this.taskBackend.comment(seq, `Worker ${reason}. Resume retries exhausted.`);
-        } catch { /* best effort */ }
-        if (this.notifier) {
-          await this.notifier.sendWarning(
-            `[${this.ctx.projectName}] seq:${seq} worker ${reason} — retries exhausted, NEEDS-FIX`,
-          ).catch(() => {});
-        }
-        this.logEvent('exited-incomplete-final', seq, 'ok');
-        return { action: 'mark-needs-fix', entity: `seq:${seq}`, result: 'ok', message: `Worker ${reason}, retries exhausted (NEEDS-FIX)` };
-      }
-
-      case 'ALIVE':
-      default:
-        // Worker still running — no action needed
-        // Update heartbeat
-        try {
-          const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-          if (freshState.workers[slotName]) {
-            freshState.workers[slotName].lastHeartbeat = new Date().toISOString();
-            writeState(this.ctx.paths.stateFile, freshState, 'pipeline-heartbeat');
-          }
-        } catch { /* non-fatal */ }
-        return null;
+      // PostActions still processing, wait for next tick
+      return null;
     }
+
+    // Handle not found in Supervisor — could be after tick restart
+    // MonitorEngine/Recovery handles this case
+    return null;
   }
 
   // ─── Prepare Phase (Backlog → Todo) ─────────────────────────────
@@ -519,25 +334,7 @@ export class ExecutionEngine {
       return { action: 'launch', entity: `seq:${seq}`, result: 'skip', message: 'No idle worker slot' };
     }
 
-    // Prefer slot with live session (Claude still running → context reuse)
-    // Only applies to interactive (tmux) mode — print mode workers are one-shot processes
-    let slotEntry = idleSlots[0];
-    if (this.ctx.config.WORKER_SESSION_REUSE && this.ctx.config.WORKER_MODE !== 'print') {
-      for (const entry of idleSlots) {
-        const [name] = entry;
-        const sessionName = `${this.ctx.projectName}-${name}`;
-        try {
-          const inspection = await this.workerProvider.inspect(sessionName);
-          if (inspection.alive) {
-            slotEntry = entry;
-            this.log.info(`Preferring slot ${name} with live session`);
-            break;
-          }
-        } catch { /* ignore */ }
-      }
-    }
-
-    const [slotName] = slotEntry;
+    const [slotName] = idleSlots[0];
     const sessionName = `${this.ctx.projectName}-${slotName}`;
 
     // Claim slot in state.json
@@ -599,28 +396,54 @@ export class ExecutionEngine {
       return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Context build failed: ${msg}` };
     }
 
-    // Step 6: Launch worker (unified: launch + waitReady + sendTask in one call)
+    // Step 6: Launch worker via Supervisor
     try {
       const promptFile = resolve(worktreePath, '.jarvis_task_prompt.txt');
-      const launchResult = await this.workerProvider.launch(sessionName, worktreePath, promptFile);
 
-      // Store print-mode process info in state
-      if (launchResult.pid > 0) {
-        const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-        if (freshState.workers[slotName]) {
-          freshState.workers[slotName].mode = 'print';
-          freshState.workers[slotName].pid = launchResult.pid;
-          freshState.workers[slotName].outputFile = launchResult.outputFile;
-          freshState.workers[slotName].sessionId = launchResult.sessionId || null;
-          freshState.workers[slotName].exitCode = null;
-          writeState(this.ctx.paths.stateFile, freshState, 'pipeline-launch-print');
-        }
-
-        // Async: extract session ID from output once available
-        this.extractSessionIdAsync(sessionName, slotName, launchResult);
+      // Check global resource limit
+      if (!this.resourceLimiter.tryAcquire()) {
+        this.log.warn(`Global worker limit reached, skipping seq ${seq}`);
+        // Rollback: release slot
+        this.releaseSlot(slotName, seq);
+        return { action: 'launch', entity: `seq:${seq}`, result: 'skip', message: 'Global worker limit reached' };
       }
 
-      this.log.ok(`Step 6: Worker launched in session ${sessionName} for seq ${seq}`);
+      await this.resourceLimiter.enforceStagger();
+
+      const prompt = readFileSync(promptFile, 'utf-8').trim();
+      const outputFile = resolve(
+        this.ctx.config.raw.LOGS_DIR || `/tmp/sps-${this.ctx.projectName}`,
+        `${sessionName}-${Date.now()}.jsonl`,
+      );
+      const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
+
+      const workerHandle = this.supervisor.spawn({
+        id: workerId,
+        project: this.ctx.projectName,
+        seq: card.seq,
+        slot: slotName,
+        worktree: worktreePath,
+        branch: branchName,
+        prompt,
+        outputFile,
+        tool: this.ctx.config.WORKER_TOOL,
+        onExit: (exitCode: number) => {
+          this.onWorkerExit(workerId, card, slotName, worktreePath, branchName, exitCode);
+        },
+      });
+
+      // Store process info in state
+      const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+      if (freshState.workers[slotName]) {
+        freshState.workers[slotName].mode = 'print';
+        freshState.workers[slotName].pid = workerHandle.pid;
+        freshState.workers[slotName].outputFile = workerHandle.outputFile;
+        freshState.workers[slotName].sessionId = workerHandle.sessionId || null;
+        freshState.workers[slotName].exitCode = null;
+        writeState(this.ctx.paths.stateFile, freshState, 'pipeline-launch-print');
+      }
+
+      this.log.ok(`Step 6: Worker launched for seq ${seq} (pid=${workerHandle.pid})`);
 
       if (this.notifier) {
         await this.notifier.sendSuccess(`[${this.ctx.projectName}] seq:${seq} worker started (${slotName})`).catch(() => {});
@@ -629,6 +452,7 @@ export class ExecutionEngine {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.error(`Step 6 failed (worker launch) for seq ${seq}: ${msg}`);
       failedSlots.add(slotName);
+      this.resourceLimiter.release();
       this.releaseSlot(slotName, seq);
       this.logEvent('launch-worker', seq, 'fail', { error: msg });
       return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Worker launch failed: ${msg}` };
@@ -649,11 +473,76 @@ export class ExecutionEngine {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.error(`Step 7 failed (move) for seq ${seq}: ${msg}`);
-      // Rollback: stop worker, release slot
-      try { await this.workerProvider.stop(sessionName); } catch { /* best effort */ }
+      // Rollback: kill worker, release slot
+      const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
+      try { await this.supervisor.kill(workerId); } catch { /* best effort */ }
+      this.resourceLimiter.release();
       this.releaseSlot(slotName, seq);
       this.logEvent('launch-move', seq, 'fail', { error: msg });
       return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Move to Inprogress failed: ${msg}` };
+    }
+  }
+
+  // ─── Worker Exit Callback ───────────────────────────────────────
+
+  /**
+   * Called by Supervisor when a worker process exits.
+   * Wires CompletionJudge → PostActions to handle completion or failure.
+   */
+  private onWorkerExit(
+    workerId: string,
+    card: Card,
+    slotName: string,
+    worktree: string,
+    branch: string,
+    exitCode: number,
+  ): void {
+    const handle = this.supervisor.get(workerId);
+    const completion = this.completionJudge.judge({
+      worktree,
+      branch,
+      baseBranch: this.ctx.mergeBranch,
+      outputFile: handle?.outputFile || null,
+      exitCode,
+      logsDir: this.ctx.paths.logsDir,
+    });
+
+    const ctx: PostActionContext = {
+      project: this.ctx.projectName,
+      seq: card.seq,
+      slot: slotName,
+      branch,
+      worktree,
+      baseBranch: this.ctx.mergeBranch,
+      stateFile: this.ctx.paths.stateFile,
+      maxWorkers: this.ctx.maxWorkers,
+      mrMode: this.ctx.mrMode,
+      gitlabProjectId: this.ctx.config.GITLAB_PROJECT_ID,
+      gitlabUrl: this.ctx.config.raw.GITLAB_URL || process.env.GITLAB_URL || '',
+      gitlabToken: this.ctx.config.raw.GITLAB_TOKEN || process.env.GITLAB_TOKEN || '',
+      doneStateId: this.ctx.config.raw.PLANE_STATE_DONE || this.ctx.config.raw.TRELLO_DONE_LIST_ID || '',
+      maxRetries: this.ctx.config.WORKER_RESTART_LIMIT,
+      logsDir: this.ctx.paths.logsDir,
+      tool: this.ctx.config.WORKER_TOOL,
+    };
+
+    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const activeCard = state.activeCards[card.seq];
+    const retryCount = activeCard?.retryCount ?? 0;
+
+    if (completion.status === 'completed') {
+      this.postActions.executeCompletion(ctx, completion, handle?.sessionId || null)
+        .then((results) => {
+          const allOk = results.every(r => r.ok);
+          this.log.ok(`seq ${card.seq}: PostActions completed (${allOk ? 'all ok' : 'some failures'})`);
+        })
+        .catch(err => this.log.error(`seq ${card.seq}: PostActions error: ${err}`));
+    } else {
+      this.postActions.executeFailure(ctx, completion, exitCode, handle?.sessionId || null, retryCount, {
+        onExit: (code: number) => this.onWorkerExit(workerId, card, slotName, worktree, branch, code),
+      })
+        .then(() => this.log.info(`seq ${card.seq}: Failure handling done`))
+        .catch(err => this.log.error(`seq ${card.seq}: Failure handling error: ${err}`));
     }
   }
 
@@ -690,7 +579,10 @@ export class ExecutionEngine {
 
     const branchName = this.buildBranchName(card);
 
-    // Read project rules from CLAUDE.md + AGENTS.md (if exist)
+    // ── 1. Skill Profiles (label-driven) ──
+    const skillContent = this.loadSkillProfiles(card);
+
+    // ── 2. Project Rules (CLAUDE.md + AGENTS.md) ──
     const claudeMdPath = resolve(worktreePath, 'CLAUDE.md');
     const agentsMdPath = resolve(worktreePath, 'AGENTS.md');
     let projectRules = '';
@@ -704,13 +596,24 @@ export class ExecutionEngine {
       projectRules = projectRules ? `${projectRules}\n\n${agentsRules}` : agentsRules;
     }
 
-    // .jarvis_task_prompt.txt — project rules + task-specific prompt
-    // Print mode: piped via stdin to `claude -p` / `codex exec`
-    // Interactive mode: pasted via tmux buffer
+    // ── 3. Project Knowledge (truncated) ──
+    const knowledge = this.loadProjectKnowledge(worktreePath);
+
+    // ── Assemble prompt ──
     const sections: string[] = [];
+
+    if (skillContent) {
+      sections.push(skillContent);
+      sections.push('---');
+    }
 
     if (projectRules) {
       sections.push(projectRules);
+      sections.push('---');
+    }
+
+    if (knowledge) {
+      sections.push(knowledge);
       sections.push('---');
     }
 
@@ -718,7 +621,7 @@ export class ExecutionEngine {
     const mrMode = this.ctx.mrMode;   // 'none' | 'create'
     const createMR = mrMode === 'create';
 
-    // Generate .jarvis/merge.sh — direct merge (MR_MODE=none) or create MR (MR_MODE=create).
+    // Generate .jarvis/merge.sh
     this.writeMergeScript(worktreePath, branchName, card, createMR);
 
     const mergeStepDesc = createMR
@@ -726,10 +629,6 @@ export class ExecutionEngine {
       : `Merge your changes into ${this.ctx.mergeBranch}`;
 
     const requirements = [
-      '0. BEFORE coding, read these files if they exist (project knowledge from previous tasks):',
-      '   - docs/DECISIONS.md — architecture decisions and tech choices',
-      '   - docs/CHANGELOG.md — recent changes by previous workers',
-      '',
       '1. Implement the changes described above',
       '2. Self-test your changes (run existing tests if any, ensure no regressions)',
       '3. Update project knowledge (create docs/ dir if needed):',
@@ -880,94 +779,11 @@ ${requirements.join('\n')}`);
   }
 
   /**
-   * Complete a card directly: Done + release slot + mark worktree for cleanup.
-   * Used for CI_MODE=none where worker merges directly (no QA/CloseoutEngine needed).
-   */
-  private async completeAndRelease(
-    card: Card,
-    slotName: string,
-    slotState: import('../core/state.js').WorkerSlotState,
-  ): Promise<ActionRecord> {
-    const seq = card.seq;
-    const errors: string[] = [];
-
-    // 1. Move card to Done — if this fails, abort (don't release slot)
-    try {
-      await this.taskBackend.move(seq, 'Done');
-      this.log.ok(`seq ${seq}: Moved Inprogress → Done`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`seq ${seq}: Failed to move to Done: ${msg}. Slot NOT released.`);
-      return { action: 'complete-direct', entity: `seq:${seq}`, result: 'fail', message: `Move to Done failed: ${msg}` };
-    }
-
-    // 2. Release claim
-    try {
-      await this.taskBackend.releaseClaim(seq);
-    } catch { /* best effort */ }
-
-    // 3. Release worker slot (only after Done confirmed)
-    try {
-      const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-      if (state.workers[slotName]) {
-        const sessionName = state.workers[slotName].tmuxSession;
-        state.workers[slotName] = {
-          status: 'idle', seq: null, branch: null, worktree: null,
-          tmuxSession: null, claimedAt: null, lastHeartbeat: null,
-          mode: null, sessionId: null, pid: null, outputFile: null, exitCode: null,
-        };
-        delete state.activeCards[seq];
-
-        // 4. Mark worktree for cleanup
-        const branchName = slotState.branch || this.buildBranchName(card);
-        const worktreePath = slotState.worktree || resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
-        const cleanup = state.worktreeCleanup ?? [];
-        if (!cleanup.some((e: { branch: string }) => e.branch === branchName)) {
-          cleanup.push({ branch: branchName, worktreePath, markedAt: new Date().toISOString() });
-          state.worktreeCleanup = cleanup;
-        }
-
-        writeState(this.ctx.paths.stateFile, state, 'pipeline-complete-release');
-        this.log.ok(`seq ${seq}: Slot ${slotName} released, worktree marked for cleanup`);
-
-        // 5. Stop worker session
-        if (sessionName) {
-          this.workerProvider.stop(sessionName).catch(() => {});
-        }
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`seq ${seq}: Failed to release resources: ${msg}`);
-      errors.push(`release: ${msg}`);
-    }
-
-    this.logEvent('complete-direct', seq, errors.length === 0 ? 'ok' : 'fail', { slotName });
-    if (this.notifier) {
-      const statusMsg = errors.length === 0
-        ? `seq:${seq} completed — merged to ${this.ctx.mergeBranch}, resources released`
-        : `seq:${seq} completed with errors: ${errors.join('; ')}`;
-      await this.notifier.sendSuccess(`[${this.ctx.projectName}] ${statusMsg}`).catch(() => {});
-    }
-
-    return {
-      action: 'complete-direct',
-      entity: `seq:${seq}`,
-      result: errors.length === 0 ? 'ok' : 'fail',
-      message: errors.length === 0
-        ? `Inprogress → Done (merged to ${this.ctx.mergeBranch}, resources released)`
-        : `Completed with errors: ${errors.join('; ')}`,
-    };
-  }
-
-  /**
-   * Release a worker slot, cleanup tmux session, remove card from active cards.
+   * Release a worker slot and remove card from active cards.
+   * Used for launch failure rollback.
    */
   private releaseSlot(slotName: string, seq: string): void {
     try {
-      // Kill tmux session if it exists (cleanup from failed launch)
-      const sessionName = `${this.ctx.projectName}-${slotName}`;
-      this.workerProvider.stop(sessionName).catch(() => {});
-
       const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
       if (state.workers[slotName]) {
         state.workers[slotName] = {
@@ -993,218 +809,99 @@ ${requirements.join('\n')}`);
     }
   }
 
-  /**
-   * Asynchronously extract session ID from print-mode output and update state.
-   * Runs in background — does not block the tick.
-   */
-  private extractSessionIdAsync(
-    sessionName: string,
-    slotName: string,
-    launchResult: LaunchResult,
-  ): void {
-    if (launchResult.sessionId) return; // already known (resume)
+  // ─── Skill Profile Loading (label-driven) ─────────────────────
 
-    // Check output file for session ID after a delay
-    setTimeout(async () => {
-      try {
-        const { parseClaudeSessionId, parseCodexSessionId } = await import('../providers/outputParser.js');
-        const parser = this.ctx.config.WORKER_TOOL === 'claude'
-          ? parseClaudeSessionId
-          : parseCodexSessionId;
-        const sid = parser(launchResult.outputFile);
-        if (sid) {
-          const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-          if (state.workers[slotName]?.pid === launchResult.pid) {
-            state.workers[slotName].sessionId = sid;
-            writeState(this.ctx.paths.stateFile, state, 'pipeline-session-id');
-            this.log.info(`Extracted session ID for ${sessionName}: ${sid.slice(0, 8)}...`);
-          }
-        }
-      } catch { /* non-fatal */ }
-    }, 5_000);
+  /**
+   * Load skill profiles based on card labels (skill:xxx) or project default.
+   * Returns combined profile content for prompt injection.
+   */
+  private loadSkillProfiles(card: Card): string {
+    // 1. Extract skill:xxx labels from card
+    let skills = card.labels
+      .filter(l => l.startsWith('skill:'))
+      .map(l => l.slice('skill:'.length));
+
+    // 2. Fallback to project default
+    if (skills.length === 0) {
+      const defaultSkills = this.ctx.config.raw.DEFAULT_WORKER_SKILLS;
+      if (defaultSkills) {
+        skills = defaultSkills.split(',').map(s => s.trim()).filter(Boolean);
+      }
+    }
+
+    if (skills.length === 0) return '';
+
+    // 3. Load profile files
+    const frameworkDir = this.ctx.config.raw.FRAMEWORK_DIR
+      || resolve(process.env.HOME || '~', 'jarvis-skills');
+    const profilesDir = resolve(frameworkDir, 'skills', 'worker-profiles');
+    const sections: string[] = ['# Skill Profiles'];
+
+    for (const skill of skills) {
+      const filePath = resolve(profilesDir, `${skill}.md`);
+      if (existsSync(filePath)) {
+        const content = readFileSync(filePath, 'utf-8').trim();
+        // Strip YAML frontmatter
+        const body = content.replace(/^---[\s\S]*?---\s*/, '');
+        sections.push(body);
+        this.log.ok(`Loaded skill profile: ${skill}`);
+      } else {
+        this.log.warn(`Skill profile not found: ${filePath}`);
+      }
+    }
+
+    return sections.length > 1 ? sections.join('\n\n') : '';
+  }
+
+  // ─── Project Knowledge Loading (truncated) ────────────────────
+
+  /**
+   * Load recent project knowledge from docs/DECISIONS.md and docs/CHANGELOG.md.
+   * Truncates to recent entries to keep prompt size manageable.
+   */
+  private loadProjectKnowledge(worktreePath: string): string {
+    const sections: string[] = ['# Project Knowledge (from previous tasks)'];
+    let hasContent = false;
+
+    // Recent decisions (last 10 sections)
+    const decisionsPath = resolve(worktreePath, 'docs', 'DECISIONS.md');
+    if (existsSync(decisionsPath)) {
+      const content = readFileSync(decisionsPath, 'utf-8');
+      const recent = this.extractRecentSections(content, 10);
+      if (recent) {
+        sections.push('## Recent Decisions\n' + recent);
+        hasContent = true;
+      }
+    }
+
+    // Recent changelog (last 5 sections)
+    const changelogPath = resolve(worktreePath, 'docs', 'CHANGELOG.md');
+    if (existsSync(changelogPath)) {
+      const content = readFileSync(changelogPath, 'utf-8');
+      const recent = this.extractRecentSections(content, 5);
+      if (recent) {
+        sections.push('## Recent Changes\n' + recent);
+        hasContent = true;
+      }
+    }
+
+    return hasContent ? sections.join('\n\n') : '';
   }
 
   /**
-   * Attempt to resume a failed/incomplete worker via --resume.
-   *
-   * Uses metaRead/metaWrite to track resumeAttempts per card.
-   * Max retries = WORKER_RESTART_LIMIT (default 2).
-   *
-   * Returns an ActionRecord if resume was initiated, or null if retries exhausted.
+   * Extract the last N ## sections from a markdown file.
    */
-  private async attemptResume(
-    seq: string,
-    slotName: string,
-    slotState: import('../core/state.js').WorkerSlotState,
-    card: Card,
-    reason: string,
-  ): Promise<ActionRecord | null> {
-    const maxRetries = this.ctx.config.WORKER_RESTART_LIMIT;
-
-    let meta: Record<string, unknown>;
-    try {
-      meta = await this.taskBackend.metaRead(seq);
-    } catch {
-      meta = {};
-    }
-
-    const resumeAttempts = typeof meta.resumeAttempts === 'number' ? meta.resumeAttempts : 0;
-
-    if (resumeAttempts >= maxRetries) {
-      this.log.warn(`seq ${seq}: Resume retries exhausted (${resumeAttempts}/${maxRetries})`);
-      return null; // caller handles NEEDS-FIX
-    }
-
-    const session = slotState.tmuxSession;
-    const sessionId = slotState.sessionId;
-    if (!session || !sessionId) {
-      this.log.warn(`seq ${seq}: No session ID for resume`);
-      return null;
-    }
-
-    try {
-      // Build a continuation prompt that tells the worker to pick up where it left off
-      const branch = slotState.branch || this.buildBranchName(card);
-      const continuePrompt = [
-        `Your previous session exited before the task was completed (${reason}).`,
-        `This is resume attempt ${resumeAttempts + 1} of ${maxRetries}.`,
-        '',
-        `Task: ${card.name}`,
-        `Branch: ${branch}`,
-        `Target: ${this.ctx.mergeBranch}`,
-        '',
-        'Please check the current state and continue:',
-        '1. Review what has been done (git log, git status)',
-        '2. Complete any remaining implementation',
-        '3. Self-test your changes',
-        `4. git add, commit, and push to branch ${branch}`,
-        '5. Create and merge the MR by running: bash .jarvis/merge.sh',
-        '6. Say "done" when finished',
-        '',
-        'IMPORTANT: Step 5 (bash .jarvis/merge.sh) is MANDATORY. Do NOT skip it.',
-      ].join('\n');
-
-      const resumeResult = await this.workerProvider.sendFix(session, continuePrompt, sessionId);
-
-      // Update state with new process info
-      if (resumeResult && typeof resumeResult === 'object' && 'pid' in resumeResult) {
-        const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-        if (freshState.workers[slotName]) {
-          freshState.workers[slotName].pid = resumeResult.pid;
-          freshState.workers[slotName].outputFile = resumeResult.outputFile;
-          if (resumeResult.sessionId) {
-            freshState.workers[slotName].sessionId = resumeResult.sessionId;
-          }
-          freshState.workers[slotName].exitCode = null;
-          freshState.workers[slotName].lastHeartbeat = new Date().toISOString();
-          writeState(this.ctx.paths.stateFile, freshState, 'pipeline-resume');
-        }
+  private extractRecentSections(content: string, maxSections: number): string {
+    const lines = content.split('\n');
+    const sectionStarts: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('## ')) {
+        sectionStarts.push(i);
       }
-
-      // Increment resume counter
-      await this.taskBackend.metaWrite(seq, {
-        ...meta,
-        resumeAttempts: resumeAttempts + 1,
-      });
-
-      this.log.info(`seq ${seq}: Resumed worker (attempt ${resumeAttempts + 1}/${maxRetries}), reason: ${reason}`);
-      if (this.notifier) {
-        await this.notifier.send(
-          `[${this.ctx.projectName}] seq:${seq} worker resumed (${resumeAttempts + 1}/${maxRetries}): ${reason}`,
-          'info',
-        ).catch(() => {});
-      }
-      this.logEvent('resume', seq, 'ok', { attempt: resumeAttempts + 1, max: maxRetries, reason });
-      return {
-        action: 'resume',
-        entity: `seq:${seq}`,
-        result: 'ok',
-        message: `Worker resumed (${resumeAttempts + 1}/${maxRetries}): ${reason}`,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`seq ${seq}: Resume failed: ${msg}`);
-      return null; // caller handles NEEDS-FIX
     }
-  }
-
-  /**
-   * Resume a worker specifically to create MR and merge it.
-   * Used when worker completed coding + push but didn't create/merge MR.
-   */
-  private async attemptMergeResume(
-    seq: string,
-    slotName: string,
-    slotState: import('../core/state.js').WorkerSlotState,
-    card: Card,
-  ): Promise<ActionRecord | null> {
-    const session = slotState.tmuxSession;
-    const sessionId = slotState.sessionId;
-    if (!session || !sessionId) return null;
-
-    // Guard against infinite merge-resume loop
-    const maxRetries = this.ctx.config.WORKER_RESTART_LIMIT;
-    let meta: Record<string, unknown>;
-    try { meta = await this.taskBackend.metaRead(seq); } catch { meta = {}; }
-    const mergeAttempts = typeof meta.mergeResumeAttempts === 'number' ? meta.mergeResumeAttempts : 0;
-    if (mergeAttempts >= maxRetries) {
-      this.log.warn(`seq ${seq}: Merge resume retries exhausted (${mergeAttempts}/${maxRetries})`);
-      return null; // fall through to system fallback
-    }
-
-    const branch = slotState.branch || this.buildBranchName(card);
-    const gitlabProjectId = this.ctx.config.GITLAB_PROJECT_ID;
-
-    const mergePrompt = [
-      'Your code changes are complete and pushed, but the Merge Request has not been created/merged yet.',
-      '',
-      `Task: ${card.name}`,
-      `Branch: ${branch}`,
-      `Target: ${this.ctx.mergeBranch}`,
-      '',
-      'Run this ONE command to create and merge the MR:',
-      '',
-      '  bash .jarvis/merge.sh',
-      '',
-      'Then say "done".',
-    ].join('\n');
-
-    try {
-      const resumeResult = await this.workerProvider.sendFix(session, mergePrompt, sessionId);
-
-      if (resumeResult && typeof resumeResult === 'object' && 'pid' in resumeResult) {
-        const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-        if (freshState.workers[slotName]) {
-          freshState.workers[slotName].pid = resumeResult.pid;
-          freshState.workers[slotName].outputFile = resumeResult.outputFile;
-          if (resumeResult.sessionId) {
-            freshState.workers[slotName].sessionId = resumeResult.sessionId;
-          }
-          freshState.workers[slotName].exitCode = null;
-          freshState.workers[slotName].lastHeartbeat = new Date().toISOString();
-          writeState(this.ctx.paths.stateFile, freshState, 'pipeline-merge-resume');
-        }
-      }
-
-      // Increment merge resume counter
-      await this.taskBackend.metaWrite(seq, {
-        ...meta,
-        mergeResumeAttempts: mergeAttempts + 1,
-      });
-
-      this.log.info(`seq ${seq}: Resumed worker to create/merge MR (attempt ${mergeAttempts + 1}/${maxRetries})`);
-      this.logEvent('merge-resume', seq, 'ok', { branch, attempt: mergeAttempts + 1 });
-      return {
-        action: 'merge-resume',
-        entity: `seq:${seq}`,
-        result: 'ok',
-        message: `Worker resumed to create/merge MR (${mergeAttempts + 1}/${maxRetries})`,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`seq ${seq}: Merge resume failed: ${msg}`);
-      return null;
-    }
+    if (sectionStarts.length === 0) return content.trim();
+    const start = sectionStarts[Math.max(0, sectionStarts.length - maxSections)];
+    return lines.slice(start).join('\n').trim();
   }
 
   private logEvent(action: string, seq: string, result: 'ok' | 'fail', meta?: Record<string, unknown>): void {
