@@ -7,6 +7,7 @@ import type { Notifier } from '../interfaces/Notifier.js';
 import type { CommandResult, ActionRecord, Card, AuxiliaryState } from '../models/types.js';
 import { readState, writeState } from '../core/state.js';
 import { resolveWorktreePath } from '../core/paths.js';
+import { readQueue } from '../core/queue.js';
 import { Logger } from '../core/logger.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
@@ -82,8 +83,20 @@ export class ExecutionEngine {
       // 3. Process Todo cards (launch: claim + context + worker + move to Inprogress)
       //    This is the only step that consumes action quota — it starts
       //    resource-intensive AI workers that need system capacity.
-      //    Stagger launches to avoid overwhelming the system.
-      const todoCards = await this.taskBackend.listByState('Todo');
+      //    Sort by pipeline_order to respect card priority (#5 skip bug fix).
+      let todoCards = await this.taskBackend.listByState('Todo');
+      const pipelineOrder = readQueue(this.ctx.paths.pipelineOrderFile);
+      if (pipelineOrder.length > 0) {
+        todoCards = todoCards.sort((a, b) => {
+          const aIdx = pipelineOrder.indexOf(parseInt(a.seq, 10));
+          const bIdx = pipelineOrder.indexOf(parseInt(b.seq, 10));
+          // Cards in pipeline_order come first, in order; others after
+          if (aIdx >= 0 && bIdx >= 0) return aIdx - bIdx;
+          if (aIdx >= 0) return -1;
+          if (bIdx >= 0) return 1;
+          return parseInt(a.seq, 10) - parseInt(b.seq, 10);
+        });
+      }
       let launchedThisTick = 0;
       const failedSlots = new Set<string>(); // track slots that failed launch this tick
       for (const card of todoCards) {
