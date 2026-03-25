@@ -908,6 +908,13 @@ workflow-cli/
 │   │   ├── ExecutionEngine.ts  #   执行链
 │   │   ├── CloseoutEngine.ts   #   QA 闭环
 │   │   └── MonitorEngine.ts    #   异常检测
+│   ├── manager/                # Worker 进程管理模块（v0.16.0）
+│   │   ├── supervisor.ts       #   fd 重定向 spawn, child handle, exit 回调
+│   │   ├── completion-judge.ts #   git 产出检查, marker/keyword 检测
+│   │   ├── post-actions.ts     #   merge + PM update + slot release + notify
+│   │   ├── pm-client.ts        #   轻量 PM 操作 (Plane/Trello/Markdown)
+│   │   ├── resource-limiter.ts #   全局 worker 数上限 + 内存检查
+│   │   └── recovery.ts         #   tick 重启后 PID 扫描恢复
 │   ├── interfaces/             # 抽象接口
 │   │   ├── TaskBackend.ts      #   PM 后端接口
 │   │   ├── WorkerProvider.ts   #   Worker 接口
@@ -932,6 +939,53 @@ workflow-cli/
 ├── package.json
 └── tsconfig.json
 ```
+
+---
+
+## Manager 模块 (v0.16.0)
+
+v0.16.0 新增 `src/manager/` 目录，将 Worker 进程管理从 Engine 中解耦为独立模块，作为 tick 内部模块运行（非独立守护进程）。
+
+| 模块 | 行数 | 职责 |
+|------|------|------|
+| `supervisor.ts` | 288 | fd 重定向 spawn（OS 级保证 output 写入），持有 child handle，exit 回调触发后置流程，三层环境变量合并（系统→全局凭据→项目配置） |
+| `completion-judge.ts` | 110 | git 产出检查（分支是否已推送/已合并），auto-push，marker 文件检测，完成关键词匹配 |
+| `post-actions.ts` | 412 | Worker 退出后完整后置链：merge → PM 状态更新 → slot 释放 → 通知 |
+| `pm-client.ts` | 294 | 轻量 PM 操作封装，支持 Plane/Trello/Markdown 三种后端 |
+| `resource-limiter.ts` | 103 | 全局 worker 数上限检查 + 内存检查 + 启动间隔控制 |
+| `recovery.ts` | 205 | tick 重启后通过 PID 扫描恢复 orphan worker 进程 |
+
+**改造效果：**
+- ExecutionEngine 从 1219 行缩减至 916 行（删除 attemptResume, completeAndRelease）
+- MonitorEngine 从 974 行缩减至 750 行（删除直接 PID/tmux 检测）
+- tick.ts 新增约 80 行（初始化共享 Manager 模块，启动时执行 Recovery）
+
+---
+
+## 标签技能注入 (v0.16.0)
+
+通过 PM 卡片标签驱动 Worker 专业能力注入，无需修改代码即可为不同任务定制 Worker 行为。
+
+**机制：**
+- PM 卡片添加 `skill:xxx` 标签 → 自动加载 `skills/worker-profiles/xxx.md` 到 Worker prompt
+- 支持多个 `skill:` 标签叠加注入
+- 项目可通过 `DEFAULT_WORKER_SKILLS` 配置默认技能，卡片标签可覆盖项目默认
+
+**Prompt 组装顺序：**
+1. Skill Profiles（技能模板）
+2. Project Rules（CLAUDE.md / AGENTS.md）
+3. Project Knowledge（docs/DECISIONS.md, docs/CHANGELOG.md）
+4. Task（.jarvis_task_prompt.txt）
+
+**内置技能模板：**
+
+| 文件 | 用途 |
+|------|------|
+| `skills/worker-profiles/_template.md` | 创建新技能的模板 |
+| `skills/worker-profiles/typescript.md` | TypeScript 项目编码规范 |
+| `skills/worker-profiles/phaser.md` | Phaser 游戏框架开发指南 |
+
+**新增技能零代码：** 只需创建 md 文件到 `skills/worker-profiles/` 目录，然后在 PM 卡片上添加对应的 `skill:xxx` 标签即可。
 
 ---
 
