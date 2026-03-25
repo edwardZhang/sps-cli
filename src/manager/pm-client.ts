@@ -184,11 +184,12 @@ class TrelloPMClient implements PMClient {
   async move(seq: string, targetListId: string): Promise<void> {
     const cardId = await this.findCardId(seq);
     if (!cardId) return;
-    await fetch(`https://api.trello.com/1/cards/${cardId}?${this.auth}`, {
+    const res = await fetch(`https://api.trello.com/1/cards/${cardId}?${this.auth}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ idList: targetListId }),
     });
+    if (!res.ok) throw new Error(`Trello move failed (${res.status})`);
   }
 
   async addLabel(seq: string, label: string): Promise<void> {
@@ -196,11 +197,12 @@ class TrelloPMClient implements PMClient {
     if (!cardId) return;
     const labelId = await this.findOrCreateLabel(label);
     if (labelId) {
-      await fetch(`https://api.trello.com/1/cards/${cardId}/idLabels?${this.auth}`, {
+      const res = await fetch(`https://api.trello.com/1/cards/${cardId}/idLabels?${this.auth}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: labelId }),
       });
+      if (!res.ok) throw new Error(`Trello addLabel failed (${res.status})`);
     }
   }
 
@@ -209,20 +211,22 @@ class TrelloPMClient implements PMClient {
     if (!cardId) return;
     const labelId = await this.findOrCreateLabel(label);
     if (labelId) {
-      await fetch(`https://api.trello.com/1/cards/${cardId}/idLabels/${labelId}?${this.auth}`, {
+      const res = await fetch(`https://api.trello.com/1/cards/${cardId}/idLabels/${labelId}?${this.auth}`, {
         method: 'DELETE',
       });
+      if (!res.ok && res.status !== 404) throw new Error(`Trello removeLabel failed (${res.status})`);
     }
   }
 
   async comment(seq: string, text: string): Promise<void> {
     const cardId = await this.findCardId(seq);
     if (!cardId) return;
-    await fetch(`https://api.trello.com/1/cards/${cardId}/actions/comments?${this.auth}`, {
+    const res = await fetch(`https://api.trello.com/1/cards/${cardId}/actions/comments?${this.auth}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
+    if (!res.ok) throw new Error(`Trello comment failed (${res.status})`);
   }
 
   async releaseClaim(seq: string): Promise<void> {

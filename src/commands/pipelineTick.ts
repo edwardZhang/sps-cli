@@ -34,7 +34,11 @@ export async function executePipelineTick(
   const notifier = createNotifier(ctx.config);
   const supervisor = new ProcessSupervisor();
   const completionJudge = new CompletionJudge();
-  const resourceLimiter = new ResourceLimiter();
+  const resourceLimiter = new ResourceLimiter({
+    maxGlobalWorkers: parseInt(process.env.SPS_MANAGER_MAX_WORKERS || '30', 10),
+    staggerDelayMs: parseInt(process.env.SPS_MANAGER_STAGGER_MS || '5000', 10),
+    maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '80', 10),
+  });
   const pmClient = createPMClient(ctx.config);
   const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier);
   const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, supervisor, completionJudge, postActions, resourceLimiter, notifier);

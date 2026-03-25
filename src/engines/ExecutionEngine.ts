@@ -234,8 +234,14 @@ export class ExecutionEngine {
       return null;
     }
 
-    // Handle not found in Supervisor — could be after tick restart
-    // MonitorEngine/Recovery handles this case
+    // Handle not found in Supervisor — PostActions already removed it, or after tick restart
+    // Re-read state to check if PostActions already completed
+    const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    if (!freshState.workers[slotName] || freshState.workers[slotName].status === 'idle') {
+      this.log.ok(`seq ${seq}: Completed (PostActions already processed)`);
+      return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Completed (PostActions processed)' };
+    }
+    // Still active in state but not in Supervisor — MonitorEngine/Recovery handles
     return null;
   }
 
@@ -489,14 +495,14 @@ export class ExecutionEngine {
    * Called by Supervisor when a worker process exits.
    * Wires CompletionJudge → PostActions to handle completion or failure.
    */
-  private onWorkerExit(
+  private async onWorkerExit(
     workerId: string,
     card: Card,
     slotName: string,
     worktree: string,
     branch: string,
     exitCode: number,
-  ): void {
+  ): Promise<void> {
     const handle = this.supervisor.get(workerId);
     const completion = this.completionJudge.judge({
       worktree,
@@ -530,19 +536,19 @@ export class ExecutionEngine {
     const activeCard = state.activeCards[card.seq];
     const retryCount = activeCard?.retryCount ?? 0;
 
-    if (completion.status === 'completed') {
-      this.postActions.executeCompletion(ctx, completion, handle?.sessionId || null)
-        .then((results) => {
-          const allOk = results.every(r => r.ok);
-          this.log.ok(`seq ${card.seq}: PostActions completed (${allOk ? 'all ok' : 'some failures'})`);
-        })
-        .catch(err => this.log.error(`seq ${card.seq}: PostActions error: ${err}`));
-    } else {
-      this.postActions.executeFailure(ctx, completion, exitCode, handle?.sessionId || null, retryCount, {
-        onExit: (code: number) => this.onWorkerExit(workerId, card, slotName, worktree, branch, code),
-      })
-        .then(() => this.log.info(`seq ${card.seq}: Failure handling done`))
-        .catch(err => this.log.error(`seq ${card.seq}: Failure handling error: ${err}`));
+    try {
+      if (completion.status === 'completed') {
+        const results = await this.postActions.executeCompletion(ctx, completion, handle?.sessionId || null);
+        const allOk = results.every(r => r.ok);
+        this.log.ok(`seq ${card.seq}: PostActions completed (${allOk ? 'all ok' : 'some failures'})`);
+      } else {
+        await this.postActions.executeFailure(ctx, completion, exitCode, handle?.sessionId || null, retryCount, {
+          onExit: (code: number) => this.onWorkerExit(workerId, card, slotName, worktree, branch, code),
+        });
+        this.log.info(`seq ${card.seq}: Failure handling done`);
+      }
+    } catch (err) {
+      this.log.error(`seq ${card.seq}: PostActions error: ${err}`);
     }
   }
 

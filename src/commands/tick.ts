@@ -187,9 +187,14 @@ export async function executeTick(
       stateFile: r.ctx.paths.stateFile,
       logsDir: r.ctx.paths.logsDir,
     }));
-    const pmClient = createPMClient(runners[0].ctx.config);
-    const postActions = new PostActions(pmClient, supervisor, resourceLimiter, runners[0].notifier);
-    const recovery = new Recovery(supervisor, completionJudge, postActions, resourceLimiter);
+    // Per-project PostActions factory (each project uses its own PM config)
+    const runnerMap = new Map(runners.map(r => [r.project, r]));
+    const postActionsFactory = (config: import('../core/config.js').ProjectConfig) => {
+      const pmClient = createPMClient(config);
+      const runner = runnerMap.get(config.PROJECT_NAME);
+      return new PostActions(pmClient, supervisor, resourceLimiter, runner?.notifier || null);
+    };
+    const recovery = new Recovery(supervisor, completionJudge, postActionsFactory, resourceLimiter);
     const result = await recovery.recover(projectInfos);
     if (result.found > 0) {
       globalLog.info(
@@ -219,6 +224,8 @@ export async function executeTick(
       const result = await runOneTick(runner, dryRun);
       results.push(result);
     }
+    // Wait for any exit callbacks / PostActions to complete
+    await supervisor.drainPendingActions();
     if (jsonOutput) {
       outputJson(runners.length === 1 ? results[0] : results);
     }
@@ -284,6 +291,9 @@ export async function executeTick(
       cleanupAll();
       process.exit(errorCount > 0 ? 1 : 0);
     }
+
+    // Drain any pending PostActions before sleeping
+    await supervisor.drainPendingActions();
 
     await sleep(interval * 1000);
   }

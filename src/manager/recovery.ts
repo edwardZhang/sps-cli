@@ -42,7 +42,7 @@ export class Recovery {
   constructor(
     private readonly supervisor: ProcessSupervisor,
     private readonly judge: CompletionJudge,
-    private readonly postActions: PostActions,
+    private readonly postActionsFactory: (projectConfig: ProjectConfig) => PostActions,
     private readonly resourceLimiter: ResourceLimiter,
   ) {}
 
@@ -57,6 +57,9 @@ export class Recovery {
     for (const project of projects) {
       const state = readState(project.stateFile, project.config.MAX_CONCURRENT_WORKERS);
 
+      // Create per-project PostActions (C3 fix: use correct PM config per project)
+      const postActions = this.postActionsFactory(project.config);
+
       for (const [slotName, slot] of Object.entries(state.workers)) {
         if (slot.status !== 'active' || !slot.pid) continue;
 
@@ -69,7 +72,7 @@ export class Recovery {
           result.alive++;
           this.resourceLimiter.tryAcquire(); // Count toward global limit
 
-          const buildOnExit = this.buildOnExitCallback(project, slotName, slot, seq);
+          const buildOnExit = this.buildOnExitCallback(project, slotName, slot, seq, postActions);
 
           this.supervisor.monitorOrphanPid(
             workerId,
@@ -114,12 +117,12 @@ export class Recovery {
           const ctx = this.buildPostActionContext(project, slotName, seq, slot);
 
           if (completion.status === 'completed') {
-            await this.postActions.executeCompletion(ctx, completion, slot.sessionId || null);
+            await postActions.executeCompletion(ctx, completion, slot.sessionId || null);
             result.completed++;
           } else {
-            await this.postActions.executeFailure(
+            await postActions.executeFailure(
               ctx, completion, slot.exitCode ?? 1, slot.sessionId || null, retryCount,
-              { onExit: this.buildOnExitCallback(project, slotName, slot, seq) },
+              { onExit: this.buildOnExitCallback(project, slotName, slot, seq, postActions) },
             );
             result.failed++;
           }
@@ -171,7 +174,8 @@ export class Recovery {
     slotName: string,
     slot: { branch?: string | null; worktree?: string | null; outputFile?: string | null; sessionId?: string | null; seq?: number | null },
     seq: string,
-  ): (exitCode: number) => void {
+    postActions: PostActions,
+  ): (exitCode: number) => Promise<void> {
     return async (exitCode: number) => {
       const judgeInput: JudgeInput = {
         worktree: slot.worktree || '',
@@ -189,11 +193,11 @@ export class Recovery {
       const retryCount = card?.retryCount ?? 0;
 
       if (completion.status === 'completed') {
-        await this.postActions.executeCompletion(ctx, completion, slot.sessionId || null);
+        await postActions.executeCompletion(ctx, completion, slot.sessionId || null);
       } else {
-        await this.postActions.executeFailure(
+        await postActions.executeFailure(
           ctx, completion, exitCode, slot.sessionId || null, retryCount,
-          { onExit: this.buildOnExitCallback(project, slotName, slot, seq) },
+          { onExit: this.buildOnExitCallback(project, slotName, slot, seq, postActions) },
         );
       }
     };

@@ -116,6 +116,11 @@ export class PostActions {
     const results: StepResult[] = [];
 
     if (retryCount < ctx.maxRetries && sessionId) {
+      // Release old worker resources BEFORE respawning
+      this.resourceLimiter.release();
+      const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
+      this.supervisor.remove(workerId);
+
       // Retry with --resume
       results.push(await this.pmComment(
         ctx,
@@ -322,19 +327,18 @@ export class PostActions {
         'Remember to push your changes and run bash .jarvis/merge.sh when done.',
       ].join('\n');
 
-      // Update retry count in state.json
-      const state = readState(ctx.stateFile, ctx.maxWorkers);
-      const card = state.activeCards[ctx.seq];
-      if (card) {
-        card.retryCount = retryCount + 1;
-        writeState(ctx.stateFile, state, 'post-actions-retry');
-      }
-
       const outputFile = resolve(
         ctx.logsDir,
         `${ctx.project}-${ctx.slot}-retry${retryCount + 1}-${Date.now()}.jsonl`,
       );
 
+      // Acquire resource for new worker
+      if (!this.resourceLimiter.tryAcquire()) {
+        this.log(`Cannot respawn ${workerId}: global worker limit reached`);
+        return { step: 'respawn', ok: false, error: 'Global worker limit reached' };
+      }
+
+      // Spawn FIRST, then update state (C5 fix: avoid state corruption on spawn failure)
       this.supervisor.spawn({
         id: workerId,
         project: ctx.project,
@@ -346,15 +350,25 @@ export class PostActions {
         outputFile,
         tool: ctx.tool,
         resumeSessionId: sessionId,
-        onExit: respawnOpts?.onExit || (() => {}),
+        onExit: respawnOpts?.onExit || (async () => {}),
         ...respawnOpts,
       });
+
+      // Update retry count in state.json AFTER successful spawn
+      const state = readState(ctx.stateFile, ctx.maxWorkers);
+      const card = state.activeCards[ctx.seq];
+      if (card) {
+        card.retryCount = retryCount + 1;
+        writeState(ctx.stateFile, state, 'post-actions-retry');
+      }
 
       this.log(`Respawned ${workerId} with --resume (retry #${retryCount + 1})`);
       return { step: 'respawn', ok: true };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log(`Respawn failed: ${msg}`);
+      // Release resource if spawn failed
+      this.resourceLimiter.release();
       return { step: 'respawn', ok: false, error: msg };
     }
   }
