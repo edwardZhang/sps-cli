@@ -78,35 +78,64 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
   }
 
   // ─── Step 2: ~/.coral/env ───────────────────────────────────────
-  if (existsSync(ENV_PATH) && !flags.force) {
-    log.ok(`${ENV_PATH} already exists (use --force to reconfigure)`);
-  } else {
-    console.log('\n  Configure global credentials (~/.coral/env)\n');
-    console.log('  Press Enter to skip optional fields.\n');
+  {
+    // Load existing values as defaults (empty if no prior config)
+    const existing: Record<string, string> = {};
+    if (existsSync(ENV_PATH)) {
+      const content = readFileSync(ENV_PATH, 'utf-8');
+      for (const line of content.split('\n')) {
+        const match = line.trim().match(/^(?:export\s+)?([A-Z_][A-Z0-9_]*)=["']?(.*?)["']?\s*$/);
+        if (match) existing[match[1]] = match[2];
+      }
+      if (!flags.force) {
+        log.ok(`${ENV_PATH} already exists (use --force to reconfigure)`);
+      }
+    }
+
+    // Mask secrets for display: show first 4 chars + ****
+    const mask = (val: string | undefined): string => {
+      if (!val) return '';
+      if (val.length <= 6) return '****';
+      return val.slice(0, 4) + '****';
+    };
+
+    if (!existsSync(ENV_PATH) || flags.force) {
+    console.log('\n  Configure global credentials (~/.coral/env)');
+    console.log('  Press Enter to keep existing value (shown in brackets).\n');
 
     // GitLab
     console.log('  ── GitLab ──');
-    const gitlabUrl = await prompt.ask('GITLAB_URL (e.g. https://git.example.com)');
-    const gitlabToken = await prompt.ask('GITLAB_TOKEN');
-    const gitlabSshHost = await prompt.ask('GITLAB_SSH_HOST', gitlabUrl ? new URL(gitlabUrl).hostname : '');
-    const gitlabSshPort = await prompt.ask('GITLAB_SSH_PORT', '22');
+    const gitlabUrl = await prompt.ask('GITLAB_URL', existing.GITLAB_URL || '');
+    const gitlabToken = await prompt.ask('GITLAB_TOKEN', mask(existing.GITLAB_TOKEN) ? `${mask(existing.GITLAB_TOKEN)} — Enter to keep` : '');
+    // If user pressed Enter on masked token, keep the original
+    const finalGitlabToken = (gitlabToken.includes('****') || gitlabToken.includes('— Enter to keep') || gitlabToken === '') && existing.GITLAB_TOKEN
+      ? existing.GITLAB_TOKEN : gitlabToken;
+    const defaultSshHost = gitlabUrl ? (() => { try { return new URL(gitlabUrl).hostname; } catch { return ''; } })() : existing.GITLAB_SSH_HOST || '';
+    const gitlabSshHost = await prompt.ask('GITLAB_SSH_HOST', defaultSshHost);
+    const gitlabSshPort = await prompt.ask('GITLAB_SSH_PORT', existing.GITLAB_SSH_PORT || '22');
 
     // PM Backend
     console.log('\n  ── PM Backend (Plane) ──');
-    const planeUrl = await prompt.ask('PLANE_URL (leave empty if not using Plane)');
-    const planeApiKey = planeUrl ? await prompt.ask('PLANE_API_KEY') : '';
-    const planeWorkspace = planeUrl ? await prompt.ask('PLANE_WORKSPACE_SLUG') : '';
+    const planeUrl = await prompt.ask('PLANE_URL', existing.PLANE_URL || '');
+    const planeApiKey = planeUrl ? await prompt.ask('PLANE_API_KEY', mask(existing.PLANE_API_KEY) ? `${mask(existing.PLANE_API_KEY)} — Enter to keep` : '') : '';
+    const finalPlaneApiKey = (planeApiKey.includes('****') || planeApiKey.includes('— Enter to keep') || planeApiKey === '') && existing.PLANE_API_KEY
+      ? existing.PLANE_API_KEY : planeApiKey;
+    const planeWorkspace = planeUrl ? await prompt.ask('PLANE_WORKSPACE_SLUG', existing.PLANE_WORKSPACE_SLUG || '') : '';
 
     // Trello
     console.log('\n  ── PM Backend (Trello) ──');
-    const trelloApiKey = await prompt.ask('TRELLO_API_KEY (leave empty if not using Trello)');
-    const trelloToken = trelloApiKey ? await prompt.ask('TRELLO_TOKEN') : '';
+    const trelloApiKey = await prompt.ask('TRELLO_API_KEY', existing.TRELLO_API_KEY || '');
+    const trelloToken = trelloApiKey ? await prompt.ask('TRELLO_TOKEN', mask(existing.TRELLO_TOKEN) ? `${mask(existing.TRELLO_TOKEN)} — Enter to keep` : '') : '';
+    const finalTrelloToken = (trelloToken.includes('****') || trelloToken.includes('— Enter to keep') || trelloToken === '') && existing.TRELLO_TOKEN
+      ? existing.TRELLO_TOKEN : trelloToken;
 
     // Matrix notifications
     console.log('\n  ── Notifications (Matrix) ──');
-    const matrixHomeserver = await prompt.ask('MATRIX_HOMESERVER (leave empty if not using Matrix)');
-    const matrixToken = matrixHomeserver ? await prompt.ask('MATRIX_ACCESS_TOKEN') : '';
-    const matrixRoomId = matrixHomeserver ? await prompt.ask('MATRIX_ROOM_ID') : '';
+    const matrixHomeserver = await prompt.ask('MATRIX_HOMESERVER', existing.MATRIX_HOMESERVER || '');
+    const matrixToken = matrixHomeserver ? await prompt.ask('MATRIX_ACCESS_TOKEN', mask(existing.MATRIX_ACCESS_TOKEN) ? `${mask(existing.MATRIX_ACCESS_TOKEN)} — Enter to keep` : '') : '';
+    const finalMatrixToken = (matrixToken.includes('****') || matrixToken.includes('— Enter to keep') || matrixToken === '') && existing.MATRIX_ACCESS_TOKEN
+      ? existing.MATRIX_ACCESS_TOKEN : matrixToken;
+    const matrixRoomId = matrixHomeserver ? await prompt.ask('MATRIX_ROOM_ID', existing.MATRIX_ROOM_ID || '') : '';
 
     // Build env file
     const lines: string[] = [
@@ -115,10 +144,10 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
       '',
     ];
 
-    if (gitlabUrl || gitlabToken) {
+    if (gitlabUrl || finalGitlabToken) {
       lines.push('# ── GitLab ──────────────────────────────────────────');
       if (gitlabUrl) lines.push(`export GITLAB_URL="${gitlabUrl}"`);
-      if (gitlabToken) lines.push(`export GITLAB_TOKEN="${gitlabToken}"`);
+      if (finalGitlabToken) lines.push(`export GITLAB_TOKEN="${finalGitlabToken}"`);
       if (gitlabSshHost) lines.push(`export GITLAB_SSH_HOST="${gitlabSshHost}"`);
       if (gitlabSshPort && gitlabSshPort !== '22') lines.push(`export GITLAB_SSH_PORT="${gitlabSshPort}"`);
       lines.push('');
@@ -127,7 +156,7 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     if (planeUrl) {
       lines.push('# ── Plane ───────────────────────────────────────────');
       lines.push(`export PLANE_URL="${planeUrl}"`);
-      if (planeApiKey) lines.push(`export PLANE_API_KEY="${planeApiKey}"`);
+      if (finalPlaneApiKey) lines.push(`export PLANE_API_KEY="${finalPlaneApiKey}"`);
       if (planeWorkspace) lines.push(`export PLANE_WORKSPACE_SLUG="${planeWorkspace}"`);
       lines.push('');
     }
@@ -135,22 +164,23 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     if (trelloApiKey) {
       lines.push('# ── Trello ──────────────────────────────────────────');
       lines.push(`export TRELLO_API_KEY="${trelloApiKey}"`);
-      if (trelloToken) lines.push(`export TRELLO_TOKEN="${trelloToken}"`);
+      if (finalTrelloToken) lines.push(`export TRELLO_TOKEN="${finalTrelloToken}"`);
       lines.push('');
     }
 
     if (matrixHomeserver) {
       lines.push('# ── Matrix (Notifications) ──────────────────────────');
       lines.push(`export MATRIX_HOMESERVER="${matrixHomeserver}"`);
-      if (matrixToken) lines.push(`export MATRIX_ACCESS_TOKEN="${matrixToken}"`);
+      if (finalMatrixToken) lines.push(`export MATRIX_ACCESS_TOKEN="${finalMatrixToken}"`);
       if (matrixRoomId) lines.push(`export MATRIX_ROOM_ID="${matrixRoomId}"`);
       lines.push('');
     }
 
     writeFileSync(ENV_PATH, lines.join('\n') + '\n');
     chmodSync(ENV_PATH, 0o600);
-    log.ok(`Created ${ENV_PATH} (permissions: 600)`);
-  }
+    log.ok(`Saved ${ENV_PATH} (permissions: 600)`);
+    } // closes: if (!existsSync(ENV_PATH) || flags.force)
+  } // closes: Step 2 block
 
   // ─── Summary ───────────────────────────────────────────────────
   console.log('\n  Setup complete! Next steps:\n');
