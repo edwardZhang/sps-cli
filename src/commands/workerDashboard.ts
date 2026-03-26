@@ -177,8 +177,11 @@ function collectPanels(projects: string[]): WorkerPanel[] {
         paneLines = paneText.split('\n');
       }
 
-      // Only show panels with active slots or live sessions/processes
+      // Skip idle slots with no live session/process
       if (slot.status === 'idle' && !sessionAlive) continue;
+
+      // Skip "active" slots where the worker PID is actually dead (stale state)
+      if (slot.status === 'active' && !sessionAlive) continue;
 
       panels.push({
         projectName,
@@ -272,12 +275,25 @@ function renderIdleSummary(projects: string[], termWidth: number): string[] {
 
     const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
     const total = Object.keys(state.workers).length;
+    // Verify PID liveness for active workers
+    let realActive = 0;
+    let stale = 0;
+    for (const w of Object.values(state.workers)) {
+      if (w.status === 'active') {
+        const wPid = (w as unknown as { pid?: number | null }).pid ?? null;
+        if (wPid && isProcessAlive(wPid)) {
+          realActive++;
+        } else {
+          stale++;
+        }
+      }
+    }
     const idle = Object.values(state.workers).filter(w => w.status === 'idle').length;
-    const active = Object.values(state.workers).filter(w => w.status === 'active').length;
     const activeCards = Object.keys(state.activeCards).length;
+    const staleStr = stale > 0 ? ` / ${FG.yellow}${stale} stale${RESET}` : '';
 
     lines.push(
-      `  ${BOLD}${projectName}${RESET}: ${FG.green}${active} active${RESET} / ${FG.gray}${idle} idle${RESET} / ${total} total  │  ${FG.cyan}${activeCards} cards${RESET}`
+      `  ${BOLD}${projectName}${RESET}: ${FG.green}${realActive} active${RESET} / ${FG.gray}${idle} idle${RESET}${staleStr} / ${total} total  │  ${FG.cyan}${activeCards} cards${RESET}`
     );
   }
   return lines;
@@ -412,8 +428,11 @@ function buildJsonOutput(projects: string[]): DashboardJson {
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
       const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
-      const sessionAlive = allSessions.has(sessionName);
-      const panePreview = sessionAlive
+      const isPrintMode = slot.mode === 'print';
+      const sessionAlive = isPrintMode
+        ? !!(slot.pid && slot.pid > 0 && isProcessAlive(slot.pid))
+        : allSessions.has(sessionName);
+      const panePreview = sessionAlive && !isPrintMode
         ? capturePaneText(sessionName, 5).trim()
         : '';
 
