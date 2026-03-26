@@ -37,6 +37,28 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
   const log = new Logger('doctor', project);
   const doFix = !!flags.fix;
 
+  // 0a. Global env file exists
+  const HOME = process.env.HOME || '/home/coral';
+  const globalEnvPath = resolve(HOME, '.coral', 'env');
+  if (existsSync(globalEnvPath)) {
+    checks.push({ name: 'global-env', status: 'pass', message: globalEnvPath });
+  } else {
+    checks.push({ name: 'global-env', status: 'fail', message: `${globalEnvPath} not found — run: sps setup` });
+  }
+
+  // 0b. Key global env vars
+  const globalVarsToCheck = ['GITLAB_URL', 'GITLAB_TOKEN'];
+  const missingGlobalVars = globalVarsToCheck.filter(v => !process.env[v]);
+  if (missingGlobalVars.length === 0) {
+    checks.push({ name: 'global-env-vars', status: 'pass', message: 'GITLAB_URL and GITLAB_TOKEN set' });
+  } else {
+    checks.push({
+      name: 'global-env-vars',
+      status: 'warn',
+      message: `Missing env vars: ${missingGlobalVars.join(', ')} — run: source ~/.coral/env`,
+    });
+  }
+
   // 1. Load ProjectContext
   let ctx: ProjectContext;
   try {
@@ -95,6 +117,51 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
     checkWorkerRulesFiles(ctx, checks, fixes, doFix);
   } else {
     checks.push({ name: 'worker-rules', status: 'skip', message: 'Repo not available, skipping worker rules check' });
+  }
+
+  // 4.6 Skill profiles — check DEFAULT_WORKER_SKILLS files exist
+  {
+    const defaultSkills = ctx.config.raw.DEFAULT_WORKER_SKILLS;
+    if (defaultSkills) {
+      const frameworkDir = ctx.config.raw.FRAMEWORK_DIR
+        || resolve(HOME, 'jarvis-skills');
+      const profilesDir = resolve(frameworkDir, 'skills', 'worker-profiles');
+      const skills = defaultSkills.split(',').map(s => s.trim()).filter(Boolean);
+      const missing: string[] = [];
+      for (const skill of skills) {
+        const filePath = resolve(profilesDir, `${skill}.md`);
+        if (!existsSync(filePath)) missing.push(skill);
+      }
+      if (missing.length === 0) {
+        checks.push({ name: 'skill-profiles', status: 'pass', message: `DEFAULT_WORKER_SKILLS="${defaultSkills}" — all profiles found` });
+      } else {
+        checks.push({
+          name: 'skill-profiles',
+          status: 'warn',
+          message: `Skill profile(s) not found: ${missing.join(', ')} (expected at ${profilesDir}/<name>.md)`,
+        });
+      }
+    } else {
+      checks.push({ name: 'skill-profiles', status: 'skip', message: 'DEFAULT_WORKER_SKILLS not set (skill labels on cards will be used instead)' });
+    }
+  }
+
+  // 4.7 .gitignore completeness — .sps/ directory should be ignored
+  if (checkPathExists(ctx.paths.repoDir) && isGitRepo) {
+    const gitignorePath = resolve(ctx.paths.repoDir, '.gitignore');
+    if (existsSync(gitignorePath)) {
+      const content = readFileSync(gitignorePath, 'utf-8');
+      const hasSpsDir = content.includes('.sps/') || content.includes('.sps');
+      if (hasSpsDir) {
+        checks.push({ name: 'gitignore-sps', status: 'pass', message: '.sps/ in .gitignore' });
+      } else if (doFix) {
+        appendFileSync(gitignorePath, '\n# SPS working directory (per-worktree, not committed)\n.sps/\n');
+        checks.push({ name: 'gitignore-sps', status: 'pass', message: 'Added .sps/ to .gitignore' });
+        fixes.push('Added .sps/ to .gitignore');
+      } else {
+        checks.push({ name: 'gitignore-sps', status: 'warn', message: '.sps/ not in .gitignore (use --fix to add)' });
+      }
+    }
   }
 
   // 5. state.json
@@ -204,12 +271,16 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
     checks.push({ name: 'worker-tool', status: 'warn', message: `${tool} not found in PATH` });
   }
 
-  // 10. tmux
-  try {
-    execSync('which tmux', { encoding: 'utf-8', timeout: 5000 });
-    checks.push({ name: 'tmux', status: 'pass', message: 'tmux available' });
-  } catch {
-    checks.push({ name: 'tmux', status: 'fail', message: 'tmux not found' });
+  // 10. tmux (only required for WORKER_MODE=interactive)
+  if (ctx.config.WORKER_MODE === 'interactive') {
+    try {
+      execSync('which tmux', { encoding: 'utf-8', timeout: 5000 });
+      checks.push({ name: 'tmux', status: 'pass', message: 'tmux available (required for interactive mode)' });
+    } catch {
+      checks.push({ name: 'tmux', status: 'fail', message: 'tmux not found (required for WORKER_MODE=interactive)' });
+    }
+  } else {
+    checks.push({ name: 'tmux', status: 'skip', message: 'Not required (WORKER_MODE=print)' });
   }
 
   outputResult(project, checks, fixes, flags);
@@ -354,8 +425,6 @@ function checkWorkerRulesFiles(
   const repoDir = ctx.paths.repoDir;
   const claudeMd = resolve(repoDir, 'CLAUDE.md');
   const agentsMd = resolve(repoDir, 'AGENTS.md');
-  const gitignorePath = resolve(repoDir, '.gitignore');
-  const taskPromptEntry = '.sps/task_prompt.txt';
 
   // Check CLAUDE.md
   const hasClaudeMd = existsSync(claudeMd);
@@ -376,27 +445,10 @@ function checkWorkerRulesFiles(
       created.push('AGENTS.md');
     }
 
-    // Ensure .gitignore has .sps/task_prompt.txt
-    let gitignoreUpdated = false;
-    if (existsSync(gitignorePath)) {
-      const gitignoreContent = readFileSync(gitignorePath, 'utf-8');
-      if (!gitignoreContent.includes(taskPromptEntry)) {
-        appendFileSync(gitignorePath, `\n# SPS task prompt (per-worktree, not committed)\n${taskPromptEntry}\n`);
-        gitignoreUpdated = true;
-      }
-    } else {
-      writeFileSync(gitignorePath, `# SPS task prompt (per-worktree, not committed)\n${taskPromptEntry}\n`);
-      gitignoreUpdated = true;
-    }
-    if (gitignoreUpdated) created.push('.gitignore');
-
     // Git add + commit
     if (created.length > 0) {
       try {
-        const filesToAdd = [];
-        if (!hasClaudeMd) filesToAdd.push('CLAUDE.md');
-        if (!hasAgentsMd) filesToAdd.push('AGENTS.md');
-        if (gitignoreUpdated) filesToAdd.push('.gitignore');
+        const filesToAdd = [...created];
 
         execSync(`git add ${filesToAdd.join(' ')}`, { cwd: repoDir, timeout: 5000 });
         execSync(
