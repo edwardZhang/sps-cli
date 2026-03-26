@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@coralai/sps-cli)](https://www.npmjs.com/package/@coralai/sps-cli)
 
-[中文文档 / Chinese Documentation](https://git.wymsn.com/coral/jarvis-skills/-/blob/main/coding-work-flow/workflow-cli/README-CN.md)
+[中文文档 / Chinese Documentation](README-CN.md)
 
 **v0.18.0**
 
