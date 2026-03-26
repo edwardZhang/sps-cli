@@ -111,15 +111,42 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
     checks.push({ name: 'repo-dir', status: 'warn', message: `Repo dir not found: ${ctx.paths.repoDir}` });
   }
 
-  // 4.5 Worker rules files (CLAUDE.md, AGENTS.md, .gitignore entry)
+  // 4.5 .gitignore completeness — .sps/ directory should be ignored
+  // Runs BEFORE worker-rules so the commit in worker-rules can include .gitignore changes
   const isGitRepo = checkPathExists(`${ctx.paths.repoDir}/.git`);
+  let gitignoreFixedBySps = false;
   if (checkPathExists(ctx.paths.repoDir) && isGitRepo) {
-    checkWorkerRulesFiles(ctx, checks, fixes, doFix);
+    const gitignorePath = resolve(ctx.paths.repoDir, '.gitignore');
+    if (existsSync(gitignorePath)) {
+      const content = readFileSync(gitignorePath, 'utf-8');
+      const hasSpsDir = content.includes('.sps/') || content.includes('.sps');
+      if (hasSpsDir) {
+        checks.push({ name: 'gitignore-sps', status: 'pass', message: '.sps/ in .gitignore' });
+      } else if (doFix) {
+        appendFileSync(gitignorePath, '\n# SPS working directory (per-worktree, not committed)\n.sps/\n');
+        checks.push({ name: 'gitignore-sps', status: 'pass', message: 'Added .sps/ to .gitignore' });
+        fixes.push('Added .sps/ to .gitignore');
+        gitignoreFixedBySps = true;
+      } else {
+        checks.push({ name: 'gitignore-sps', status: 'warn', message: '.sps/ not in .gitignore (use --fix to add)' });
+      }
+    } else if (doFix) {
+      writeFileSync(resolve(ctx.paths.repoDir, '.gitignore'), '# SPS working directory (per-worktree, not committed)\n.sps/\n');
+      checks.push({ name: 'gitignore-sps', status: 'pass', message: 'Created .gitignore with .sps/' });
+      fixes.push('Created .gitignore with .sps/');
+      gitignoreFixedBySps = true;
+    }
+  }
+
+  // 4.6 Worker rules files (CLAUDE.md, AGENTS.md)
+  // gitignoreFixedBySps is passed so the commit can include .gitignore if it was modified
+  if (checkPathExists(ctx.paths.repoDir) && isGitRepo) {
+    checkWorkerRulesFiles(ctx, checks, fixes, doFix, gitignoreFixedBySps);
   } else {
     checks.push({ name: 'worker-rules', status: 'skip', message: 'Repo not available, skipping worker rules check' });
   }
 
-  // 4.6 Skill profiles — check DEFAULT_WORKER_SKILLS files exist
+  // 4.7 Skill profiles — check DEFAULT_WORKER_SKILLS files exist
   {
     const defaultSkills = ctx.config.raw.DEFAULT_WORKER_SKILLS;
     if (defaultSkills) {
@@ -143,24 +170,6 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
       }
     } else {
       checks.push({ name: 'skill-profiles', status: 'skip', message: 'DEFAULT_WORKER_SKILLS not set (skill labels on cards will be used instead)' });
-    }
-  }
-
-  // 4.7 .gitignore completeness — .sps/ directory should be ignored
-  if (checkPathExists(ctx.paths.repoDir) && isGitRepo) {
-    const gitignorePath = resolve(ctx.paths.repoDir, '.gitignore');
-    if (existsSync(gitignorePath)) {
-      const content = readFileSync(gitignorePath, 'utf-8');
-      const hasSpsDir = content.includes('.sps/') || content.includes('.sps');
-      if (hasSpsDir) {
-        checks.push({ name: 'gitignore-sps', status: 'pass', message: '.sps/ in .gitignore' });
-      } else if (doFix) {
-        appendFileSync(gitignorePath, '\n# SPS working directory (per-worktree, not committed)\n.sps/\n');
-        checks.push({ name: 'gitignore-sps', status: 'pass', message: 'Added .sps/ to .gitignore' });
-        fixes.push('Added .sps/ to .gitignore');
-      } else {
-        checks.push({ name: 'gitignore-sps', status: 'warn', message: '.sps/ not in .gitignore (use --fix to add)' });
-      }
     }
   }
 
@@ -421,6 +430,7 @@ function checkWorkerRulesFiles(
   checks: CheckResult[],
   fixes: string[],
   doFix: boolean,
+  gitignoreModified: boolean = false,
 ): void {
   const repoDir = ctx.paths.repoDir;
   const claudeMd = resolve(repoDir, 'CLAUDE.md');
@@ -430,8 +440,20 @@ function checkWorkerRulesFiles(
   const hasClaudeMd = existsSync(claudeMd);
   const hasAgentsMd = existsSync(agentsMd);
 
-  if (hasClaudeMd && hasAgentsMd) {
+  if (hasClaudeMd && hasAgentsMd && !gitignoreModified) {
     checks.push({ name: 'worker-rules', status: 'pass', message: 'CLAUDE.md and AGENTS.md present in repo' });
+  } else if (hasClaudeMd && hasAgentsMd && gitignoreModified && doFix) {
+    // Both rule files exist but .gitignore was modified — commit the .gitignore change
+    try {
+      execSync('git add .gitignore', { cwd: repoDir, timeout: 5000 });
+      execSync(
+        'git commit -m "chore: add .sps/ to .gitignore"',
+        { cwd: repoDir, timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      checks.push({ name: 'worker-rules', status: 'pass', message: 'CLAUDE.md and AGENTS.md present; committed .gitignore update' });
+    } catch {
+      checks.push({ name: 'worker-rules', status: 'pass', message: 'CLAUDE.md and AGENTS.md present (.gitignore update needs manual commit)' });
+    }
   } else if (doFix) {
     const content = generateWorkerRules(ctx);
     const created: string[] = [];
@@ -445,18 +467,20 @@ function checkWorkerRulesFiles(
       created.push('AGENTS.md');
     }
 
-    // Git add + commit
-    if (created.length > 0) {
+    // Git add + commit (include .gitignore if it was modified by gitignore-sps check)
+    if (created.length > 0 || gitignoreModified) {
       try {
         const filesToAdd = [...created];
+        if (gitignoreModified) filesToAdd.push('.gitignore');
 
         execSync(`git add ${filesToAdd.join(' ')}`, { cwd: repoDir, timeout: 5000 });
+        const commitFiles = gitignoreModified ? [...created, '.gitignore'] : created;
         execSync(
-          `git commit -m "chore: add worker rules (CLAUDE.md, AGENTS.md)"`,
+          `git commit -m "chore: add worker rules and SPS gitignore (${commitFiles.join(', ')})"`,
           { cwd: repoDir, timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] },
         );
-        fixes.push(`Created ${created.join(', ')} in repo and committed`);
-        checks.push({ name: 'worker-rules', status: 'pass', message: `Generated and committed: ${created.join(', ')}` });
+        fixes.push(`Created ${commitFiles.join(', ')} in repo and committed`);
+        checks.push({ name: 'worker-rules', status: 'pass', message: `Generated and committed: ${commitFiles.join(', ')}` });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         checks.push({ name: 'worker-rules', status: 'warn', message: `Files created but commit failed: ${msg}` });
