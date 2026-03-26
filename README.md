@@ -830,11 +830,11 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 |-------|----------|---------|-------------|
 | `WORKER_TOOL` | No | `claude` | Worker type: `claude` / `codex` |
 | `WORKER_MODE` | No | `print` | Execution mode: `print` (one-shot process) / `interactive` (tmux TUI) |
-| `MAX_CONCURRENT_WORKERS` | No | `3` | Maximum parallel Workers |
+| `MAX_CONCURRENT_WORKERS` | No | `3` | Maximum parallel Workers (worker slot ceiling) |
 | `WORKER_RESTART_LIMIT` | No | `2` | Maximum restart count after Worker death |
 | `AUTOFIX_ATTEMPTS` | No | `2` | CI failure auto-fix attempt count |
 | `WORKER_SESSION_REUSE` | No | `true` | Whether to reuse tmux sessions (interactive mode only) |
-| `MAX_ACTIONS_PER_TICK` | No | `1` | Maximum actions per tick cycle |
+| `MAX_ACTIONS_PER_TICK` | No | `1` | Maximum launches per tick cycle; raise with `MAX_CONCURRENT_WORKERS` if one tick should fill all slots |
 
 #### Timeouts and Policies
 
