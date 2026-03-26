@@ -2,17 +2,22 @@
  * PostActions — executes the full post-completion/failure chain.
  *
  * Called immediately from Supervisor exit callback → CompletionJudge → here.
- * Each step is independent try/catch — one failure does not block the rest.
+ *
+ * v0.19: Merges are serialized via MergeMutex (per-project). Workers code
+ * in parallel but merge one at a time. If merge conflicts, L2 spawns a
+ * --resume worker to resolve conflicts before retrying.
  */
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { readState, writeState } from '../core/state.js';
+import { isProcessAlive } from '../providers/outputParser.js';
 import type { CompletionResult } from './completion-judge.js';
 import type { PMClient } from './pm-client.js';
 import type { ProcessSupervisor, SpawnOpts } from './supervisor.js';
 import type { ResourceLimiter } from './resource-limiter.js';
 import type { Notifier } from '../interfaces/Notifier.js';
+import type { MergeMutex } from './merge-mutex.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -42,6 +47,15 @@ interface StepResult {
   error?: string;
 }
 
+/** Max merge conflict resolution retries (L2 cycles) */
+const MAX_MERGE_RETRIES = 2;
+
+/** How often to check if resume worker has exited (ms) */
+const PID_POLL_INTERVAL = 3000;
+
+/** Max time to wait for a resume worker to exit (ms) */
+const RESOLVE_TIMEOUT = 300_000; // 5 minutes
+
 // ─── PostActions ────────────────────────────────────────────────
 
 export class PostActions {
@@ -50,10 +64,11 @@ export class PostActions {
     private readonly supervisor: ProcessSupervisor,
     private readonly resourceLimiter: ResourceLimiter,
     private readonly notifier: Notifier | null,
+    private readonly mergeMutex?: MergeMutex,
   ) {}
 
   /**
-   * Handle worker completion — merge + PM update + release + notify.
+   * Handle worker completion — serial merge + PM update + release + notify.
    */
   async executeCompletion(
     ctx: PostActionContext,
@@ -62,39 +77,49 @@ export class PostActions {
   ): Promise<StepResult[]> {
     const results: StepResult[] = [];
 
-    // 1. Merge code
+    // ── Phase 1: Set slot to "merging" ──────────────────────────
+    this.setSlotStatus(ctx, 'merging');
+
+    // ── Phase 2: Serial merge (via MergeMutex) ──────────────────
+    let mergeOk = false;
     if (ctx.mrMode === 'none') {
-      results.push(await this.directMerge(ctx));
+      if (this.mergeMutex) {
+        await this.mergeMutex.acquire();
+      }
+      try {
+        mergeOk = await this.serialMerge(ctx, sessionId, results);
+      } finally {
+        if (this.mergeMutex) {
+          this.mergeMutex.release();
+        }
+      }
     } else {
       results.push(await this.createMR(ctx));
+      mergeOk = results[results.length - 1].ok;
     }
 
-    // 2. PM move → Done
+    if (!mergeOk) {
+      // Merge failed after all retries — release and bail
+      results.push(await this.releaseSlot(ctx));
+      this.resourceLimiter.release();
+      const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
+      this.supervisor.remove(workerId);
+      return results;
+    }
+
+    // ── Phase 3: Post-merge cleanup ─────────────────────────────
     results.push(await this.pmMove(ctx));
-
-    // 3. Release worker slot
     results.push(await this.releaseSlot(ctx));
-
-    // 4. Release PM claim
     results.push(await this.pmReleaseClaim(ctx));
-
-    // 5. Mark worktree for cleanup
     results.push(await this.markWorktreeCleanup(ctx));
-
-    // 6. Knowledge archive
     results.push(await this.archiveKnowledge(ctx));
-
-    // 7. Notify
     results.push(await this.notify(
       ctx,
       `seq:${ctx.seq} completed (${completion.reason}), merged to ${ctx.baseBranch}`,
       'success',
     ));
 
-    // Release global resource
     this.resourceLimiter.release();
-
-    // Remove from supervisor tracking
     const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
     this.supervisor.remove(workerId);
 
@@ -150,9 +175,91 @@ export class PostActions {
     return results;
   }
 
-  // ─── Individual Steps ───────────────────────────────────────
+  // ─── Serial Merge with L0/L1/L2/L3 ────────────────────────────
 
-  private async directMerge(ctx: PostActionContext): Promise<StepResult> {
+  /**
+   * Attempt to merge the feature branch into the target branch.
+   * Called while holding the MergeMutex — only one merge at a time per project.
+   *
+   * L0: fetch + rebase + merge (pure git, no AI)
+   * L1: rebase failed — abort and retry rebase (in case of transient issue)
+   * L2: rebase has real conflicts — spawn --resume Worker to resolve
+   * L3: all retries exhausted — mark CONFLICT
+   *
+   * Returns true if merge succeeded, false if all attempts failed.
+   */
+  private async serialMerge(
+    ctx: PostActionContext,
+    sessionId: string | null,
+    results: StepResult[],
+  ): Promise<boolean> {
+    // L0: Try direct merge (rebase + merge)
+    const l0Result = this.tryRebaseMerge(ctx);
+    if (l0Result.ok) {
+      this.log(`L0: Merged ${ctx.branch} → ${ctx.baseBranch}`);
+      results.push({ step: 'merge-l0', ok: true });
+      return true;
+    }
+
+    this.log(`L0: Merge failed for ${ctx.branch}: ${l0Result.error}`);
+
+    // Abort any in-progress rebase before L2
+    this.abortRebase(ctx.worktree);
+
+    // L2: Spawn --resume Worker to resolve conflicts
+    if (!sessionId) {
+      this.log(`L2: No sessionId for ${ctx.branch}, cannot spawn resume worker`);
+      results.push({ step: 'merge-l0', ok: false, error: l0Result.error });
+      await this.markConflict(ctx, results, `Merge conflict, no session to resume`);
+      return false;
+    }
+
+    for (let attempt = 0; attempt < MAX_MERGE_RETRIES; attempt++) {
+      this.log(`L2: Attempt ${attempt + 1}/${MAX_MERGE_RETRIES} — spawning resume worker for ${ctx.branch}`);
+
+      // Update slot status to "resolving"
+      this.setSlotStatus(ctx, 'resolving');
+
+      // Release mutex while AI works (so other completed workers aren't blocked indefinitely)
+      if (this.mergeMutex) this.mergeMutex.release();
+
+      // Spawn resume worker and wait for exit
+      const resolveResult = await this.spawnConflictResolver(ctx, sessionId, attempt);
+
+      // Re-acquire mutex for merge retry
+      if (this.mergeMutex) await this.mergeMutex.acquire();
+
+      // Update slot back to "merging"
+      this.setSlotStatus(ctx, 'merging');
+
+      if (!resolveResult.ok) {
+        this.log(`L2: Resume worker failed: ${resolveResult.error}`);
+        results.push({ step: `merge-l2-attempt-${attempt + 1}`, ok: false, error: resolveResult.error });
+        continue;
+      }
+
+      // Retry L0 after conflict resolution
+      const retryResult = this.tryRebaseMerge(ctx);
+      if (retryResult.ok) {
+        this.log(`L2: Merge succeeded after conflict resolution (attempt ${attempt + 1})`);
+        results.push({ step: `merge-l2-attempt-${attempt + 1}`, ok: true });
+        return true;
+      }
+
+      this.log(`L2: Merge still fails after resolution attempt ${attempt + 1}: ${retryResult.error}`);
+      this.abortRebase(ctx.worktree);
+      results.push({ step: `merge-l2-attempt-${attempt + 1}`, ok: false, error: retryResult.error });
+    }
+
+    // L3: All retries exhausted
+    await this.markConflict(ctx, results, `Merge conflict after ${MAX_MERGE_RETRIES} resolution attempts`);
+    return false;
+  }
+
+  /**
+   * Try rebase + merge (L0). Returns { ok, error }.
+   */
+  private tryRebaseMerge(ctx: PostActionContext): { ok: boolean; error?: string } {
     try {
       const { worktree, branch, baseBranch } = ctx;
 
@@ -163,12 +270,19 @@ export class PostActions {
         });
       } catch { /* offline ok */ }
 
+      // Checkout feature branch (may be on baseBranch from previous merge attempt)
+      try {
+        execFileSync('git', ['-C', worktree, 'checkout', branch], {
+          timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch { /* already on branch */ }
+
       // Rebase feature onto latest target
       execFileSync('git', ['-C', worktree, 'rebase', `origin/${baseBranch}`], {
         timeout: 30_000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
       });
 
-      // Force push rebased feature (in case rebase rewrote commits)
+      // Force push rebased feature
       execFileSync('git', ['-C', worktree, 'push', '--force-with-lease', 'origin', branch], {
         timeout: 30_000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -188,17 +302,154 @@ export class PostActions {
         timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
       });
 
-      this.log(`Merged ${branch} → ${baseBranch}`);
-      return { step: 'merge', ok: true };
+      return { ok: true };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log(`Merge failed: ${msg}`);
-      // Mark NEEDS-FIX on merge failure
-      try { await this.pmClient.addLabel(ctx.seq, 'NEEDS-FIX'); } catch { /* best effort */ }
-      try { await this.pmClient.comment(ctx.seq, `Auto-merge failed: ${msg}`); } catch { /* best effort */ }
-      return { step: 'merge', ok: false, error: msg };
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
+
+  /**
+   * Abort any in-progress rebase.
+   */
+  private abortRebase(worktree: string): void {
+    try {
+      execFileSync('git', ['-C', worktree, 'rebase', '--abort'], {
+        timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch { /* no rebase in progress */ }
+  }
+
+  /**
+   * Spawn a --resume worker to resolve merge conflicts.
+   * Waits for the worker to exit before returning.
+   */
+  private async spawnConflictResolver(
+    ctx: PostActionContext,
+    sessionId: string,
+    attempt: number,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
+    const outputFile = resolve(
+      ctx.logsDir,
+      `${ctx.project}-${ctx.slot}-conflict-${attempt + 1}-${Date.now()}.jsonl`,
+    );
+
+    const instruction = [
+      `There is a merge conflict on branch ${ctx.branch} when rebasing onto origin/${ctx.baseBranch}.`,
+      `Working directory: ${ctx.worktree}`,
+      '',
+      'Please resolve the conflict:',
+      `1. Run: cd ${ctx.worktree}`,
+      `2. Run: git fetch origin && git checkout ${ctx.branch}`,
+      `3. Run: git rebase origin/${ctx.baseBranch}`,
+      '4. For each conflicting file: open it, understand both sides, resolve the conflict',
+      '5. Run: git add <resolved-files> && git rebase --continue',
+      '6. Run: git push --force-with-lease origin ' + ctx.branch,
+      '7. Say "done"',
+      '',
+      'You have full context from the previous coding session. Use it to make correct conflict resolution decisions.',
+    ].join('\n');
+
+    // Remove old supervisor tracking before respawning
+    this.supervisor.remove(workerId);
+
+    // Release + re-acquire global resource for the resume worker
+    this.resourceLimiter.release();
+    const acquire = this.resourceLimiter.tryAcquireDetailed();
+    if (!acquire.acquired) {
+      return { ok: false, error: 'Global resource limit reached for conflict resolver' };
+    }
+
+    try {
+      // Spawn and capture PID via Promise-based exit wait
+      let spawnedPid = 0;
+
+      const exitPromise = new Promise<number>((resolveExit) => {
+        const handle = this.supervisor.spawn({
+          id: workerId,
+          project: ctx.project,
+          seq: ctx.seq,
+          slot: ctx.slot,
+          worktree: ctx.worktree,
+          branch: ctx.branch,
+          prompt: instruction,
+          outputFile,
+          tool: ctx.tool,
+          resumeSessionId: sessionId,
+          onExit: async (exitCode: number) => {
+            resolveExit(exitCode);
+          },
+        });
+        spawnedPid = handle.pid;
+      });
+
+      // Update state with new PID
+      const state = readState(ctx.stateFile, ctx.maxWorkers);
+      if (state.workers[ctx.slot]) {
+        state.workers[ctx.slot].pid = spawnedPid;
+        state.workers[ctx.slot].outputFile = outputFile;
+        state.workers[ctx.slot].exitCode = null;
+        state.workers[ctx.slot].mergeRetries = (state.workers[ctx.slot].mergeRetries ?? 0) + 1;
+      }
+      writeState(ctx.stateFile, state, 'post-actions-conflict-resolve');
+
+      this.log(`Spawned conflict resolver for ${workerId} (pid=${spawnedPid})`);
+
+      // Wait for the resume worker to exit (with timeout)
+      const exitCode = await Promise.race([
+        exitPromise,
+        new Promise<number>((_, reject) =>
+          setTimeout(() => reject(new Error('Conflict resolver timed out')), RESOLVE_TIMEOUT)
+        ),
+      ]);
+
+      this.supervisor.remove(workerId);
+
+      if (exitCode === 0) {
+        this.log(`Conflict resolver exited successfully (pid=${spawnedPid})`);
+        return { ok: true };
+      } else {
+        return { ok: false, error: `Conflict resolver exited with code ${exitCode}` };
+      }
+    } catch (err) {
+      this.resourceLimiter.release();
+      this.supervisor.remove(workerId);
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * Mark a card with CONFLICT label and comment.
+   */
+  private async markConflict(
+    ctx: PostActionContext,
+    results: StepResult[],
+    reason: string,
+  ): Promise<void> {
+    this.log(`L3: Giving up on ${ctx.branch}: ${reason}`);
+    try { await this.pmClient.addLabel(ctx.seq, 'CONFLICT'); } catch { /* best effort */ }
+    try { await this.pmClient.comment(ctx.seq, `Auto-merge failed: ${reason}`); } catch { /* best effort */ }
+    results.push(await this.notify(ctx, `seq:${ctx.seq} CONFLICT — ${reason}`, 'error'));
+    results.push({ step: 'merge-conflict', ok: false, error: reason });
+  }
+
+  /**
+   * Update slot status in state.json.
+   */
+  private setSlotStatus(ctx: PostActionContext, status: 'merging' | 'resolving'): void {
+    try {
+      const state = readState(ctx.stateFile, ctx.maxWorkers);
+      if (state.workers[ctx.slot]) {
+        state.workers[ctx.slot].status = status;
+        if (status === 'merging' && !state.workers[ctx.slot].completedAt) {
+          state.workers[ctx.slot].completedAt = new Date().toISOString();
+        }
+      }
+      writeState(ctx.stateFile, state, `post-actions-${status}`);
+    } catch { /* best effort */ }
+  }
+
+  // ─── Individual Steps (unchanged) ──────────────────────────────
 
   private async createMR(ctx: PostActionContext): Promise<StepResult> {
     try {
@@ -246,6 +497,7 @@ export class PostActions {
           status: 'idle', seq: null, branch: null, worktree: null,
           tmuxSession: null, claimedAt: null, lastHeartbeat: null,
           mode: null, sessionId: null, pid: null, outputFile: null, exitCode: null,
+          mergeRetries: 0, completedAt: null,
         };
       }
       delete state.activeCards[ctx.seq];
@@ -286,7 +538,6 @@ export class PostActions {
 
   private async archiveKnowledge(ctx: PostActionContext): Promise<StepResult> {
     try {
-      // Extract git diff stat
       const diffStat = safeExec('git', [
         '-C', ctx.worktree, 'diff', '--stat',
         `origin/${ctx.baseBranch}...${ctx.branch}`,
@@ -324,7 +575,7 @@ export class PostActions {
       const resumePrompt = [
         'The previous attempt did not fully complete. Please continue where you left off.',
         'Check the current state of the code, and complete any remaining steps.',
-        'Remember to push your changes and run bash .sps/merge.sh when done.',
+        'Remember to push your changes when done.',
       ].join('\n');
 
       const outputFile = resolve(
@@ -332,7 +583,6 @@ export class PostActions {
         `${ctx.project}-${ctx.slot}-retry${retryCount + 1}-${Date.now()}.jsonl`,
       );
 
-      // Acquire resource for new worker
       const acquire = this.resourceLimiter.tryAcquireDetailed();
       if (!acquire.acquired) {
         const reason = this.resourceLimiter.formatBlockReason(acquire.stats);
@@ -340,7 +590,6 @@ export class PostActions {
         return { step: 'respawn', ok: false, error: `Global resource limit reached: ${reason}` };
       }
 
-      // Spawn FIRST, then update state (C5 fix: avoid state corruption on spawn failure)
       this.supervisor.spawn({
         id: workerId,
         project: ctx.project,
@@ -356,7 +605,6 @@ export class PostActions {
         ...respawnOpts,
       });
 
-      // Update retry count in state.json AFTER successful spawn
       const state = readState(ctx.stateFile, ctx.maxWorkers);
       const card = state.activeCards[ctx.seq];
       if (card) {
@@ -369,7 +617,6 @@ export class PostActions {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log(`Respawn failed: ${msg}`);
-      // Release resource if spawn failed
       this.resourceLimiter.release();
       return { step: 'respawn', ok: false, error: msg };
     }

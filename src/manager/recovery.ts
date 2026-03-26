@@ -8,7 +8,7 @@
  */
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { readState } from '../core/state.js';
+import { readState, writeState } from '../core/state.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import { isProcessAlive } from '../providers/outputParser.js';
 import { CompletionJudge, type JudgeInput } from './completion-judge.js';
@@ -62,7 +62,22 @@ export class Recovery {
       const postActions = this.postActionsFactory(project.config);
 
       for (const [slotName, slot] of Object.entries(state.workers)) {
-        if (slot.status !== 'active' || !slot.pid) continue;
+        // Recover active, merging, and resolving slots
+        if (!['active', 'merging', 'resolving'].includes(slot.status)) continue;
+
+        // For merging slots without PID: reset to active so completion flow picks it up
+        if ((slot.status === 'merging' || slot.status === 'resolving') && !slot.pid) {
+          process.stderr.write(`[recovery] ${project.name}:${slotName}:${slot.seq}: slot in ${slot.status} state without PID, resetting\n`);
+          // Set back to active so the normal completion flow picks it up
+          const freshState = readState(project.stateFile, project.config.MAX_CONCURRENT_WORKERS);
+          if (freshState.workers[slotName]) {
+            freshState.workers[slotName].status = 'active';
+          }
+          writeState(project.stateFile, freshState, 'recovery-merge-reset');
+          continue;
+        }
+
+        if (!slot.pid) continue;
 
         result.found++;
         const workerId = `${project.name}:${slotName}:${slot.seq}`;

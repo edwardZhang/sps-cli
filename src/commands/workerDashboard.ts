@@ -183,6 +183,9 @@ function collectPanels(projects: string[]): WorkerPanel[] {
       // Skip "active" slots where the worker PID is actually dead (stale state)
       if (slot.status === 'active' && !sessionAlive) continue;
 
+      // Show "merging" slots (no live output but useful to see in dashboard)
+      // Show "resolving" slots (resume worker may have output)
+
       panels.push({
         projectName,
         slotName,
@@ -278,6 +281,7 @@ function renderIdleSummary(projects: string[], termWidth: number): string[] {
     // Verify PID liveness for active workers
     let realActive = 0;
     let stale = 0;
+    let merging = 0;
     for (const w of Object.values(state.workers)) {
       if (w.status === 'active') {
         const wPid = (w as unknown as { pid?: number | null }).pid ?? null;
@@ -286,14 +290,19 @@ function renderIdleSummary(projects: string[], termWidth: number): string[] {
         } else {
           stale++;
         }
+      } else if (w.status === 'merging' || w.status === 'resolving') {
+        merging++;
       }
     }
     const idle = Object.values(state.workers).filter(w => w.status === 'idle').length;
     const activeCards = Object.keys(state.activeCards).length;
-    const staleStr = stale > 0 ? ` / ${FG.yellow}${stale} stale${RESET}` : '';
+    const extraParts: string[] = [];
+    if (merging > 0) extraParts.push(`${FG.yellow}${merging} merging${RESET}`);
+    if (stale > 0) extraParts.push(`${FG.yellow}${stale} stale${RESET}`);
+    const extraStr = extraParts.length > 0 ? ` / ${extraParts.join(' / ')}` : '';
 
     lines.push(
-      `  ${BOLD}${projectName}${RESET}: ${FG.green}${realActive} active${RESET} / ${FG.gray}${idle} idle${RESET}${staleStr} / ${total} total  │  ${FG.cyan}${activeCards} cards${RESET}`
+      `  ${BOLD}${projectName}${RESET}: ${FG.green}${realActive} active${RESET} / ${FG.gray}${idle} idle${RESET}${extraStr} / ${total} total  │  ${FG.cyan}${activeCards} cards${RESET}`
     );
   }
   return lines;

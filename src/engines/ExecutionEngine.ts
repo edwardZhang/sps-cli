@@ -670,12 +670,8 @@ export class ExecutionEngine {
     const mrMode = this.ctx.mrMode;   // 'none' | 'create'
     const createMR = mrMode === 'create';
 
-    // Generate .sps/merge.sh
-    this.writeMergeScript(worktreePath, branchName, card, createMR);
-
-    const mergeStepDesc = createMR
-      ? 'Create the Merge Request'
-      : `Merge your changes into ${this.ctx.mergeBranch}`;
+    // Generate .sps/merge.sh (kept as manual fallback, not executed by worker)
+    this.writeMergeScript(worktreePath, branchName, card, mrMode === 'create');
 
     const requirements = [
       '1. Implement the changes described above',
@@ -689,15 +685,12 @@ export class ExecutionEngine {
       `     ## [${card.seq}-${card.name}] ${new Date().toISOString().slice(0, 10)}`,
       '     - What changed and why',
       `4. git add, commit, and push to branch ${branchName}`,
-      `5. ${mergeStepDesc} by running:`,
-      '   ```bash',
-      '   bash .sps/merge.sh',
-      '   ```',
-      '6. Verify the script output shows success, then say "done"',
+      '5. Verify all changes are committed and pushed to your feature branch',
+      '6. Say "done"',
     ];
 
     requirements.push('');
-    requirements.push('IMPORTANT: You MUST complete ALL steps above. Step 5 (bash .sps/merge.sh) is MANDATORY — just pushing code is NOT enough. After completing, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, docker compose up, or any dev server / watch mode).');
+    requirements.push('IMPORTANT: You MUST complete ALL steps above. Push ALL your code to the feature branch. Do NOT run merge scripts — merge is handled automatically by the pipeline. After pushing, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, docker compose up, or any dev server / watch mode).');
 
     sections.push(`# Current Task
 

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from '
 import { resolve, dirname } from 'node:path';
 
 export interface WorkerSlotState {
-  status: 'idle' | 'active' | 'releasing';
+  status: 'idle' | 'active' | 'merging' | 'resolving' | 'releasing';
   seq: number | null;
   branch: string | null;
   worktree: string | null;
@@ -19,6 +19,10 @@ export interface WorkerSlotState {
   outputFile?: string | null;
   /** Process exit code — null while running (print mode) */
   exitCode?: number | null;
+  /** Number of L2 merge conflict resolution attempts */
+  mergeRetries?: number;
+  /** When worker finished coding (ISO string, for merge queue FIFO ordering) */
+  completedAt?: string | null;
 }
 
 export interface ActiveCardState {
@@ -62,6 +66,8 @@ function idleWorkerSlot(): WorkerSlotState {
     pid: null,
     outputFile: null,
     exitCode: null,
+    mergeRetries: 0,
+    completedAt: null,
   };
 }
 

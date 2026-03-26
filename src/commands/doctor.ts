@@ -395,8 +395,11 @@ function generateWorkerRules(ctx: ProjectContext): string {
 2. Implement the changes in this directory
 3. Self-test your changes
 4. git add, commit, and push to your feature branch
-5. Create a Merge Request targeting ${ctx.mergeBranch}
+5. Verify all changes are pushed
 6. Output "done" when finished
+
+NOTE: Do NOT run merge scripts or merge branches. Merge is handled
+automatically by the SPS pipeline after you push and say "done".
 
 ## Commit Rules
 - Commit frequently (every meaningful change)

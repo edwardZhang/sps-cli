@@ -32,7 +32,7 @@ interface ProjectStatus {
   tick: 'running' | 'stopped' | 'stale-lock';
   pid: number | null;
   startedAt: string | null;
-  workers: { total: number; active: number; idle: number; stale: number };
+  workers: { total: number; active: number; idle: number; stale: number; merging: number };
   activeCards: number;
   pipelineQueue: number;
 }
@@ -60,7 +60,7 @@ function getProjectStatus(project: string): ProjectStatus {
   }
 
   // Worker status — verify PIDs are actually alive
-  let workers = { total: 0, active: 0, idle: 0, stale: 0 };
+  let workers = { total: 0, active: 0, idle: 0, stale: 0, merging: 0 };
   let activeCards = 0;
   if (existsSync(stateFile)) {
     try {
@@ -69,15 +69,17 @@ function getProjectStatus(project: string): ProjectStatus {
       const slots = Object.values(state.workers);
       let realActive = 0;
       let stale = 0;
+      let merging = 0;
       for (const slot of slots) {
         if (slot.status === 'active') {
-          // Check if the worker PID is actually alive
           const workerPid = (slot as unknown as { pid?: number | null }).pid ?? null;
           if (workerPid && isPidAlive(workerPid)) {
             realActive++;
           } else {
             stale++;
           }
+        } else if (slot.status === 'merging' || slot.status === 'resolving') {
+          merging++;
         }
       }
       workers = {
@@ -85,6 +87,7 @@ function getProjectStatus(project: string): ProjectStatus {
         active: realActive,
         idle: slots.filter(s => s.status === 'idle').length,
         stale,
+        merging,
       };
       activeCards = Object.keys(state.activeCards).length;
     } catch { /* corrupt state */ }
@@ -150,9 +153,11 @@ export async function executeStatus(flags: Record<string, boolean>): Promise<voi
 
     const pidStr = s.pid ? String(s.pid) : '—';
     const workersStr = s.workers.total > 0
-      ? s.workers.stale > 0
-        ? `${s.workers.active} active, ${s.workers.stale} stale`
-        : `${s.workers.active}/${s.workers.total} active`
+      ? s.workers.merging > 0
+        ? `${s.workers.active} active, ${s.workers.merging} merging`
+        : s.workers.stale > 0
+          ? `${s.workers.active} active, ${s.workers.stale} stale`
+          : `${s.workers.active}/${s.workers.total} active`
       : '—';
     const cardsStr = s.activeCards > 0 ? String(s.activeCards) : '—';
     const queueStr = s.pipelineQueue > 0 ? String(s.pipelineQueue) : '—';
