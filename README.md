@@ -508,7 +508,7 @@ The Worker runs as a subprocess, prompt is passed via stdin, output is written t
 
 ```
 Claude:  claude -p --output-format stream-json --dangerously-skip-permissions
-Codex:   codex exec - --json --full-auto
+Codex:   codex exec - --json --sandbox danger-full-access
 ```
 
 Key advantages:
@@ -517,7 +517,7 @@ Key advantages:
 - **Context continuation** -- Via `--resume <sessionId>` for cross-task context reuse (hits prompt cache, saves tokens)
 - **No tmux dependency** -- Pure process management, suitable for CI/CD environments
 
-When resuming an existing Codex session, SPS uses `codex exec resume <sessionId> - --json --full-auto`.
+When resuming an existing Codex session, SPS uses `codex exec resume <sessionId> - --json --sandbox danger-full-access`.
 
 **Session Resume chain:**
 

@@ -314,13 +314,14 @@ export class ProcessSupervisor {
       return args;
     }
 
-    // Codex exec must opt into automatic writable execution explicitly.
-    // Plain `codex exec --json` inherits local sandbox defaults, which can be
-    // read-only when prompt is piped via stdin and cause immediate task failure.
+    // Codex workers need full local access in SPS worktrees.
+    // `--full-auto` is still too restrictive for git worktrees because git
+    // metadata lives under the source repo's .git/worktrees/... path, and some
+    // local proxy setups also require localhost access from inside the worker.
     if (opts.resumeSessionId) {
-      return ['exec', 'resume', opts.resumeSessionId, '-', '--json', '--full-auto'];
+      return ['exec', 'resume', opts.resumeSessionId, '-', '--json', '--sandbox', 'danger-full-access'];
     }
-    return ['exec', '-', '--json', '--full-auto'];
+    return ['exec', '-', '--json', '--sandbox', 'danger-full-access'];
   }
 
   private extractSessionId(handle: WorkerHandle): string | null {

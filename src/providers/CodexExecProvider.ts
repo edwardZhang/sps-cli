@@ -181,7 +181,7 @@ export class CodexExecProvider implements WorkerProvider {
   async detectWaiting(
     _session: string,
   ): Promise<{ waiting: boolean; destructive: boolean; prompt: string }> {
-    // codex exec print mode runs non-interactively with --full-auto.
+    // codex exec print mode runs non-interactively with danger-full-access.
     return { waiting: false, destructive: false, prompt: '' };
   }
 
@@ -267,13 +267,13 @@ export class CodexExecProvider implements WorkerProvider {
       args = [
         'exec', 'resume', resumeSessionId, '-',
         '--json',
-        '--full-auto',
+        '--sandbox', 'danger-full-access',
       ];
     } else {
       args = [
         'exec', '-',
         '--json',
-        '--full-auto',
+        '--sandbox', 'danger-full-access',
       ];
     }
 
