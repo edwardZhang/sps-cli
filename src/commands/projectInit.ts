@@ -33,7 +33,7 @@ export async function executeProjectInit(
     process.exit(2);
   }
 
-  const instanceDir = resolve(HOME, '.projects', project);
+  const instanceDir = resolve(HOME, '.coral', 'projects', project);
 
   if (existsSync(instanceDir) && !flags.force) {
     log.error(`Project directory already exists: ${instanceDir}`);

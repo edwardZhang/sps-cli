@@ -59,7 +59,7 @@ export interface WorkerHandle {
 // ─── Supervisor ─────────────────────────────────────────────────
 
 export class ProcessSupervisor {
-  /** Global env: process.env + ~/.jarvis.env (Layer 1+2) */
+  /** Global env: process.env + ~/.coral/env (Layer 1+2) */
   private globalEnv: Record<string, string>;
   /** Active worker handles by ID */
   private readonly workers = new Map<string, WorkerHandle>();
@@ -266,7 +266,7 @@ export class ProcessSupervisor {
 
   private loadGlobalEnv(): Record<string, string> {
     const env = { ...process.env } as Record<string, string>;
-    const envPath = resolve(homedir(), '.jarvis.env');
+    const envPath = resolve(homedir(), '.coral', 'env');
     if (existsSync(envPath)) {
       const parsed = this.parseShellFile(envPath);
       Object.assign(env, parsed);
@@ -275,11 +275,11 @@ export class ProcessSupervisor {
   }
 
   private loadProjectEnv(project: string): RawConfig {
-    const confPath = resolve(homedir(), '.projects', project, 'conf');
+    const confPath = resolve(homedir(), '.coral', 'projects', project, 'conf');
     if (!existsSync(confPath)) return {};
 
-    // Source both files in one bash context so conf can reference jarvis.env vars
-    const envPath = resolve(homedir(), '.jarvis.env');
+    // Source both files in one bash context so conf can reference ~/.coral/env vars
+    const envPath = resolve(homedir(), '.coral', 'env');
     try {
       const { execSync } = require('node:child_process');
       const sources: string[] = [];

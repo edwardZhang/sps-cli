@@ -35,15 +35,16 @@ export class PlaneTaskBackend implements TaskBackend {
     this.apiUrl = raw.PLANE_API_URL || raw.PLANE_URL || '';
     this.apiKey = raw.PLANE_API_KEY || '';
     this.workspaceSlug = raw.PLANE_WORKSPACE_SLUG || '';
-    if (!this.apiUrl) throw new Error('Missing PLANE_API_URL or PLANE_URL (set in ~/.jarvis.env or project conf)');
-    if (!this.apiKey) throw new Error('Missing PLANE_API_KEY (set in ~/.jarvis.env)');
-    if (!this.workspaceSlug) throw new Error('Missing PLANE_WORKSPACE_SLUG (set in ~/.jarvis.env)');
+    if (!this.apiUrl) throw new Error('Missing PLANE_API_URL or PLANE_URL (set in ~/.coral/env or project conf)');
+    if (!this.apiKey) throw new Error('Missing PLANE_API_KEY (set in ~/.coral/env)');
+    if (!this.workspaceSlug) throw new Error('Missing PLANE_WORKSPACE_SLUG (set in ~/.coral/env)');
     this.projectId = required(raw, 'PLANE_PROJECT_ID');
     this.projectName = config.PROJECT_NAME;
 
     this.pmMetaDir = resolve(
       process.env.HOME || '/home/coral',
-      '.projects',
+      '.coral',
+      'projects',
       this.projectName,
       'pm_meta',
     );

@@ -324,7 +324,7 @@ export class PostActions {
       const resumePrompt = [
         'The previous attempt did not fully complete. Please continue where you left off.',
         'Check the current state of the code, and complete any remaining steps.',
-        'Remember to push your changes and run bash .jarvis/merge.sh when done.',
+        'Remember to push your changes and run bash .sps/merge.sh when done.',
       ].join('\n');
 
       const outputFile = resolve(

@@ -58,7 +58,7 @@ class PlanePMClient implements PMClient {
     };
     this.projectName = config.PROJECT_NAME;
     this.pmMetaDir = resolve(
-      process.env.HOME || '~', '.projects', this.projectName, 'pm_meta',
+      process.env.HOME || '~', '.coral', 'projects', this.projectName, 'pm_meta',
     );
   }
 

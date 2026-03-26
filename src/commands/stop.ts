@@ -26,7 +26,7 @@ function isPidAlive(pid: number): boolean {
 }
 
 function discoverProjects(): string[] {
-  const projectsDir = resolve(HOME, '.projects');
+  const projectsDir = resolve(HOME, '.coral', 'projects');
   if (!existsSync(projectsDir)) return [];
   try {
     return readdirSync(projectsDir, { withFileTypes: true })
@@ -39,7 +39,7 @@ function discoverProjects(): string[] {
 }
 
 function stopProject(project: string, log: Logger): boolean {
-  const lockFile = resolve(HOME, '.projects', project, 'runtime', 'tick.lock');
+  const lockFile = resolve(HOME, '.coral', 'projects', project, 'runtime', 'tick.lock');
 
   if (!existsSync(lockFile)) {
     log.info(`No running tick for ${project}`);

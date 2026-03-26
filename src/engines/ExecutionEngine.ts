@@ -404,7 +404,7 @@ export class ExecutionEngine {
       this.log.warn(`PM claim for seq ${seq} failed (non-fatal): ${msg}`);
     }
 
-    // Step 5: Build task context (CLAUDE.md + .jarvis_task_prompt.txt)
+    // Step 5: Build task context (CLAUDE.md + .sps/task_prompt.txt)
     try {
       this.buildTaskContext(card, worktreePath);
       this.log.ok(`Step 5: Task context built for seq ${seq}`);
@@ -418,7 +418,7 @@ export class ExecutionEngine {
 
     // Step 6: Launch worker via Supervisor
     try {
-      const promptFile = resolve(worktreePath, '.jarvis_task_prompt.txt');
+      const promptFile = resolve(worktreePath, '.sps', 'task_prompt.txt');
 
       // Check global resource limit
       if (!this.resourceLimiter.tryAcquire()) {
@@ -641,7 +641,7 @@ export class ExecutionEngine {
     const mrMode = this.ctx.mrMode;   // 'none' | 'create'
     const createMR = mrMode === 'create';
 
-    // Generate .jarvis/merge.sh
+    // Generate .sps/merge.sh
     this.writeMergeScript(worktreePath, branchName, card, createMR);
 
     const mergeStepDesc = createMR
@@ -662,13 +662,13 @@ export class ExecutionEngine {
       `4. git add, commit, and push to branch ${branchName}`,
       `5. ${mergeStepDesc} by running:`,
       '   ```bash',
-      '   bash .jarvis/merge.sh',
+      '   bash .sps/merge.sh',
       '   ```',
       '6. Verify the script output shows success, then say "done"',
     ];
 
     requirements.push('');
-    requirements.push('IMPORTANT: You MUST complete ALL steps above. Step 5 (bash .jarvis/merge.sh) is MANDATORY — just pushing code is NOT enough. After completing, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, docker compose up, or any dev server / watch mode).');
+    requirements.push('IMPORTANT: You MUST complete ALL steps above. Step 5 (bash .sps/merge.sh) is MANDATORY — just pushing code is NOT enough. After completing, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, docker compose up, or any dev server / watch mode).');
 
     sections.push(`# Current Task
 
@@ -686,16 +686,20 @@ ${card.desc || '(no description)'}
 Requirements:
 ${requirements.join('\n')}`);
 
+    const spsDir = resolve(worktreePath, '.sps');
+    if (!existsSync(spsDir)) {
+      mkdirSync(spsDir, { recursive: true });
+    }
     writeFileSync(
-      resolve(worktreePath, '.jarvis_task_prompt.txt'),
+      resolve(spsDir, 'task_prompt.txt'),
       sections.join('\n\n') + '\n',
     );
   }
 
   /**
-   * Write .jarvis/merge.sh into the worktree.
+   * Write .sps/merge.sh into the worktree.
    * A self-contained script that creates MR and (if no CI) merges it.
-   * Worker just runs: bash .jarvis/merge.sh
+   * Worker just runs: bash .sps/merge.sh
    */
   private writeMergeScript(
     worktreePath: string,
@@ -703,9 +707,9 @@ ${requirements.join('\n')}`);
     card: Card,
     createMR: boolean,
   ): void {
-    const jarvisDir = resolve(worktreePath, '.jarvis');
-    if (!existsSync(jarvisDir)) {
-      mkdirSync(jarvisDir, { recursive: true });
+    const spsDir = resolve(worktreePath, '.sps');
+    if (!existsSync(spsDir)) {
+      mkdirSync(spsDir, { recursive: true });
     }
 
     const gitlabProjectId = resolveGitlabProjectId(this.ctx.config);
@@ -795,7 +799,7 @@ ${requirements.join('\n')}`);
       ];
     }
 
-    writeFileSync(resolve(jarvisDir, 'merge.sh'), lines.join('\n') + '\n', { mode: 0o755 });
+    writeFileSync(resolve(spsDir, 'merge.sh'), lines.join('\n') + '\n', { mode: 0o755 });
   }
 
   /**

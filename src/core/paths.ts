@@ -4,21 +4,21 @@ import { existsSync } from 'node:fs';
 const HOME = process.env.HOME || '/home/coral';
 
 export interface ProjectPaths {
-  /** ~/.projects/<project>/ */
+  /** ~/.coral/projects/<project>/ */
   instanceDir: string;
-  /** ~/.projects/<project>/conf */
+  /** ~/.coral/projects/<project>/conf */
   confFile: string;
-  /** ~/.projects/<project>/logs/ */
+  /** ~/.coral/projects/<project>/logs/ */
   logsDir: string;
-  /** ~/.projects/<project>/runtime/ */
+  /** ~/.coral/projects/<project>/runtime/ */
   runtimeDir: string;
-  /** ~/.projects/<project>/runtime/state.json */
+  /** ~/.coral/projects/<project>/runtime/state.json */
   stateFile: string;
-  /** ~/.projects/<project>/runtime/tick.lock */
+  /** ~/.coral/projects/<project>/runtime/tick.lock */
   tickLockFile: string;
-  /** ~/.projects/<project>/pm_meta/ */
+  /** ~/.coral/projects/<project>/pm_meta/ */
   pmMetaDir: string;
-  /** ~/.projects/<project>/pipeline_order.json */
+  /** ~/.coral/projects/<project>/pipeline_order.json */
   pipelineOrderFile: string;
   /** Business repo directory (configurable via PROJECT_DIR, default: ~/projects/<project>/) */
   repoDir: string;
@@ -34,7 +34,7 @@ export interface PathOverrides {
 }
 
 export function resolveProjectPaths(projectName: string, overrides?: PathOverrides): ProjectPaths {
-  const instanceDir = resolve(HOME, '.projects', projectName);
+  const instanceDir = resolve(HOME, '.coral', 'projects', projectName);
   const runtimeDir = resolve(instanceDir, 'runtime');
 
   const repoDir = overrides?.projectDir
@@ -67,7 +67,7 @@ export function resolveWorktreePath(projectName: string, seq: string | number, w
 }
 
 export function resolveWorkerCardFile(projectName: string, slot: number): string {
-  return resolve(HOME, '.projects', projectName, `worker-${slot}.card`);
+  return resolve(HOME, '.coral', 'projects', projectName, `worker-${slot}.card`);
 }
 
 export function checkPathExists(path: string): boolean {

@@ -48,7 +48,7 @@ export class MarkdownTaskBackend implements TaskBackend {
 
   constructor(config: ProjectConfig) {
     const home = process.env.HOME || '/home/coral';
-    this.cardsDir = resolve(home, '.projects', config.PROJECT_NAME, 'cards');
+    this.cardsDir = resolve(home, '.coral', 'projects', config.PROJECT_NAME, 'cards');
     this.seqFile = resolve(this.cardsDir, 'seq.txt');
   }
 

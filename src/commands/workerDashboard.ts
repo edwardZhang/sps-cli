@@ -111,10 +111,10 @@ function padOrTruncate(s: string, width: number): string {
   return s + ' '.repeat(width - vLen);
 }
 
-// ── Discover all SPS projects from ~/.projects/ ──────────────────────
+// ── Discover all SPS projects from ~/.coral/projects/ ────────────────
 
 function discoverProjects(): string[] {
-  const projectsDir = resolve(HOME, '.projects');
+  const projectsDir = resolve(HOME, '.coral', 'projects');
   if (!existsSync(projectsDir)) return [];
   try {
     return readdirSync(projectsDir, { withFileTypes: true })
@@ -505,7 +505,7 @@ export async function executeWorkerDashboard(
     if (jsonOutput) {
       console.log(JSON.stringify({ timestamp: new Date().toISOString(), projects: [], tmuxSessions: [] }));
     } else {
-      console.error('No projects found in ~/.projects/');
+      console.error('No projects found in ~/.coral/projects/');
     }
     process.exit(1);
   }

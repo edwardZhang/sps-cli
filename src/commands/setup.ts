@@ -4,8 +4,8 @@ import { createInterface } from 'node:readline';
 import { Logger } from '../core/logger.js';
 
 const HOME = process.env.HOME || '/home/coral';
-const ENV_PATH = resolve(HOME, '.jarvis.env');
-const PROJECTS_DIR = resolve(HOME, '.projects');
+const ENV_PATH = resolve(HOME, '.coral', 'env');
+const PROJECTS_DIR = resolve(HOME, '.coral', 'projects');
 
 function createPrompt(): { ask: (question: string, defaultValue?: string) => Promise<string>; close: () => void } {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -41,7 +41,7 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
   console.log('  https://www.npmjs.com/package/@coralai/sps-cli');
   console.log('');
 
-  // ─── Step 1: ~/.projects directory ─────────────────────────────
+  // ─── Step 1: ~/.coral/projects directory ───────────────────────
   if (!existsSync(PROJECTS_DIR)) {
     mkdirSync(PROJECTS_DIR, { recursive: true });
     log.ok(`Created ${PROJECTS_DIR}`);
@@ -49,11 +49,11 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     log.ok(`${PROJECTS_DIR} already exists`);
   }
 
-  // ─── Step 2: ~/.jarvis.env ─────────────────────────────────────
+  // ─── Step 2: ~/.coral/env ───────────────────────────────────────
   if (existsSync(ENV_PATH) && !flags.force) {
     log.ok(`${ENV_PATH} already exists (use --force to reconfigure)`);
   } else {
-    console.log('\n  Configure global credentials (~/.jarvis.env)\n');
+    console.log('\n  Configure global credentials (~/.coral/env)\n');
     console.log('  Press Enter to skip optional fields.\n');
 
     // GitLab
@@ -136,7 +136,7 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
   console.log('     sps project init <project-name>');
   console.log('');
   console.log('  4. Edit the project config:');
-  console.log('     vim ~/.projects/<project-name>/conf');
+  console.log('     vim ~/.coral/projects/<project-name>/conf');
   console.log('');
   console.log('  5. Run health check:');
   console.log('     sps doctor <project-name> --fix');

@@ -32,7 +32,7 @@ const DIM = '\x1b[2m';
 // ── Discover projects ────────────────────────────────────────────────
 
 function discoverProjects(): string[] {
-  const projectsDir = resolve(HOME, '.projects');
+  const projectsDir = resolve(HOME, '.coral', 'projects');
   if (!existsSync(projectsDir)) return [];
   try {
     return readdirSync(projectsDir, { withFileTypes: true })
@@ -49,7 +49,7 @@ function discoverProjects(): string[] {
 function getLogFile(projectName: string, errOnly: boolean): string {
   const date = new Date().toISOString().slice(0, 10);
   const prefix = errOnly ? 'error' : 'pipeline';
-  return resolve(HOME, '.projects', projectName, 'logs', `${prefix}-${date}.log`);
+  return resolve(HOME, '.coral', 'projects', projectName, 'logs', `${prefix}-${date}.log`);
 }
 
 // ── Read last N lines from a file ────────────────────────────────────
@@ -125,7 +125,7 @@ export async function executeLogs(
   }
 
   if (projects.length === 0) {
-    console.error('No projects found in ~/.projects/');
+    console.error('No projects found in ~/.coral/projects/');
     process.exit(1);
   }
 

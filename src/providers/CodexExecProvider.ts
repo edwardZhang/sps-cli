@@ -335,7 +335,8 @@ export class CodexExecProvider implements WorkerProvider {
     try {
       const stateFile = resolve(
         process.env.HOME || '~',
-        '.projects',
+        '.coral',
+        'projects',
         this.config.PROJECT_NAME,
         'runtime',
         'state.json',

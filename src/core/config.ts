@@ -59,7 +59,7 @@ function sourceShellConf(filePath: string): RawConfig {
 
 /**
  * Source global env + project conf in a single bash context,
- * so conf can reference variables from .jarvis.env (e.g., ${PLANE_URL}).
+ * so conf can reference variables from ~/.coral/env (e.g., ${PLANE_URL}).
  */
 function sourceCombinedConf(envPath: string, confPath: string): RawConfig {
   const sources: string[] = [];
@@ -147,7 +147,7 @@ const REQUIRED_FIELDS = [
 ] as const;
 
 export function loadGlobalEnv(): RawConfig {
-  const envPath = resolve(process.env.HOME || '~', '.jarvis.env');
+  const envPath = resolve(process.env.HOME || '~', '.coral', 'env');
   if (!existsSync(envPath)) return {};
   return sourceShellConf(envPath);
 }
@@ -155,7 +155,8 @@ export function loadGlobalEnv(): RawConfig {
 export function loadProjectConf(projectName: string): ProjectConfig {
   const confPath = resolve(
     process.env.HOME || '~',
-    '.projects',
+    '.coral',
+    'projects',
     projectName,
     'conf'
   );
@@ -165,8 +166,8 @@ export function loadProjectConf(projectName: string): ProjectConfig {
   }
 
   // Source global env + project conf together in one bash context
-  // so that conf can reference variables from .jarvis.env (e.g., ${PLANE_URL})
-  const envPath = resolve(process.env.HOME || '~', '.jarvis.env');
+  // so that conf can reference variables from ~/.coral/env (e.g., ${PLANE_URL})
+  const envPath = resolve(process.env.HOME || '~', '.coral', 'env');
   const raw = sourceCombinedConf(envPath, confPath);
 
   // Strip unreplaced template placeholders (__FOO__) — treat as empty

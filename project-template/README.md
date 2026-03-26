@@ -1,6 +1,6 @@
 # Project Template
 
-This folder is copied into `~/.projects/<project-name>/` for each new pipeline-managed project.
+This folder is copied into `~/.coral/projects/<project-name>/` for each new pipeline-managed project.
 
 Contents:
 - `conf` — project-specific configuration

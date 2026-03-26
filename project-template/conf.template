@@ -9,7 +9,7 @@ export PROJECT_DISPLAY="__PROJECT_DISPLAY__"
 # export WORKTREE_DIR="$HOME/.coral/worktrees"
 
 # ── GitLab（项目特有）──────────────────────────────────────────
-# GITLAB_URL / GITLAB_TOKEN 从全局 ~/.jarvis.env 继承，此处不重复
+# GITLAB_URL / GITLAB_TOKEN 从全局 ~/.coral/env 继承，此处不重复
 export GITLAB_PROJECT="__GITLAB_PROJECT__"
 # GITLAB_PROJECT_ID 可选 — 留空则通过 GITLAB_PROJECT 路径自动查询
 # export GITLAB_PROJECT_ID=""
@@ -20,7 +20,7 @@ export GITLAB_RELEASE_BRANCH="main"
 export PM_TOOL="plane"
 
 # ── Trello（PM_TOOL=trello 时填写）───────────────────────────────
-# TRELLO_API_KEY / TRELLO_TOKEN 从全局 ~/.jarvis.env 继承
+# TRELLO_API_KEY / TRELLO_TOKEN 从全局 ~/.coral/env 继承
 # export TRELLO_BOARD_ID=""
 # export TRELLO_LIST_PLANNING=""
 # export TRELLO_LIST_BACKLOG=""
@@ -31,7 +31,7 @@ export PM_TOOL="plane"
 # export TRELLO_ACCOUNT=""
 
 # ── Plane（PM_TOOL=plane 时填写）────────────────────────────────
-# PLANE_URL / PLANE_API_KEY / PLANE_WORKSPACE_SLUG 从全局 ~/.jarvis.env 继承
+# PLANE_URL / PLANE_API_KEY / PLANE_WORKSPACE_SLUG 从全局 ~/.coral/env 继承
 export PLANE_PROJECT_ID="__PLANE_PROJECT_ID__"
 # export PLANE_PROJECT_NAME=""
 export PLANE_STATE_PLANNING="__PLANE_STATE_PLANNING__"
@@ -65,6 +65,6 @@ export MAX_CONCURRENT_WORKERS=3
 # export WORKTREE_RETAIN_HOURS=24
 
 # ── 通知（项目特有 — 不同项目可发不同房间）──────────────────────
-# MATRIX_HOMESERVER / MATRIX_ACCESS_TOKEN 从全局 ~/.jarvis.env 继承
+# MATRIX_HOMESERVER / MATRIX_ACCESS_TOKEN 从全局 ~/.coral/env 继承
 # 如果项目需要发到特定房间，设置 MATRIX_ROOM_ID：
 # export MATRIX_ROOM_ID=""
