@@ -282,6 +282,8 @@ sps card add <project> "<title>" ["description"]
 
 卡片创建在 Planning 状态，自动添加 `AI-PIPELINE` 标签，并追加到 `pipeline_order.json` 中。
 
+创建后需要打一个 `skill:` 标签，指定 Worker 的专业技能（见下方标签说明）。
+
 | 选项 | 说明 |
 |------|------|
 | `--json` | 输出 JSON 格式的创建结果 |
@@ -289,13 +291,35 @@ sps card add <project> "<title>" ["description"]
 **示例：**
 
 ```bash
-# 创建卡片
+# 创建卡片 + 打 skill 标签
 sps card add my-project "实现用户登录" "使用 JWT 的认证接口"
+sps pm addLabel my-project 1 "skill:backend"
 
-# 批量创建
 sps card add my-project "实现订单列表" "CRUD API + 分页查询"
-sps card add my-project "添加邮件通知" "订单状态变更时发送邮件"
+sps pm addLabel my-project 2 "skill:backend"
+
+sps card add my-project "写 API 文档" "用户和订单接口文档"
+sps pm addLabel my-project 3 "skill:writer"
 ```
+
+#### Skill 标签
+
+每张卡片打 **一个** `skill:` 标签，Pipeline 自动加载对应的 Worker skill profile 注入 prompt：
+
+| 标签 | Worker 角色 | 交付物 |
+|------|------------|--------|
+| `skill:architect` | 架构设计 | ADR、设计文档、目录结构 |
+| `skill:frontend` | 前端开发 | 组件、页面、前端测试 |
+| `skill:backend` | 后端开发 | API、DB migration、后端测试 |
+| `skill:fullstack` | 全栈开发 | 前后端 + DB 一体化 |
+| `skill:prototyper` | 快速原型 | 可运行的 MVP |
+| `skill:reviewer` | 代码审查 | Review 报告 + 修复 commit |
+| `skill:security` | 安全审计 | 审计报告 + 漏洞修复 |
+| `skill:writer` | 技术文档 | README、API 文档、PRD |
+| `skill:optimizer` | 性能优化 | Benchmark 报告 + 优化 commit |
+| `skill:senior` | 通用（兜底） | 高质量通用实现 |
+
+Profile 文件位于 `~/jarvis-skills/skills/worker-profiles/<name>.md`。无标签时 fallback 到项目 conf 中的 `DEFAULT_WORKER_SKILLS`。
 
 ---
 
@@ -686,6 +710,14 @@ sps monitor tick my-project --json
 | `.jarvis/merge.sh` | 合并脚本（MR_MODE=none 时做 git merge，MR_MODE=create 时调 GitLab API 创建 MR） | 否（.gitignore） |
 | `docs/DECISIONS.md` | 项目知识库——架构决策和技术选择 | 是（Worker 自动维护） |
 | `docs/CHANGELOG.md` | 项目知识库——变更记录 | 是（Worker 自动维护） |
+
+**Skill Profile 注入（v0.16+）：**
+
+| 文件 | 用途 |
+|------|------|
+| `~/jarvis-skills/skills/worker-profiles/<name>.md` | 通过 `skill:<name>` 标签加载到 Worker prompt |
+
+Prompt 组装顺序：Skill Profile → CLAUDE.md/AGENTS.md → DECISIONS.md/CHANGELOG.md → 任务描述
 
 ### 工作原理
 
