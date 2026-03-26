@@ -70,6 +70,9 @@ export class ExecutionEngine {
       //    environment. This allows prepare + launch to happen in a single tick.
       const backlogCards = await this.taskBackend.listByState('Backlog');
       for (const card of backlogCards) {
+        // Auto-clean auxiliary labels on Backlog cards — if a card was manually
+        // moved back to Planning/Backlog, stale labels should not block it.
+        await this.cleanAuxiliaryLabels(card);
         if (this.shouldSkip(card)) {
           actions.push({ action: 'skip', entity: `seq:${card.seq}`, result: 'skip', message: 'Has auxiliary state label' });
           continue;
@@ -192,6 +195,25 @@ export class ExecutionEngine {
 
   private shouldSkip(card: Card): boolean {
     return SKIP_LABELS.some((label) => card.labels.includes(label));
+  }
+
+  /**
+   * Remove auxiliary state labels (STALE-RUNTIME, NEEDS-FIX, etc.) from a card.
+   * Called when a card re-enters Backlog — indicates human intent to retry,
+   * so stale labels from previous runs should not block it.
+   */
+  private async cleanAuxiliaryLabels(card: Card): Promise<void> {
+    for (const label of SKIP_LABELS) {
+      if (card.labels.includes(label)) {
+        try {
+          await this.taskBackend.removeLabel(card.seq, label);
+          card.labels = card.labels.filter(l => l !== label);
+          this.log.ok(`Removed stale label "${label}" from seq ${card.seq}`);
+        } catch {
+          this.log.warn(`Failed to remove label "${label}" from seq ${card.seq}`);
+        }
+      }
+    }
   }
 
   // ─── Inprogress Phase (detect completion → Done) ────────────────
