@@ -48,23 +48,27 @@ export interface RuntimeState {
   worktreeCleanup: WorktreeCleanupEntry[];
 }
 
+function idleWorkerSlot(): WorkerSlotState {
+  return {
+    status: 'idle',
+    seq: null,
+    branch: null,
+    worktree: null,
+    tmuxSession: null,
+    claimedAt: null,
+    lastHeartbeat: null,
+    mode: null,
+    sessionId: null,
+    pid: null,
+    outputFile: null,
+    exitCode: null,
+  };
+}
+
 function defaultState(maxWorkers: number): RuntimeState {
   const workers: Record<string, WorkerSlotState> = {};
   for (let i = 1; i <= maxWorkers; i++) {
-    workers[`worker-${i}`] = {
-      status: 'idle',
-      seq: null,
-      branch: null,
-      worktree: null,
-      tmuxSession: null,
-      claimedAt: null,
-      lastHeartbeat: null,
-      mode: null,
-      sessionId: null,
-      pid: null,
-      outputFile: null,
-      exitCode: null,
-    };
+    workers[`worker-${i}`] = idleWorkerSlot();
   }
   return {
     version: 1,
@@ -77,13 +81,36 @@ function defaultState(maxWorkers: number): RuntimeState {
   };
 }
 
+function reconcileState(raw: RuntimeState, maxWorkers: number): RuntimeState {
+  const workers: Record<string, WorkerSlotState> = { ...(raw.workers || {}) };
+
+  // Grow legacy state files when MAX_CONCURRENT_WORKERS increases.
+  // This lets projects scale from 1 -> N workers without deleting state.json.
+  for (let i = 1; i <= maxWorkers; i++) {
+    const slotName = `worker-${i}`;
+    if (!workers[slotName]) {
+      workers[slotName] = idleWorkerSlot();
+    }
+  }
+
+  return {
+    version: raw.version ?? 1,
+    generation: raw.generation ?? 0,
+    updatedAt: raw.updatedAt || new Date().toISOString(),
+    updatedBy: raw.updatedBy || 'migrate',
+    workers,
+    activeCards: raw.activeCards || {},
+    worktreeCleanup: raw.worktreeCleanup || [],
+  };
+}
+
 export function readState(stateFile: string, maxWorkers: number): RuntimeState {
   if (!existsSync(stateFile)) {
     return defaultState(maxWorkers);
   }
   try {
     const raw = readFileSync(stateFile, 'utf-8');
-    return JSON.parse(raw) as RuntimeState;
+    return reconcileState(JSON.parse(raw) as RuntimeState, maxWorkers);
   } catch {
     return defaultState(maxWorkers);
   }

@@ -465,6 +465,8 @@ Limited by `MAX_ACTIONS_PER_TICK` (default 1) to prevent launching too many Work
 
 When ResourceLimiter blocks a launch, SPS now logs the exact reason (`worker cap reached` vs `memory threshold reached`) together with `active/max` and `memory/current-threshold` diagnostics.
 
+If `MAX_CONCURRENT_WORKERS` is increased after a project was already running, SPS now auto-reconciles legacy `state.json` worker slots to the new configured count on the next read.
+
 Cards with `BLOCKED`, `NEEDS-FIX`, `CONFLICT`, `WAITING-CONFIRMATION`, or `STALE-RUNTIME` labels are skipped.
 
 **Example:**

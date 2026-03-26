@@ -8,6 +8,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { readState } from '../core/state.js';
+import { loadProjectConf } from '../core/config.js';
 
 const HOME = process.env.HOME || '/home/coral';
 const PROJECTS_DIR = resolve(HOME, '.coral', 'projects');
@@ -63,7 +64,8 @@ function getProjectStatus(project: string): ProjectStatus {
   let activeCards = 0;
   if (existsSync(stateFile)) {
     try {
-      const state = readState(stateFile, 10);
+      const maxWorkers = loadProjectConf(project).MAX_CONCURRENT_WORKERS;
+      const state = readState(stateFile, maxWorkers);
       const slots = Object.values(state.workers);
       let realActive = 0;
       let stale = 0;
