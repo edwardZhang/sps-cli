@@ -306,6 +306,15 @@ async function runOneTick(
   dryRun: boolean,
 ): Promise<TickResult> {
   const { project, scheduler, closeout, execution, monitor, log } = runner;
+
+  // Hot-reload project conf at the start of each tick cycle
+  // so changes to branch, worker settings, etc. take effect without restart
+  try {
+    runner.ctx.reload();
+  } catch (err) {
+    log.warn(`conf reload failed (using cached): ${err instanceof Error ? err.message : err}`);
+  }
+
   const steps: StepResult[] = [];
   const opts = { dryRun };
 

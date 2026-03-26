@@ -3,8 +3,8 @@ import { resolveProjectPaths, type ProjectPaths } from './paths.js';
 
 export class ProjectContext {
   readonly projectName: string;
-  readonly config: ProjectConfig;
-  readonly paths: ProjectPaths;
+  config: ProjectConfig;
+  paths: ProjectPaths;
 
   private constructor(projectName: string, config: ProjectConfig, paths: ProjectPaths) {
     this.projectName = projectName;
@@ -19,6 +19,18 @@ export class ProjectContext {
       worktreeDir: config.WORKTREE_DIR,
     });
     return new ProjectContext(projectName, config, paths);
+  }
+
+  /**
+   * Reload project configuration from disk.
+   * Called at the start of each tick cycle to pick up conf changes without restarting.
+   */
+  reload(): void {
+    this.config = loadProjectConf(this.projectName);
+    this.paths = resolveProjectPaths(this.projectName, {
+      projectDir: this.config.PROJECT_DIR,
+      worktreeDir: this.config.WORKTREE_DIR,
+    });
   }
 
   validate(): { ok: boolean; errors: { field: string; message: string }[] } {

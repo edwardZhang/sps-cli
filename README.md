@@ -328,7 +328,7 @@ sps pm addLabel my-project 3 "skill:writer"
 | `skill:optimizer` | 性能优化 | Benchmark 报告 + 优化 commit |
 | `skill:senior` | 通用（兜底） | 高质量通用实现 |
 
-Profile 文件位于 `~/jarvis-skills/skills/worker-profiles/<name>.md`。无标签时 fallback 到项目 conf 中的 `DEFAULT_WORKER_SKILLS`。
+Profile 文件位于 `~/.coral/profiles/<name>.md`。无标签时 fallback 到项目 conf 中的 `DEFAULT_WORKER_SKILLS`。
 
 ---
 
@@ -724,7 +724,7 @@ sps monitor tick my-project --json
 
 | 文件 | 用途 |
 |------|------|
-| `~/jarvis-skills/skills/worker-profiles/<name>.md` | 通过 `skill:<name>` 标签加载到 Worker prompt |
+| `~/.coral/profiles/<name>.md` | 通过 `skill:<name>` 标签加载到 Worker prompt |
 
 Prompt 组装顺序：Skill Profile → CLAUDE.md/AGENTS.md → DECISIONS.md/CHANGELOG.md → 任务描述
 

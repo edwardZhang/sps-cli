@@ -855,10 +855,8 @@ ${requirements.join('\n')}`);
 
     if (skills.length === 0) return '';
 
-    // 3. Load profile files
-    const frameworkDir = this.ctx.config.raw.FRAMEWORK_DIR
-      || resolve(process.env.HOME || '~', 'jarvis-skills');
-    const profilesDir = resolve(frameworkDir, 'skills', 'worker-profiles');
+    // 3. Load profile files from ~/.coral/profiles/
+    const profilesDir = resolve(process.env.HOME || '~', '.coral', 'profiles');
     const sections: string[] = ['# Skill Profiles'];
 
     for (const skill of skills) {

@@ -268,6 +268,7 @@ export class CodexExecProvider implements WorkerProvider {
       args = [
         'exec', 'resume', resumeSessionId, '-',
         '--json',
+        '--sandbox', 'danger-full-access',
         '--dangerously-bypass-approvals-and-sandbox',
       ];
     } else {
@@ -275,6 +276,7 @@ export class CodexExecProvider implements WorkerProvider {
       args = [
         'exec', '-',
         '--json',
+        '--sandbox', 'danger-full-access',
         '--dangerously-bypass-approvals-and-sandbox',
       ];
     }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
@@ -146,13 +146,13 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
     checks.push({ name: 'worker-rules', status: 'skip', message: 'Repo not available, skipping worker rules check' });
   }
 
-  // 4.7 Skill profiles — check DEFAULT_WORKER_SKILLS files exist
-  {
+  // 4.7 Skill profiles — check ~/.coral/profiles/ and DEFAULT_WORKER_SKILLS
+  const profilesDir = resolve(HOME, '.coral', 'profiles');
+  if (!existsSync(profilesDir)) {
+    checks.push({ name: 'skill-profiles', status: 'warn', message: `${profilesDir} not found — run: sps setup` });
+  } else {
     const defaultSkills = ctx.config.raw.DEFAULT_WORKER_SKILLS;
     if (defaultSkills) {
-      const frameworkDir = ctx.config.raw.FRAMEWORK_DIR
-        || resolve(HOME, 'jarvis-skills');
-      const profilesDir = resolve(frameworkDir, 'skills', 'worker-profiles');
       const skills = defaultSkills.split(',').map(s => s.trim()).filter(Boolean);
       const missing: string[] = [];
       for (const skill of skills) {
@@ -171,6 +171,12 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
     } else {
       checks.push({ name: 'skill-profiles', status: 'skip', message: 'DEFAULT_WORKER_SKILLS not set (skill labels on cards will be used instead)' });
     }
+  }
+
+  // 4.8 Profiles directory content check (regardless of DEFAULT_WORKER_SKILLS)
+  if (existsSync(profilesDir)) {
+    const profileFiles = readdirSync(profilesDir).filter(f => f.endsWith('.md') && f !== '_template.md');
+    checks.push({ name: 'profiles-count', status: 'pass', message: `${profileFiles.length} skill profiles installed in ${profilesDir}` });
   }
 
   // 5. state.json

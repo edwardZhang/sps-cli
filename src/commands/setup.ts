@@ -1,11 +1,13 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, chmodSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, chmodSync, readdirSync, copyFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { Logger } from '../core/logger.js';
 
 const HOME = process.env.HOME || '/home/coral';
 const ENV_PATH = resolve(HOME, '.coral', 'env');
 const PROJECTS_DIR = resolve(HOME, '.coral', 'projects');
+const PROFILES_DIR = resolve(HOME, '.coral', 'profiles');
 
 function createPrompt(): { ask: (question: string, defaultValue?: string) => Promise<string>; close: () => void } {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -47,6 +49,32 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     log.ok(`Created ${PROJECTS_DIR}`);
   } else {
     log.ok(`${PROJECTS_DIR} already exists`);
+  }
+
+  // ─── Step 1.5: Install worker skill profiles to ~/.coral/profiles/ ──
+  {
+    // Resolve bundled profiles directory relative to compiled JS location
+    // dist/commands/setup.js → ../../profiles/
+    const thisFile = fileURLToPath(import.meta.url);
+    const bundledProfilesDir = resolve(dirname(thisFile), '..', '..', 'profiles');
+
+    if (existsSync(bundledProfilesDir)) {
+      mkdirSync(PROFILES_DIR, { recursive: true });
+      const files = readdirSync(bundledProfilesDir).filter(f => f.endsWith('.md'));
+      let installed = 0;
+      for (const file of files) {
+        const src = resolve(bundledProfilesDir, file);
+        const dest = resolve(PROFILES_DIR, file);
+        // Only overwrite bundled profiles, preserve user-created ones
+        if (!existsSync(dest) || flags.force) {
+          copyFileSync(src, dest);
+          installed++;
+        }
+      }
+      log.ok(`Installed ${installed} skill profiles to ${PROFILES_DIR} (${files.length} total)`);
+    } else {
+      log.warn(`Bundled profiles not found at ${bundledProfilesDir} — skipping`);
+    }
   }
 
   // ─── Step 2: ~/.coral/env ───────────────────────────────────────
