@@ -233,20 +233,25 @@ sps doctor <project> [--fix] [--json] [--skip-remote]
 
 **检查项：**
 
-| 检查项 | 说明 |
-|-------|------|
-| conf-load | 配置文件是否可加载 |
-| conf-fields | 必填字段是否完整 |
-| instance-dir | 管理目录是否存在 |
-| repo-dir | 业务仓库是否存在且为 git 仓库 |
-| worker-rules | CLAUDE.md / AGENTS.md 是否存在于仓库根目录 |
-| state-json | 运行时状态文件是否有效 |
-| pipeline-order | 执行顺序文件是否存在 |
-| conf-cli-fields | CLI 所需的 Provider 字段映射是否完整 |
-| gitlab | GitLab API 连通性 |
-| plane | Plane API 连通性（仅 PM_TOOL=plane） |
-| worker-tool | Claude Code / Codex CLI 是否在 PATH 中 |
-| tmux | tmux 是否可用（仅 `WORKER_MODE=interactive` 时必需） |
+| 检查项 | 说明 | --fix |
+|-------|------|-------|
+| global-env | `~/.coral/env` 是否存在 | — |
+| global-env-vars | GITLAB_URL / GITLAB_TOKEN 是否已加载 | — |
+| conf-load | 配置文件是否可加载 | — |
+| conf-fields | 必填字段是否完整 | — |
+| instance-dir / logs-dir / runtime-dir / pm-meta-dir | 目录结构 | 创建缺失目录 |
+| repo-dir | 业务仓库是否存在且为 git 仓库 | — |
+| gitignore-sps | `.sps/` 是否在 .gitignore 中 | 追加 |
+| worker-rules | CLAUDE.md / AGENTS.md 是否存在于仓库根目录 | 生成并提交（含 .gitignore） |
+| skill-profiles | DEFAULT_WORKER_SKILLS 指定的 profile 文件是否存在 | — |
+| state-json | 运行时状态文件是否有效 | 初始化 |
+| pipeline-order | 执行顺序文件是否存在 | 创建空 |
+| conf-cli-fields | CLI 所需的 Provider 字段映射是否完整（仅 Plane） | 追加映射 |
+| gitlab | GitLab API 连通性 | — |
+| plane | Plane API 连通性（仅 PM_TOOL=plane） | — |
+| pm-states / pm-lists | PM 状态/列表 UUID 是否有效 | 自动创建 + 写入 conf |
+| worker-tool | Claude Code / Codex CLI 是否在 PATH 中 | — |
+| tmux | tmux 是否可用（仅 WORKER_MODE=interactive） | — |
 
 | 选项 | 说明 |
 |------|------|
@@ -259,12 +264,16 @@ sps doctor <project> [--fix] [--json] [--skip-remote]
 ```bash
 # 检查 + 自动修复
 sps doctor my-project --fix
+#   ✓ global-env        /home/user/.coral/env
+#   ✓ global-env-vars   GITLAB_URL and GITLAB_TOKEN set
 #   ✓ conf-load         Loaded ~/.coral/projects/my-project/conf
 #   ✓ conf-fields       All required fields present
 #   ✓ repo-dir          /home/user/projects/my-project
-#   ✓ worker-rules      Generated and committed: CLAUDE.md, AGENTS.md, .gitignore
+#   ✓ gitignore-sps     .sps/ in .gitignore
+#   ✓ worker-rules      Generated and committed: CLAUDE.md, AGENTS.md
+#   ✓ skill-profiles    DEFAULT_WORKER_SKILLS="senior" — all profiles found
 #   ✓ state-json        Initialized with 3 worker slots
-#   ✓ tmux              tmux available
+#   - tmux              Not required (WORKER_MODE=print)
 
 # JSON 输出
 sps doctor my-project --json
