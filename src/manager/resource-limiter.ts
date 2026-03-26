@@ -19,7 +19,14 @@ export interface ResourceStats {
   active: number;
   max: number;
   memoryPercent: number;
+  maxMemoryPercent: number;
   canLaunch: boolean;
+  blockReason: 'workers' | 'memory' | null;
+}
+
+export interface AcquireResult {
+  acquired: boolean;
+  stats: ResourceStats;
 }
 
 const DEFAULT_CONFIG: ResourceConfig = {
@@ -42,14 +49,25 @@ export class ResourceLimiter {
    * Returns true if launch is allowed, false if at capacity.
    */
   tryAcquire(): boolean {
-    if (this.activeCount >= this.config.maxGlobalWorkers) {
-      return false;
-    }
-    if (this.memoryPercent() > this.config.maxMemoryPercent) {
-      return false;
+    return this.tryAcquireDetailed().acquired;
+  }
+
+  /**
+   * Try to acquire a worker slot and return structured rejection details.
+   */
+  tryAcquireDetailed(): AcquireResult {
+    const stats = this.collectStats();
+    if (!stats.canLaunch) {
+      return { acquired: false, stats };
     }
     this.activeCount++;
-    return true;
+    return {
+      acquired: true,
+      stats: {
+        ...stats,
+        active: this.activeCount,
+      },
+    };
   }
 
   /**
@@ -79,13 +97,7 @@ export class ResourceLimiter {
    * Get current resource stats.
    */
   getStats(): ResourceStats {
-    const mem = this.memoryPercent();
-    return {
-      active: this.activeCount,
-      max: this.config.maxGlobalWorkers,
-      memoryPercent: Math.round(mem),
-      canLaunch: this.activeCount < this.config.maxGlobalWorkers && mem <= this.config.maxMemoryPercent,
-    };
+    return this.collectStats();
   }
 
   /**
@@ -93,6 +105,33 @@ export class ResourceLimiter {
    */
   setActiveCount(count: number): void {
     this.activeCount = count;
+  }
+
+  formatBlockReason(stats: ResourceStats): string {
+    const detail = `active=${stats.active}/${stats.max}, memory=${stats.memoryPercent}%/${stats.maxMemoryPercent}%`;
+    if (stats.blockReason === 'workers') {
+      return `worker cap reached (${detail})`;
+    }
+    if (stats.blockReason === 'memory') {
+      return `memory threshold reached (${detail})`;
+    }
+    return `resources available (${detail})`;
+  }
+
+  private collectStats(): ResourceStats {
+    const mem = Math.round(this.memoryPercent());
+    const workerLimited = this.activeCount >= this.config.maxGlobalWorkers;
+    const memoryLimited = mem > this.config.maxMemoryPercent;
+    const blockReason = workerLimited ? 'workers' : memoryLimited ? 'memory' : null;
+
+    return {
+      active: this.activeCount,
+      max: this.config.maxGlobalWorkers,
+      memoryPercent: mem,
+      maxMemoryPercent: this.config.maxMemoryPercent,
+      canLaunch: !workerLimited && !memoryLimited,
+      blockReason,
+    };
   }
 
   private memoryPercent(): number {

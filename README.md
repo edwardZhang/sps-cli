@@ -463,6 +463,8 @@ sps pipeline tick <project> [--json] [--dry-run]
 
 Limited by `MAX_ACTIONS_PER_TICK` (default 1) to prevent launching too many Workers in a single tick cycle. There is a delay between multiple Worker launches (2 seconds in print mode, 10 seconds in interactive mode).
 
+When ResourceLimiter blocks a launch, SPS now logs the exact reason (`worker cap reached` vs `memory threshold reached`) together with `active/max` and `memory/current-threshold` diagnostics.
+
 Cards with `BLOCKED`, `NEEDS-FIX`, `CONFLICT`, `WAITING-CONFIRMATION`, or `STALE-RUNTIME` labels are skipped.
 
 **Example:**

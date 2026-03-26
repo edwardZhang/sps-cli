@@ -333,9 +333,11 @@ export class PostActions {
       );
 
       // Acquire resource for new worker
-      if (!this.resourceLimiter.tryAcquire()) {
-        this.log(`Cannot respawn ${workerId}: global worker limit reached`);
-        return { step: 'respawn', ok: false, error: 'Global worker limit reached' };
+      const acquire = this.resourceLimiter.tryAcquireDetailed();
+      if (!acquire.acquired) {
+        const reason = this.resourceLimiter.formatBlockReason(acquire.stats);
+        this.log(`Cannot respawn ${workerId}: global resource limit reached: ${reason}`);
+        return { step: 'respawn', ok: false, error: `Global resource limit reached: ${reason}` };
       }
 
       // Spawn FIRST, then update state (C5 fix: avoid state corruption on spawn failure)

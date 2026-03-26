@@ -443,11 +443,18 @@ export class ExecutionEngine {
       const promptFile = resolve(worktreePath, '.sps', 'task_prompt.txt');
 
       // Check global resource limit
-      if (!this.resourceLimiter.tryAcquire()) {
-        this.log.warn(`Global worker limit reached, skipping seq ${seq}`);
+      const acquire = this.resourceLimiter.tryAcquireDetailed();
+      if (!acquire.acquired) {
+        const reason = this.resourceLimiter.formatBlockReason(acquire.stats);
+        this.log.warn(`Global resource limit reached, skipping seq ${seq}: ${reason}`);
         // Rollback: release slot
         this.releaseSlot(slotName, seq);
-        return { action: 'launch', entity: `seq:${seq}`, result: 'skip', message: 'Global worker limit reached' };
+        return {
+          action: 'launch',
+          entity: `seq:${seq}`,
+          result: 'skip',
+          message: `Global resource limit reached: ${reason}`,
+        };
       }
 
       await this.resourceLimiter.enforceStagger();
