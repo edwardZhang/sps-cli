@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { ProjectConfig } from '../core/config.js';
+import { resolveGitlabProjectId } from '../core/config.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { MrStatus } from '../models/types.js';
 
@@ -17,7 +18,7 @@ export class GitLabRepoBackend implements RepoBackend {
 
   constructor(config: ProjectConfig) {
     this.gitlabUrl = config.raw.GITLAB_URL || 'https://gitlab.com';
-    this.projectId = config.GITLAB_PROJECT_ID;
+    this.projectId = resolveGitlabProjectId(config);
     this.token = config.raw.GITLAB_TOKEN || '';
     this.apiBase = `${this.gitlabUrl}/api/v4/projects/${encodeURIComponent(this.projectId)}`;
     this.mergeBranch = config.GITLAB_MERGE_BRANCH;

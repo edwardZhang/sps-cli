@@ -6,6 +6,7 @@ import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { CommandResult, ActionRecord, Card, AuxiliaryState } from '../models/types.js';
 import { readState, writeState } from '../core/state.js';
+import { resolveGitlabProjectId } from '../core/config.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { readQueue } from '../core/queue.js';
 import { Logger } from '../core/logger.js';
@@ -536,7 +537,7 @@ export class ExecutionEngine {
       stateFile: this.ctx.paths.stateFile,
       maxWorkers: this.ctx.maxWorkers,
       mrMode: this.ctx.mrMode,
-      gitlabProjectId: this.ctx.config.GITLAB_PROJECT_ID,
+      gitlabProjectId: resolveGitlabProjectId(this.ctx.config),
       gitlabUrl: this.ctx.config.raw.GITLAB_URL || process.env.GITLAB_URL || '',
       gitlabToken: this.ctx.config.raw.GITLAB_TOKEN || process.env.GITLAB_TOKEN || '',
       doneStateId: this.ctx.config.raw.PLANE_STATE_DONE || this.ctx.config.raw.TRELLO_DONE_LIST_ID || '',
@@ -676,7 +677,7 @@ Task: ${card.name}
 Branch: ${branchName}
 Target Branch: ${this.ctx.mergeBranch}
 Card Full ID: ${card.id}
-GitLab Project ID: ${this.ctx.config.GITLAB_PROJECT_ID}
+GitLab Project ID: ${resolveGitlabProjectId(this.ctx.config)}
 MR Mode: ${mrMode}
 
 Description:
@@ -707,7 +708,7 @@ ${requirements.join('\n')}`);
       mkdirSync(jarvisDir, { recursive: true });
     }
 
-    const gitlabProjectId = this.ctx.config.GITLAB_PROJECT_ID;
+    const gitlabProjectId = resolveGitlabProjectId(this.ctx.config);
     const gitlabUrl = this.ctx.config.raw.GITLAB_URL || process.env.GITLAB_URL || '';
     const gitlabToken = this.ctx.config.raw.GITLAB_TOKEN || process.env.GITLAB_TOKEN || '';
     const targetBranch = this.ctx.mergeBranch;

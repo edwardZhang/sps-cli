@@ -9,6 +9,7 @@
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { readState } from '../core/state.js';
+import { resolveGitlabProjectId } from '../core/config.js';
 import { isProcessAlive } from '../providers/outputParser.js';
 import { CompletionJudge, type JudgeInput } from './completion-judge.js';
 import { PostActions, type PostActionContext } from './post-actions.js';
@@ -159,7 +160,7 @@ export class Recovery {
       stateFile: project.stateFile,
       maxWorkers: project.config.MAX_CONCURRENT_WORKERS,
       mrMode: project.config.MR_MODE,
-      gitlabProjectId: project.config.GITLAB_PROJECT_ID,
+      gitlabProjectId: resolveGitlabProjectId(project.config),
       gitlabUrl: raw.GITLAB_URL || process.env.GITLAB_URL || '',
       gitlabToken: raw.GITLAB_TOKEN || process.env.GITLAB_TOKEN || '',
       doneStateId: raw.PLANE_STATE_DONE || raw.TRELLO_DONE_LIST_ID || '',

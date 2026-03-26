@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } fr
 import { execSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
+import { resolveGitlabProjectId } from '../core/config.js';
 import { checkPathExists } from '../core/paths.js';
 import { readState, writeState } from '../core/state.js';
 import { Logger } from '../core/logger.js';
@@ -19,11 +20,15 @@ interface DoctorFlags {
  * Each entry maps the canonical CLI field → fallback .jarvis.env field name.
  * If the canonical field is missing but the fallback exists, --fix can add a mapping.
  */
+/**
+ * CLI conf fields that must be present (from global env or project conf).
+ * These are checked in the merged config (global + project).
+ */
 const CLI_CONF_FIELDS: { field: string; fallback: string; section: string }[] = [
-  { field: 'PLANE_API_URL', fallback: 'PLANE_URL', section: 'Plane' },
+  { field: 'PLANE_URL', fallback: 'PLANE_API_URL', section: 'Plane' },
   { field: 'PLANE_API_KEY', fallback: 'PLANE_API_KEY', section: 'Plane' },
   { field: 'PLANE_WORKSPACE_SLUG', fallback: 'PLANE_WORKSPACE_SLUG', section: 'Plane' },
-  { field: 'MATRIX_ACCESS_TOKEN', fallback: 'MATRIX_TOKEN', section: 'Matrix' },
+  { field: 'MATRIX_ACCESS_TOKEN', fallback: 'MATRIX_ACCESS_TOKEN', section: 'Matrix' },
 ];
 
 export async function executeDoctor(project: string, flags: DoctorFlags): Promise<void> {
@@ -138,7 +143,7 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
     if (gitlabUrl && gitlabToken) {
       try {
         const httpCode = execSync(
-          `curl -sk -o /dev/null -w '%{http_code}' -H "PRIVATE-TOKEN: ${gitlabToken}" "${gitlabUrl}/api/v4/projects/${encodeURIComponent(ctx.config.GITLAB_PROJECT_ID)}"`,
+          `curl -sk -o /dev/null -w '%{http_code}' -H "PRIVATE-TOKEN: ${gitlabToken}" "${gitlabUrl}/api/v4/projects/${encodeURIComponent(resolveGitlabProjectId(ctx.config) || ctx.config.GITLAB_PROJECT)}"`,
           { timeout: 15000, encoding: 'utf-8' }
         ).trim();
         const code = parseInt(httpCode, 10);
@@ -161,7 +166,7 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
 
     // Plane connectivity (only if PM_TOOL=plane and API fields present)
     if (ctx.pmTool === 'plane') {
-      const planeUrl = ctx.config.raw.PLANE_API_URL;
+      const planeUrl = ctx.config.raw.PLANE_API_URL || ctx.config.raw.PLANE_URL;
       const planeKey = ctx.config.raw.PLANE_API_KEY;
       const planeWorkspace = ctx.config.raw.PLANE_WORKSPACE_SLUG;
       const planeProjectId = ctx.config.raw.PLANE_PROJECT_ID;
@@ -182,7 +187,7 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
           checks.push({ name: 'plane', status: 'fail', message: `Cannot reach Plane at ${planeUrl}` });
         }
       } else {
-        checks.push({ name: 'plane', status: 'skip', message: 'Plane API fields incomplete (PLANE_API_URL / PLANE_API_KEY / PLANE_WORKSPACE_SLUG)' });
+        checks.push({ name: 'plane', status: 'skip', message: 'Plane API fields incomplete (PLANE_URL / PLANE_API_KEY / PLANE_WORKSPACE_SLUG — set in ~/.jarvis.env)' });
       }
     }
 
@@ -315,7 +320,7 @@ function generateWorkerRules(ctx: ProjectContext): string {
 ## MR Creation
 - Use git push first, then create MR via GitLab API:
   curl -s -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" -H "Content-Type: application/json" \\
-    "$GITLAB_URL/api/v4/projects/${ctx.config.GITLAB_PROJECT_ID}/merge_requests" \\
+    "$GITLAB_URL/api/v4/projects/${resolveGitlabProjectId(ctx.config) || '<PROJECT_ID>'}/merge_requests" \\
     -d '{"source_branch":"<your-branch>","target_branch":"${ctx.mergeBranch}","title":"feat: <title>"}'
 
 ## Forbidden
@@ -483,7 +488,7 @@ function checkPlaneStates(
   doFix: boolean,
 ): void {
   const raw = ctx.config.raw;
-  const apiUrl = raw.PLANE_API_URL;
+  const apiUrl = raw.PLANE_API_URL || raw.PLANE_URL;
   const apiKey = raw.PLANE_API_KEY;
   const workspace = raw.PLANE_WORKSPACE_SLUG;
   const projectId = raw.PLANE_PROJECT_ID;

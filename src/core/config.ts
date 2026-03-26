@@ -2,6 +2,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execSync } from 'node:child_process';
 
+/** Cache for resolved GitLab project IDs to avoid repeated API calls */
+const gitlabIdCache = new Map<string, string>();
+
 export interface RawConfig {
   [key: string]: string;
 }
@@ -140,7 +143,6 @@ export interface ProjectConfig {
 const REQUIRED_FIELDS = [
   'PROJECT_NAME',
   'GITLAB_PROJECT',
-  'GITLAB_PROJECT_ID',
   'GITLAB_MERGE_BRANCH',
 ] as const;
 
@@ -226,4 +228,44 @@ export function validateConfig(config: ProjectConfig): { field: string; message:
     }
   }
   return errors;
+}
+
+/**
+ * Resolve GITLAB_PROJECT_ID from GITLAB_PROJECT path via GitLab API.
+ * Called lazily when the ID is needed but not configured.
+ * Results are cached per GITLAB_PROJECT path.
+ */
+export function resolveGitlabProjectId(config: ProjectConfig): string {
+  // If already set, return as-is
+  if (config.GITLAB_PROJECT_ID) return config.GITLAB_PROJECT_ID;
+
+  const gitlabProject = config.GITLAB_PROJECT;
+  if (!gitlabProject) return '';
+
+  // Check cache
+  const cached = gitlabIdCache.get(gitlabProject);
+  if (cached) return cached;
+
+  const gitlabUrl = config.raw.GITLAB_URL || '';
+  const gitlabToken = config.raw.GITLAB_TOKEN || '';
+  if (!gitlabUrl || !gitlabToken) return '';
+
+  try {
+    const encoded = encodeURIComponent(gitlabProject);
+    const output = execSync(
+      `curl -sf -H "PRIVATE-TOKEN: ${gitlabToken}" "${gitlabUrl}/api/v4/projects/${encoded}" 2>/dev/null`,
+      { encoding: 'utf-8', timeout: 10_000 },
+    );
+    const data = JSON.parse(output);
+    const id = String(data.id || '');
+    if (id) {
+      // Cache and backfill into config
+      gitlabIdCache.set(gitlabProject, id);
+      config.GITLAB_PROJECT_ID = id;
+      config.raw.GITLAB_PROJECT_ID = id;
+    }
+    return id;
+  } catch {
+    return '';
+  }
 }
