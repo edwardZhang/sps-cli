@@ -31,7 +31,7 @@ interface ProjectStatus {
   tick: 'running' | 'stopped' | 'stale-lock';
   pid: number | null;
   startedAt: string | null;
-  workers: { total: number; active: number; idle: number };
+  workers: { total: number; active: number; idle: number; stale: number };
   activeCards: number;
   pipelineQueue: number;
 }
@@ -58,18 +58,31 @@ function getProjectStatus(project: string): ProjectStatus {
     }
   }
 
-  // Worker status
-  let workers = { total: 0, active: 0, idle: 0 };
+  // Worker status — verify PIDs are actually alive
+  let workers = { total: 0, active: 0, idle: 0, stale: 0 };
   let activeCards = 0;
   if (existsSync(stateFile)) {
     try {
-      // Read state with a default max workers (will be overridden by actual content)
       const state = readState(stateFile, 10);
       const slots = Object.values(state.workers);
+      let realActive = 0;
+      let stale = 0;
+      for (const slot of slots) {
+        if (slot.status === 'active') {
+          // Check if the worker PID is actually alive
+          const workerPid = (slot as unknown as { pid?: number | null }).pid ?? null;
+          if (workerPid && isPidAlive(workerPid)) {
+            realActive++;
+          } else {
+            stale++;
+          }
+        }
+      }
       workers = {
         total: slots.length,
-        active: slots.filter(s => s.status === 'active').length,
+        active: realActive,
         idle: slots.filter(s => s.status === 'idle').length,
+        stale,
       };
       activeCards = Object.keys(state.activeCards).length;
     } catch { /* corrupt state */ }
@@ -135,7 +148,9 @@ export async function executeStatus(flags: Record<string, boolean>): Promise<voi
 
     const pidStr = s.pid ? String(s.pid) : '—';
     const workersStr = s.workers.total > 0
-      ? `${s.workers.active}/${s.workers.total} active`
+      ? s.workers.stale > 0
+        ? `${s.workers.active} active, ${s.workers.stale} stale`
+        : `${s.workers.active}/${s.workers.total} active`
       : '—';
     const cardsStr = s.activeCards > 0 ? String(s.activeCards) : '—';
     const queueStr = s.pipelineQueue > 0 ? String(s.pipelineQueue) : '—';
