@@ -264,20 +264,16 @@ export class CodexExecProvider implements WorkerProvider {
 
     let args: string[];
     if (resumeSessionId) {
-      // codex exec resume <session_id> "prompt" --json ...
       args = [
         'exec', 'resume', resumeSessionId, '-',
         '--json',
-        '--sandbox', 'danger-full-access',
-        '--dangerously-bypass-approvals-and-sandbox',
+        '--full-auto',
       ];
     } else {
-      // codex exec "prompt" --json ...
       args = [
         'exec', '-',
         '--json',
-        '--sandbox', 'danger-full-access',
-        '--dangerously-bypass-approvals-and-sandbox',
+        '--full-auto',
       ];
     }
 
