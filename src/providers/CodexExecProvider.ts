@@ -181,7 +181,7 @@ export class CodexExecProvider implements WorkerProvider {
   async detectWaiting(
     _session: string,
   ): Promise<{ waiting: boolean; destructive: boolean; prompt: string }> {
-    // codex exec with --dangerously-bypass-approvals-and-sandbox never waits
+    // codex exec print mode runs non-interactively with --full-auto.
     return { waiting: false, destructive: false, prompt: '' };
   }
 

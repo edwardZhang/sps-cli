@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.18.0**
+**v0.18.9**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -508,7 +508,7 @@ The Worker runs as a subprocess, prompt is passed via stdin, output is written t
 
 ```
 Claude:  claude -p --output-format stream-json --dangerously-skip-permissions
-Codex:   codex exec - --json --dangerously-bypass-approvals-and-sandbox
+Codex:   codex exec - --json --full-auto
 ```
 
 Key advantages:
@@ -516,6 +516,8 @@ Key advantages:
 - **No confirmation needed** -- Permission flags skip all confirmation dialogs
 - **Context continuation** -- Via `--resume <sessionId>` for cross-task context reuse (hits prompt cache, saves tokens)
 - **No tmux dependency** -- Pure process management, suitable for CI/CD environments
+
+When resuming an existing Codex session, SPS uses `codex exec resume <sessionId> - --json --full-auto`.
 
 **Session Resume chain:**
 

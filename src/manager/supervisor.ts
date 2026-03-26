@@ -313,10 +313,14 @@ export class ProcessSupervisor {
       if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
       return args;
     }
-    // codex
-    const args = ['exec', '--json'];
-    if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
-    return args;
+
+    // Codex exec must opt into automatic writable execution explicitly.
+    // Plain `codex exec --json` inherits local sandbox defaults, which can be
+    // read-only when prompt is piped via stdin and cause immediate task failure.
+    if (opts.resumeSessionId) {
+      return ['exec', 'resume', opts.resumeSessionId, '-', '--json', '--full-auto'];
+    }
+    return ['exec', '-', '--json', '--full-auto'];
   }
 
   private extractSessionId(handle: WorkerHandle): string | null {
