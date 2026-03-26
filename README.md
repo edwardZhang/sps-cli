@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@coralai/sps-cli)](https://www.npmjs.com/package/@coralai/sps-cli)
 
-[中文文档 / Chinese Documentation](README-CN.md)
+> **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
 **v0.18.0**
 
