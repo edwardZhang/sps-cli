@@ -116,7 +116,7 @@ Planning -> Backlog -> Todo -> Inprogress -> Done
 | Todo -> Inprogress | ExecutionEngine | Assign Worker slot, build task context, launch AI Worker |
 | Inprogress -> Done | PostActions + MergeMutex | Detect Worker completion, serialize merge to target branch, release resources, clean up worktree |
 
-The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the proposed ACP transport model, the full worker state breakdown, and the recommended local same-user OAuth reuse model.
+The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the proposed persistent ACP transport model, the full worker state breakdown, and the recommended local same-user OAuth reuse model.
 
 ### MR_MODE=create (Optional)
 
