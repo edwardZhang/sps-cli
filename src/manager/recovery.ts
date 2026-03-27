@@ -8,6 +8,7 @@
  */
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import { ProjectContext } from '../core/context.js';
@@ -17,9 +18,9 @@ import { PostActions, type PostActionContext } from './post-actions.js';
 import { ProcessSupervisor } from './supervisor.js';
 import { ResourceLimiter } from './resource-limiter.js';
 import type { ProjectConfig } from '../core/config.js';
-import { ACPWorkerRuntime } from '../providers/ACPWorkerRuntime.js';
+import { createAgentRuntime } from '../providers/registry.js';
 import type { ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
-import type { RuntimeState, TaskLease, WorkerSlotState } from '../core/state.js';
+import type { RuntimeState, TaskLease, WorkerSlotState, WorktreeEvidence } from '../core/state.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -95,7 +96,7 @@ export class Recovery {
 
         const isAcpTransport = workerRef.transport === 'acp' || workerRef.transport === 'pty' || workerRef.mode === 'acp' || workerRef.mode === 'pty';
         if (isAcpTransport && slotName) {
-          const recovered = await this.recoverAcpSlot(project, slotName, seq, workerRef, postActions, lease.retryCount);
+          const recovered = await this.recoverAcpSlot(project, slotName, seq, workerRef, postActions, lease);
           if (recovered === 'alive') result.alive++;
           if (recovered === 'completed') result.completed++;
           if (recovered === 'failed') result.failed++;
@@ -261,13 +262,21 @@ export class Recovery {
       worktree?: string | null;
       outputFile?: string | null;
       sessionId?: string | null;
+      mode?: string | null;
+      transport?: 'proc' | 'acp' | 'pty' | null;
+      agent?: 'claude' | 'codex' | null;
+      claimedAt?: string | null;
       seq?: number | null;
     },
     postActions: PostActions,
-    retryCount: number,
+    lease: TaskLease,
   ): Promise<'alive' | 'completed' | 'failed'> {
+    if (this.isPtyTask(project, slot)) {
+      return this.recoverPtyTask(project, slotName, seq, slot, postActions, lease);
+    }
+
     const ctx = ProjectContext.load(project.name);
-    const runtime = new ACPWorkerRuntime(ctx);
+    const runtime = createAgentRuntime(ctx);
     const inspected = await runtime.inspect(slotName);
     const session = inspected.sessions[slotName];
     const workerId = `${project.name}:${slotName}:${seq}`;
@@ -343,10 +352,95 @@ export class Recovery {
       completion,
       exitCode,
       null,
-      retryCount,
+      lease.retryCount,
       { onExit: this.buildOnExitCallback(project, slotName, slot, seq, postActions) },
     );
     return 'failed';
+  }
+
+  private async recoverPtyTask(
+    project: ProjectInfo,
+    slotName: string,
+    seq: string,
+    slot: {
+      branch?: string | null;
+      worktree?: string | null;
+      outputFile?: string | null;
+      sessionId?: string | null;
+      mode?: string | null;
+      transport?: 'proc' | 'acp' | 'pty' | null;
+      agent?: 'claude' | 'codex' | null;
+      claimedAt?: string | null;
+      seq?: number | null;
+    },
+    postActions: PostActions,
+    lease: TaskLease,
+  ): Promise<'alive' | 'completed' | 'failed'> {
+    const state = this.stateStore(project).readState();
+    const evidence = state.worktreeEvidence[seq] || null;
+    const judgeInput: JudgeInput = {
+      worktree: slot.worktree || '',
+      branch: slot.branch || '',
+      baseBranch: project.config.GITLAB_MERGE_BRANCH,
+      outputFile: null,
+      exitCode: 1,
+      logsDir: project.logsDir,
+    };
+    const completion = this.judge.judge(judgeInput);
+    const postActionCtx = this.buildPostActionContext(project, slotName, seq, slot);
+
+    if (completion.status === 'completed') {
+      await postActions.executeCompletion(postActionCtx, completion, null);
+      return 'completed';
+    }
+
+    if (!this.shouldRestartPtyTask(lease, evidence, slot)) {
+      await postActions.executeFailure(
+        postActionCtx,
+        completion,
+        1,
+        null,
+        lease.retryCount,
+        { onExit: this.buildOnExitCallback(project, slotName, slot, seq, postActions) },
+      );
+      return 'failed';
+    }
+
+    const ctx = ProjectContext.load(project.name);
+    const runtime = createAgentRuntime(ctx);
+    const tool = slot.agent || (project.config.ACP_AGENT || project.config.WORKER_TOOL) as 'claude' | 'codex';
+    const prompt = this.buildPtyRecoveryPrompt(project, lease, slot, evidence);
+    const session = await runtime.startRun(slotName, prompt, tool, slot.worktree || undefined);
+
+    this.resourceLimiter.tryAcquire();
+    this.syncRecoveredTask(project, slotName, seq, lease, slot, session);
+
+    const workerId = `${project.name}:${slotName}:${seq}`;
+    this.supervisor.registerAcpHandle({
+      id: workerId,
+      pid: null,
+      outputFile: null,
+      project: project.name,
+      seq,
+      slot: slotName,
+      branch: slot.branch || '',
+      worktree: slot.worktree || '',
+      tool: session.tool,
+      exitCode: null,
+      sessionId: session.sessionId,
+      runId: session.currentRun?.runId || null,
+      sessionState: session.sessionState,
+      remoteStatus: session.currentRun?.status || null,
+      lastEventAt: session.lastSeenAt,
+      startedAt: slot.claimedAt || lease.claimedAt || new Date().toISOString(),
+      exitedAt: null,
+    });
+
+    this.log(
+      `Recovered PTY task ${workerId} by starting a fresh task-level session ` +
+      `(session ${session.sessionId}, run ${session.currentRun?.runId || 'unknown'})`,
+    );
+    return 'alive';
   }
 
   private listRecoverableLeases(state: RuntimeState): Array<[string, TaskLease]> {
@@ -407,11 +501,168 @@ export class Recovery {
       slot.sessionState = session.sessionState;
       slot.remoteStatus = session.currentRun?.status || null;
       slot.lastEventAt = session.lastSeenAt;
-      slot.pid = null;
+      slot.pid = session.pid ?? null;
       slot.outputFile = null;
       slot.exitCode = null;
       slot.lastHeartbeat = new Date().toISOString();
     });
+  }
+
+  private syncRecoveredTask(
+    project: ProjectInfo,
+    slotName: string,
+    seq: string,
+    lease: TaskLease,
+    slot: {
+      branch?: string | null;
+      worktree?: string | null;
+      transport?: 'proc' | 'acp' | 'pty' | null;
+      mode?: string | null;
+      agent?: 'claude' | 'codex' | null;
+      claimedAt?: string | null;
+    },
+    session: ACPSessionRecord,
+  ): void {
+    this.stateStore(project).updateState('recovery-pty-restart', (state) => {
+      const worker = state.workers[slotName];
+      if (worker) {
+        worker.status = this.slotStatusForLease(lease.phase);
+        worker.seq = parseInt(seq, 10);
+        worker.branch = slot.branch || lease.branch;
+        worker.worktree = slot.worktree || lease.worktree;
+        worker.claimedAt = slot.claimedAt || lease.claimedAt || new Date().toISOString();
+        worker.mode = 'pty';
+        worker.transport = 'pty';
+        worker.agent = session.tool;
+        worker.tmuxSession = session.sessionName;
+        worker.sessionId = session.sessionId;
+        worker.runId = session.currentRun?.runId || null;
+        worker.sessionState = session.sessionState;
+        worker.remoteStatus = session.currentRun?.status || null;
+        worker.lastEventAt = session.lastSeenAt;
+        worker.pid = session.pid ?? null;
+        worker.outputFile = null;
+        worker.exitCode = null;
+        worker.lastHeartbeat = new Date().toISOString();
+      }
+
+      state.activeCards[seq] = {
+        seq: parseInt(seq, 10),
+        state: 'Inprogress',
+        worker: slotName,
+        mrUrl: state.activeCards[seq]?.mrUrl || null,
+        conflictDomains: state.activeCards[seq]?.conflictDomains || [],
+        startedAt: state.activeCards[seq]?.startedAt || lease.claimedAt || new Date().toISOString(),
+        retryCount: lease.retryCount,
+      };
+
+      if (state.leases[seq]) {
+        state.leases[seq].slot = slotName;
+        state.leases[seq].branch = slot.branch || lease.branch;
+        state.leases[seq].worktree = slot.worktree || lease.worktree;
+        state.leases[seq].sessionId = session.sessionId;
+        state.leases[seq].runId = session.currentRun?.runId || null;
+        state.leases[seq].phase = session.pendingInput
+          ? 'waiting_confirmation'
+          : lease.phase === 'resolving_conflict'
+            ? 'resolving_conflict'
+            : 'coding';
+        state.leases[seq].lastTransitionAt = new Date().toISOString();
+      }
+    });
+  }
+
+  private shouldRestartPtyTask(
+    lease: TaskLease,
+    evidence: WorktreeEvidence | null,
+    slot: { worktree?: string | null; branch?: string | null },
+  ): boolean {
+    const hasWorktree = !!(slot.worktree || lease.worktree);
+    const hasBranch = !!(slot.branch || lease.branch);
+    if (!hasWorktree || !hasBranch) return false;
+
+    if (lease.phase === 'resolving_conflict') return true;
+    if (lease.phase === 'waiting_confirmation') return true;
+    if (lease.phase === 'coding') return true;
+
+    if (lease.phase === 'merging' && evidence && ['rebase', 'merge', 'conflict'].includes(evidence.gitStatus)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private buildPtyRecoveryPrompt(
+    project: ProjectInfo,
+    lease: TaskLease,
+    slot: { branch?: string | null; worktree?: string | null },
+    evidence: WorktreeEvidence | null,
+  ): string {
+    const worktree = slot.worktree || lease.worktree || '';
+    const branch = slot.branch || lease.branch || '';
+    const originalPrompt = this.readTaskPrompt(worktree);
+    const conflictRecovery = lease.phase === 'resolving_conflict' || !!evidence && ['rebase', 'merge', 'conflict'].includes(evidence.gitStatus);
+
+    const header = conflictRecovery
+      ? [
+          'The previous SPS tick process stopped. The old PTY session is gone.',
+          'Recover this task at the task level in the existing worktree.',
+          `Working directory: ${worktree}`,
+          `Branch: ${branch}`,
+          '',
+          'Current goal:',
+          `1. cd ${worktree}`,
+          `2. Inspect the existing git state and continue the in-progress rebase/merge against origin/${project.config.GITLAB_MERGE_BRANCH}`,
+          '3. Resolve every conflict carefully based on the current code and task intent',
+          '4. Run git add on resolved files and continue the rebase/merge',
+          `5. Push the feature branch with git push --force-with-lease origin ${branch}`,
+          '6. Say "done" only after the branch is in a good state',
+        ]
+      : [
+          'The previous SPS tick process stopped. The old PTY session is gone.',
+          'Recover this task at the task level in the existing worktree.',
+          `Working directory: ${worktree}`,
+          `Branch: ${branch}`,
+          '',
+          'Current goal:',
+          `1. cd ${worktree}`,
+          '2. Inspect the current git/worktree state before changing anything',
+          '3. Continue the task from the existing code instead of starting over',
+          '4. Run the necessary tests/checks for the current state',
+          `5. Push the feature branch ${branch} when the task is complete`,
+          '6. Say "done" only after the branch is pushed',
+        ];
+
+    if (!originalPrompt) {
+      return header.join('\n');
+    }
+
+    return `${header.join('\n')}\n\nOriginal task context:\n---\n${originalPrompt}`;
+  }
+
+  private readTaskPrompt(worktree: string): string | null {
+    if (!worktree) return null;
+    const promptFile = resolve(worktree, '.sps', 'task_prompt.txt');
+    if (!existsSync(promptFile)) return null;
+    try {
+      return readFileSync(promptFile, 'utf-8').trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private slotStatusForLease(phase: TaskLease['phase']): WorkerSlotState['status'] {
+    if (phase === 'merging') return 'merging';
+    if (phase === 'resolving_conflict' || phase === 'waiting_confirmation') return 'resolving';
+    if (phase === 'closing') return 'releasing';
+    return 'active';
+  }
+
+  private isPtyTask(
+    project: ProjectInfo,
+    slot: { transport?: 'proc' | 'acp' | 'pty' | null; mode?: string | null },
+  ): boolean {
+    return slot.transport === 'pty' || slot.mode === 'pty' || project.config.WORKER_TRANSPORT === 'pty';
   }
 
   private isActiveRun(status: ACPRunStatus): boolean {
