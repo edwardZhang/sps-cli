@@ -228,7 +228,7 @@ function collectPanels(projects: string[]): WorkerPanel[] {
 function renderHeader(termWidth: number): string[] {
   const title = ' SPS Worker Dashboard ';
   const now = new Date().toLocaleTimeString();
-  const rightInfo = `${DIM}${now}  q=quit  r=refresh  Y/N=respond${RESET}`;
+  const rightInfo = `${DIM}${now}  q=quit  r=refresh  :=respond${RESET}`;
   const rightLen = visibleLength(rightInfo);
   const leftPad = Math.max(0, Math.floor((termWidth - title.length) / 2));
 
@@ -502,57 +502,102 @@ function buildJsonOutput(projects: string[]): DashboardJson {
   return result;
 }
 
-// ── Respond to pending confirmations ─────────────────────────────────
+// ── Pending confirmations helper ─────────────────────────────────────
 
-function respondToPending(projects: string[], response: string, redraw: () => void): void {
+interface PendingItem {
+  project: string;
+  slot: string;
+  prompt: string;
+  options?: string[];
+  dangerous?: boolean;
+  transport: string;
+  sessionName: string;
+}
+
+function collectPendingInputs(projects: string[]): PendingItem[] {
+  const items: PendingItem[] = [];
   for (const projectName of projects) {
     let ctx: ProjectContext;
     try { ctx = ProjectContext.load(projectName); } catch { continue; }
-
     const acpState = readACPState(ctx.paths.acpStateFile);
+    const transport = ctx.config.raw.WORKER_TRANSPORT || 'acp';
     for (const [slotName, session] of Object.entries(acpState.sessions)) {
       if (!session.pendingInput) continue;
+      items.push({
+        project: projectName,
+        slot: slotName,
+        prompt: session.pendingInput.prompt,
+        options: session.pendingInput.options,
+        dangerous: session.pendingInput.dangerous,
+        transport,
+        sessionName: session.sessionName || `sps-acp-${projectName}-${slotName}`,
+      });
+    }
+  }
+  return items;
+}
 
-      // Found a pending input — respond via PTY or tmux
-      const transport = ctx.config.raw.WORKER_TRANSPORT || 'acp';
-      try {
-        if (transport === 'pty') {
-          const manager = getSharedPTYManager();
-          const ptySession = manager.getSession(projectName, slotName);
-          if (ptySession?.isAlive()) {
-            ptySession.write(response + '\r');
-          }
+function sendResponse(item: PendingItem, response: string): boolean {
+  try {
+    if (item.transport === 'pty') {
+      const manager = getSharedPTYManager();
+      const ptySession = manager.getSession(item.project, item.slot);
+      if (ptySession?.isAlive()) {
+        // Map numeric option to arrow key sequences for menu selection
+        const num = parseInt(response, 10);
+        if (!isNaN(num) && num >= 1) {
+          // Option N = (N-1) down arrows + Enter
+          const downs = '\x1b[B'.repeat(num - 1);
+          ptySession.write(downs + '\r');
         } else {
-          // tmux fallback
-          const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
-          const sessionName = session.sessionName || `sps-acp-${projectName}-${slotName}`;
-          execFileSync('tmux', ['send-keys', '-t', sessionName, response, 'Enter'], {
-            timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
-          });
+          ptySession.write(response + '\r');
         }
-
-        // Clear pending input
-        session.pendingInput = null;
-        session.updatedAt = new Date().toISOString();
-        writeACPState(ctx.paths.acpStateFile, acpState, 'dashboard-respond');
-
-        process.stderr.write(`[dashboard] Sent "${response}" to ${projectName}:${slotName}\n`);
-        redraw();
-        return; // Respond to first pending only
-      } catch (err) {
-        process.stderr.write(`[dashboard] Failed to respond: ${err}\n`);
+      } else {
+        return false;
+      }
+    } else {
+      // tmux fallback
+      const num = parseInt(response, 10);
+      let keys: string[];
+      if (!isNaN(num) && num >= 1) {
+        keys = [];
+        for (let i = 1; i < num; i++) keys.push('Down');
+        keys.push('Enter');
+      } else {
+        keys = [response, 'Enter'];
+      }
+      for (const k of keys) {
+        execFileSync('tmux', ['send-keys', '-t', item.sessionName, k], {
+          timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
+        });
       }
     }
+
+    // Clear pending input in state
+    let ctx: ProjectContext;
+    try { ctx = ProjectContext.load(item.project); } catch { return true; }
+    const acpState = readACPState(ctx.paths.acpStateFile);
+    if (acpState.sessions[item.slot]) {
+      acpState.sessions[item.slot].pendingInput = null;
+      acpState.sessions[item.slot].updatedAt = new Date().toISOString();
+      writeACPState(ctx.paths.acpStateFile, acpState, 'dashboard-respond');
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
 // ── Live mode (watch) ────────────────────────────────────────────────
 
 async function runLive(projects: string[], intervalMs: number): Promise<never> {
-  // Switch to alternate screen buffer + hide cursor (like top/htop/vim)
+  // Switch to alternate screen buffer + hide cursor
   process.stdout.write('\x1b[?1049h\x1b[?25l');
 
-  // Restore main screen + cursor on exit
+  let inputMode = false;
+  let inputBuffer = '';
+  let statusMessage = '';
+
   const cleanup = () => {
     process.stdout.write('\x1b[?25h');   // show cursor
     process.stdout.write('\x1b[?1049l'); // switch back to main screen
@@ -562,38 +607,127 @@ async function runLive(projects: string[], intervalMs: number): Promise<never> {
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
 
-  // Enable raw mode for keypress detection
+  const draw = () => {
+    const { cols: termWidth } = getTerminalSize();
+    const screen = renderDashboard(projects);
+    process.stdout.write('\x1b[H\x1b[J');
+    process.stdout.write(screen);
+
+    // Render pending list + input bar at bottom
+    const pending = collectPendingInputs(projects);
+    if (pending.length > 0) {
+      process.stdout.write(`\n${FG.yellow}  Pending confirmations:${RESET}\n`);
+      pending.forEach((p, i) => {
+        const danger = p.dangerous ? `${FG.red} DANGEROUS${RESET}` : '';
+        const opts = p.options ? ` [${p.options.map((o, j) => `${j + 1}=${o}`).join(', ')}]` : '';
+        process.stdout.write(`  ${BOLD}${i + 1}.${RESET} ${p.project}/${p.slot}${danger}: ${p.prompt}${DIM}${opts}${RESET}\n`);
+      });
+    }
+
+    if (inputMode) {
+      process.stdout.write(`\n${FG.cyan}  > respond ${RESET}${inputBuffer}\x1b[?25h`); // show cursor in input mode
+    } else if (statusMessage) {
+      process.stdout.write(`\n  ${statusMessage}\n`);
+    } else {
+      const hint = pending.length > 0
+        ? `${DIM}  :=respond  r=refresh  q=quit${RESET}`
+        : `${DIM}  r=refresh  q=quit${RESET}`;
+      process.stdout.write(`\n${hint}\n`);
+    }
+  };
+
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true);
     process.stdin.resume();
     process.stdin.setEncoding('utf-8');
     process.stdin.on('data', (key: string) => {
-      if (key === 'q' || key === '\x03') { // q or Ctrl+C
+      if (inputMode) {
+        if (key === '\x1b') {
+          // Escape — cancel input
+          inputMode = false;
+          inputBuffer = '';
+          process.stdout.write('\x1b[?25l'); // hide cursor
+          draw();
+          return;
+        }
+        if (key === '\r') {
+          // Enter — execute command
+          inputMode = false;
+          process.stdout.write('\x1b[?25l'); // hide cursor
+          const cmd = inputBuffer.trim();
+          inputBuffer = '';
+
+          // Parse: "<slot> <response>" or "<number> <response>"
+          const parts = cmd.split(/\s+/);
+          if (parts.length >= 2) {
+            const pending = collectPendingInputs(projects);
+            const target = parts[0];
+            const response = parts.slice(1).join(' ');
+
+            // Try by index (1-based)
+            const idx = parseInt(target, 10);
+            let item: PendingItem | undefined;
+            if (!isNaN(idx) && idx >= 1 && idx <= pending.length) {
+              item = pending[idx - 1];
+            } else {
+              // Try by slot name
+              item = pending.find(p => p.slot === target || p.slot === `worker-${target}`);
+            }
+
+            if (item) {
+              const ok = sendResponse(item, response);
+              statusMessage = ok
+                ? `${FG.green}  Sent "${response}" to ${item.project}/${item.slot}${RESET}`
+                : `${FG.red}  Failed to send to ${item.project}/${item.slot}${RESET}`;
+              // Clear status after 3s
+              setTimeout(() => { statusMessage = ''; draw(); }, 3000);
+            } else {
+              statusMessage = `${FG.red}  Target not found: ${target}${RESET}`;
+              setTimeout(() => { statusMessage = ''; draw(); }, 3000);
+            }
+          } else {
+            statusMessage = `${FG.red}  Usage: <slot-or-number> <response>${RESET}`;
+            setTimeout(() => { statusMessage = ''; draw(); }, 3000);
+          }
+          draw();
+          return;
+        }
+        if (key === '\x7f') {
+          // Backspace
+          inputBuffer = inputBuffer.slice(0, -1);
+          draw();
+          return;
+        }
+        // Regular character
+        if (key.length === 1 && key.charCodeAt(0) >= 32) {
+          inputBuffer += key;
+          draw();
+          return;
+        }
+        return;
+      }
+
+      // Normal mode
+      if (key === 'q' || key === '\x03') {
         cleanup();
       }
       if (key === 'r') {
-        // Force immediate refresh
         draw();
       }
-      // Y/N to respond to pending confirmations
-      if (key === 'y' || key === 'Y' || key === 'n' || key === 'N') {
-        respondToPending(projects, key.toUpperCase(), draw);
+      if (key === ':') {
+        const pending = collectPendingInputs(projects);
+        if (pending.length > 0) {
+          inputMode = true;
+          inputBuffer = '';
+          draw();
+        }
       }
     });
   }
 
-  const draw = () => {
-    const screen = renderDashboard(projects);
-    // Move cursor to top-left and clear from cursor to end of screen.
-    // No \x1b[2J needed — alternate screen buffer prevents scrollback pollution.
-    process.stdout.write('\x1b[H\x1b[J');
-    process.stdout.write(screen);
-  };
-
   draw();
   setInterval(draw, intervalMs);
 
-  // Block forever
   return new Promise(() => {});
 }
 
