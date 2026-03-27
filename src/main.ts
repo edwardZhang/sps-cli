@@ -31,6 +31,7 @@ import { executeQaTick } from './commands/qaTick.js';
 import { executeMonitorTick } from './commands/monitorTick.js';
 import { executePmCommand } from './commands/pmCommand.js';
 import { executeCardAdd } from './commands/cardAdd.js';
+import { executeCardDashboard } from './commands/cardDashboard.js';
 import { executeSetup } from './commands/setup.js';
 import { executeWorkerDashboard } from './commands/workerDashboard.js';
 import { executeLogs } from './commands/logs.js';
@@ -45,7 +46,7 @@ const VERSION: string = (_require('../package.json') as { version: string }).ver
 const COMMANDS: Record<string, { desc: string; usage: string }> = {
   setup:     { desc: 'Initial environment setup (credentials, directories)', usage: 'sps setup [--force]' },
   tick:      { desc: 'Run continuous pipeline (--once for single tick)', usage: 'sps tick <project> [--once]' },
-  card:      { desc: 'Card management', usage: 'sps card add <project> "<title>" ["desc"]' },
+  card:      { desc: 'Card management', usage: 'sps card <add|dashboard> [project] [args]' },
   doctor:    { desc: 'Project health check', usage: 'sps doctor <project> [--json] [--skip-remote]' },
   scheduler: { desc: 'Planning → Backlog promotion', usage: 'sps scheduler <tick|inspect|validate> <project>' },
   pipeline:  { desc: 'Execution chain (Backlog → Todo → Inprogress)', usage: 'sps pipeline <tick|inspect> <project>' },
@@ -326,6 +327,13 @@ async function main() {
         process.exit(2);
       }
       await executeCardAdd(args.project, args.positionals, args.flags);
+      return;
+    }
+    if (args.subcommand === 'dashboard') {
+      const projects: string[] = [];
+      if (args.project) projects.push(args.project);
+      projects.push(...args.positionals);
+      await executeCardDashboard(projects, args.flags);
       return;
     }
   }

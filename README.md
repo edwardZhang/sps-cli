@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.23.6**
+**v0.23.8**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -23,6 +23,7 @@ Create cards -> Start pipeline -> AI auto-codes -> Serial merge queue -> Notify 
   - [sps project init](#sps-project-init)
   - [sps doctor](#sps-doctor)
   - [sps card add](#sps-card-add)
+  - [sps card dashboard](#sps-card-dashboard)
   - [sps tick](#sps-tick)
   - [sps status](#sps-status)
   - [sps acp](#sps-acp)
@@ -94,6 +95,9 @@ sps tick my-project
 
 # 9. (Optional) Monitor Worker status in real time
 sps worker dashboard
+
+# 10. (Optional) Monitor task cards in board view
+sps card dashboard my-project
 ```
 
 ---
@@ -317,6 +321,44 @@ sps pm addLabel my-project 2 "skill:backend"
 
 sps card add my-project "Write API documentation" "User and order endpoint docs"
 sps pm addLabel my-project 3 "skill:writer"
+```
+
+### sps card dashboard
+
+Kanban-style dashboard for task cards. Single-project mode renders a full board, while multi-project mode renders compact mini boards side by side.
+
+```bash
+sps card dashboard [project1] [project2] ... [--once] [--json]
+```
+
+| Option | Description |
+|--------|-------------|
+| (no arguments) | Auto-discovers all projects under `~/.coral/projects/` and renders compact multi-project panels |
+| `<project>` | Render a full single-project board with `Planning / Backlog / Todo / In Progress / QA / Done` columns |
+| `--once` | Output one snapshot and exit |
+| `--json` | Output structured card/board snapshots for scripting |
+
+Single-project mode shows:
+- Project title and live counts
+- Six workflow columns
+- Compact task cards with title, label summary, worker/runtime state, and conflict/waiting badges
+
+Multi-project mode shows:
+- One panel per project
+- Compact per-state counts
+- Hot cards summary for running / waiting / conflict items
+
+**Example:**
+
+```bash
+# Full board for one project
+sps card dashboard my-project
+
+# Compact board snapshots for all projects
+sps card dashboard
+
+# Single JSON snapshot
+sps card dashboard my-project --json
 ```
 
 #### Skill Labels
