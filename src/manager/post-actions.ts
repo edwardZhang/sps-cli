@@ -3,24 +3,27 @@
  *
  * Called immediately from Supervisor exit callback → CompletionJudge → here.
  *
- * v0.19: Merges are serialized via MergeMutex (per-project). Workers code
- * in parallel but merge one at a time. If merge conflicts, L2 spawns a
- * --resume worker to resolve conflicts before retrying.
+ * v0.23.19+: post-actions no longer owns merge/conflict resolution.
+ * Development completion hands the task off to QA. Integration work is
+ * owned by the QA worker and CloseoutEngine only finalizes outcomes.
  */
 import { execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { RuntimeStore } from '../core/runtimeStore.js';
-import { isProcessAlive } from '../providers/outputParser.js';
 import type { CompletionResult } from './completion-judge.js';
 import type { PMClient } from './pm-client.js';
 import type { ProcessSupervisor, SpawnOpts } from './supervisor.js';
 import type { ResourceLimiter } from './resource-limiter.js';
 import type { Notifier } from '../interfaces/Notifier.js';
-import type { MergeMutex } from './merge-mutex.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
-import type { ACPRunStatus, ACPSessionRecord } from '../models/acp.js';
+import type { ACPSessionRecord } from '../models/acp.js';
+import {
+  buildResumePrompt,
+  LEGACY_TASK_PROMPT_FILE,
+  promptFileForPhase,
+  selectWorkerPhase,
+} from '../core/taskPrompts.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -54,15 +57,6 @@ interface StepResult {
   error?: string;
 }
 
-/** Max merge conflict resolution retries (L2 cycles) */
-const MAX_MERGE_RETRIES = 2;
-
-/** How often to check if resume worker has exited (ms) */
-const PID_POLL_INTERVAL = 3000;
-
-/** Max time to wait for a resume worker to exit (ms) */
-const RESOLVE_TIMEOUT = 300_000; // 5 minutes
-
 // ─── PostActions ────────────────────────────────────────────────
 
 export class PostActions {
@@ -71,7 +65,6 @@ export class PostActions {
     private readonly supervisor: ProcessSupervisor,
     private readonly resourceLimiter: ResourceLimiter,
     private readonly notifier: Notifier | null,
-    private readonly mergeMutex?: MergeMutex,
     private readonly agentRuntime: AgentRuntime | null = null,
   ) {}
 
@@ -215,349 +208,7 @@ export class PostActions {
     return results;
   }
 
-  // ─── Serial Merge with L0/L1/L2/L3 ────────────────────────────
-
-  /**
-   * Attempt to merge the feature branch into the target branch.
-   * Called while holding the MergeMutex — only one merge at a time per project.
-   *
-   * L0: fetch + rebase + merge (pure git, no AI)
-   * L1: rebase failed — abort and retry rebase (in case of transient issue)
-   * L2: rebase has real conflicts — spawn --resume Worker to resolve
-   * L3: all retries exhausted — mark CONFLICT
-   *
-   * Returns true if merge succeeded, false if all attempts failed.
-   */
-  private async serialMerge(
-    ctx: PostActionContext,
-    sessionId: string | null,
-    results: StepResult[],
-  ): Promise<boolean> {
-    // L0: Try direct merge (rebase + merge)
-    const l0Result = this.tryRebaseMerge(ctx);
-    if (l0Result.ok) {
-      this.log(`L0: Merged ${ctx.branch} → ${ctx.baseBranch}`);
-      results.push({ step: 'merge-l0', ok: true });
-      return true;
-    }
-
-    this.log(`L0: Merge failed for ${ctx.branch}: ${l0Result.error}`);
-
-    // Abort any in-progress rebase before L2
-    this.abortRebase(ctx.worktree);
-
-    // L2: Spawn --resume Worker to resolve conflicts
-    if (ctx.transport === 'proc' && !sessionId) {
-      this.log(`L2: No sessionId for ${ctx.branch}, cannot spawn resume worker`);
-      results.push({ step: 'merge-l0', ok: false, error: l0Result.error });
-      await this.markConflict(ctx, results, `Merge conflict, no session to resume`);
-      return false;
-    }
-
-    for (let attempt = 0; attempt < MAX_MERGE_RETRIES; attempt++) {
-      this.log(`L2: Attempt ${attempt + 1}/${MAX_MERGE_RETRIES} — spawning resume worker for ${ctx.branch}`);
-
-      // Update slot status to "resolving"
-      this.setSlotStatus(ctx, 'resolving');
-
-      // Release mutex while AI works (so other completed workers aren't blocked indefinitely)
-      if (this.mergeMutex) this.mergeMutex.release();
-
-      // Spawn resume worker and wait for exit
-      const resolveResult = ctx.transport === 'proc'
-        ? await this.spawnConflictResolver(ctx, sessionId!, attempt)
-        : await this.spawnAcpConflictResolver(ctx, attempt);
-
-      // Re-acquire mutex for merge retry
-      if (this.mergeMutex) await this.mergeMutex.acquire();
-
-      // Update slot back to "merging"
-      this.setSlotStatus(ctx, 'merging');
-
-      if (!resolveResult.ok) {
-        this.log(`L2: Resume worker failed: ${resolveResult.error}`);
-        results.push({ step: `merge-l2-attempt-${attempt + 1}`, ok: false, error: resolveResult.error });
-        continue;
-      }
-
-      // Retry L0 after conflict resolution
-      const retryResult = this.tryRebaseMerge(ctx);
-      if (retryResult.ok) {
-        this.log(`L2: Merge succeeded after conflict resolution (attempt ${attempt + 1})`);
-        results.push({ step: `merge-l2-attempt-${attempt + 1}`, ok: true });
-        return true;
-      }
-
-      this.log(`L2: Merge still fails after resolution attempt ${attempt + 1}: ${retryResult.error}`);
-      this.abortRebase(ctx.worktree);
-      results.push({ step: `merge-l2-attempt-${attempt + 1}`, ok: false, error: retryResult.error });
-    }
-
-    // L3: All retries exhausted
-    await this.markConflict(ctx, results, `Merge conflict after ${MAX_MERGE_RETRIES} resolution attempts`);
-    return false;
-  }
-
-  /**
-   * Try rebase + merge (L0). Returns { ok, error }.
-   */
-  private tryRebaseMerge(ctx: PostActionContext): { ok: boolean; error?: string } {
-    let mergeWorktree: string | null = null;
-    try {
-      const { worktree, branch, baseBranch } = ctx;
-
-      // Fetch latest target
-      try {
-        execFileSync('git', ['-C', worktree, 'fetch', 'origin', baseBranch, '--quiet'], {
-          timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
-        });
-      } catch { /* offline ok */ }
-
-      // Checkout feature branch (may be on baseBranch from previous merge attempt)
-      try {
-        execFileSync('git', ['-C', worktree, 'checkout', branch], {
-          timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
-        });
-      } catch { /* already on branch */ }
-
-      // Rebase feature onto latest target
-      execFileSync('git', ['-C', worktree, 'rebase', `origin/${baseBranch}`], {
-        timeout: 30_000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      // Force push rebased feature
-      execFileSync('git', ['-C', worktree, 'push', '--force-with-lease', 'origin', branch], {
-        timeout: 30_000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      // Final integration happens in a temporary detached merge worktree so we do
-      // not touch the user's main working copy or hit "branch already in use".
-      const repoDir = this.resolveRepoDir(worktree);
-      mergeWorktree = this.createMergeWorktree(repoDir, ctx);
-
-      execFileSync('git', ['-C', mergeWorktree, 'fetch', 'origin', '--quiet'], {
-        timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      execFileSync('git', ['-C', mergeWorktree, 'reset', '--hard', `origin/${baseBranch}`], {
-        timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      execFileSync('git', ['-C', mergeWorktree, 'merge', '--no-ff', `origin/${branch}`, '-m',
-        `Merge ${branch} into ${baseBranch}`], {
-        timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      execFileSync('git', ['-C', mergeWorktree, 'push', 'origin', `HEAD:${baseBranch}`], {
-        timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    } finally {
-      this.cleanupMergeWorktree(mergeWorktree);
-    }
-  }
-
-  /**
-   * Abort any in-progress rebase.
-   */
-  private abortRebase(worktree: string): void {
-    try {
-      execFileSync('git', ['-C', worktree, 'rebase', '--abort'], {
-        timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch { /* no rebase in progress */ }
-  }
-
-  /**
-   * Spawn a --resume worker to resolve merge conflicts.
-   * Waits for the worker to exit before returning.
-   */
-  private async spawnConflictResolver(
-    ctx: PostActionContext,
-    sessionId: string,
-    attempt: number,
-  ): Promise<{ ok: boolean; error?: string }> {
-    const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
-    const outputFile = resolve(
-      ctx.logsDir,
-      `${ctx.project}-${ctx.slot}-conflict-${attempt + 1}-${Date.now()}.jsonl`,
-    );
-
-    const instruction = [
-      `There is a merge conflict on branch ${ctx.branch} when rebasing onto origin/${ctx.baseBranch}.`,
-      `Working directory: ${ctx.worktree}`,
-      '',
-      'Please resolve the conflict:',
-      `1. Run: cd ${ctx.worktree}`,
-      `2. Run: git fetch origin && git checkout ${ctx.branch}`,
-      `3. Run: git rebase origin/${ctx.baseBranch}`,
-      '4. For each conflicting file: open it, understand both sides, resolve the conflict',
-      '5. Run: git add <resolved-files> && git rebase --continue',
-      '6. Run: git push --force-with-lease origin ' + ctx.branch,
-      '7. Say "done"',
-      '',
-      'You have full context from the previous coding session. Use it to make correct conflict resolution decisions.',
-    ].join('\n');
-
-    // Remove old supervisor tracking before respawning
-    this.supervisor.remove(workerId);
-
-    // Release + re-acquire global resource for the resume worker
-    this.resourceLimiter.release();
-    const acquire = this.resourceLimiter.tryAcquireDetailed();
-    if (!acquire.acquired) {
-      return { ok: false, error: 'Global resource limit reached for conflict resolver' };
-    }
-
-    try {
-      // Spawn and capture PID via Promise-based exit wait
-      let spawnedPid = 0;
-
-      const exitPromise = new Promise<number>((resolveExit) => {
-        const handle = this.supervisor.spawn({
-          id: workerId,
-          project: ctx.project,
-          seq: ctx.seq,
-          slot: ctx.slot,
-          worktree: ctx.worktree,
-          branch: ctx.branch,
-          prompt: instruction,
-          outputFile,
-          tool: ctx.tool,
-          resumeSessionId: sessionId,
-          onExit: async (exitCode: number) => {
-            resolveExit(exitCode);
-          },
-        });
-        spawnedPid = handle.pid ?? 0;
-      });
-
-      // Update state with new PID
-      this.stateStore(ctx).updateState('post-actions-conflict-resolve', (state) => {
-        if (state.workers[ctx.slot]) {
-          state.workers[ctx.slot].pid = spawnedPid;
-          state.workers[ctx.slot].outputFile = outputFile;
-          state.workers[ctx.slot].exitCode = null;
-          state.workers[ctx.slot].mergeRetries = (state.workers[ctx.slot].mergeRetries ?? 0) + 1;
-        }
-      });
-
-      this.log(`Spawned conflict resolver for ${workerId} (pid=${spawnedPid})`);
-
-      // Wait for the resume worker to exit (with timeout)
-      const exitCode = await Promise.race([
-        exitPromise,
-        new Promise<number>((_, reject) =>
-          setTimeout(() => reject(new Error('Conflict resolver timed out')), RESOLVE_TIMEOUT)
-        ),
-      ]);
-
-      this.supervisor.remove(workerId);
-
-      if (exitCode === 0) {
-        this.log(`Conflict resolver exited successfully (pid=${spawnedPid})`);
-        return { ok: true };
-      } else {
-        return { ok: false, error: `Conflict resolver exited with code ${exitCode}` };
-      }
-    } catch (err) {
-      this.resourceLimiter.release();
-      this.supervisor.remove(workerId);
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  }
-
-  private async spawnAcpConflictResolver(
-    ctx: PostActionContext,
-    attempt: number,
-  ): Promise<{ ok: boolean; error?: string }> {
-    if (!this.agentRuntime) {
-      return { ok: false, error: 'ACP runtime is not configured' };
-    }
-
-    const instruction = [
-      `There is a merge conflict on branch ${ctx.branch} when rebasing onto origin/${ctx.baseBranch}.`,
-      `Working directory: ${ctx.worktree}`,
-      '',
-      'Please resolve the conflict:',
-      `1. Run: cd ${ctx.worktree}`,
-      `2. Run: git fetch origin && git checkout ${ctx.branch}`,
-      `3. Run: git rebase origin/${ctx.baseBranch}`,
-      '4. For each conflicting file: open it, understand both sides, resolve the conflict',
-      '5. Run: git add <resolved-files> && git rebase --continue',
-      '6. Run: git push --force-with-lease origin ' + ctx.branch,
-      '7. Say "done"',
-      '',
-      'You are resuming the same task session. Use the existing context to make correct conflict resolution decisions.',
-    ].join('\n');
-
-    try {
-      const session = await this.resumeOrStartAgentRun(
-        ctx,
-        instruction,
-        'resolving',
-        'post-actions-conflict-resume',
-        { mergeRetryIncrement: true },
-      );
-      this.log(
-        `Spawned ${ctx.transport.toUpperCase()} conflict resolver for ${ctx.project}:${ctx.slot}:${ctx.seq} ` +
-        `(run=${session.currentRun?.runId || 'unknown'})`,
-      );
-
-      const completed = await this.waitForAcpRun(
-        ctx,
-        session.currentRun?.runId || null,
-        RESOLVE_TIMEOUT,
-        'resolving',
-      );
-      if (!completed.currentRun) {
-        return { ok: false, error: 'ACP conflict resolver finished without a run record' };
-      }
-      if (completed.currentRun.status === 'completed') {
-        return { ok: true };
-      }
-      return { ok: false, error: `${ctx.transport.toUpperCase()} conflict resolver ended with ${completed.currentRun.status}` };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  }
-
-  /**
-   * Mark a card with CONFLICT label and comment.
-   */
-  private async markConflict(
-    ctx: PostActionContext,
-    results: StepResult[],
-    reason: string,
-  ): Promise<void> {
-    this.log(`L3: Giving up on ${ctx.branch}: ${reason}`);
-    try { await this.pmClient.addLabel(ctx.seq, 'CONFLICT'); } catch { /* best effort */ }
-    try { await this.pmClient.comment(ctx.seq, `Auto-merge failed: ${reason}`); } catch { /* best effort */ }
-    results.push(await this.notify(ctx, `seq:${ctx.seq} CONFLICT — ${reason}`, 'error'));
-    results.push({ step: 'merge-conflict', ok: false, error: reason });
-  }
-
-  /**
-   * Update slot status in state.json.
-   */
-  private setSlotStatus(ctx: PostActionContext, status: 'merging' | 'resolving'): void {
-    try {
-      this.stateStore(ctx).updateState(`post-actions-${status}`, (state) => {
-        if (state.workers[ctx.slot]) {
-          state.workers[ctx.slot].status = status;
-          if (status === 'merging' && !state.workers[ctx.slot].completedAt) {
-            state.workers[ctx.slot].completedAt = new Date().toISOString();
-          }
-        }
-        if (state.leases[ctx.seq]) {
-          state.leases[ctx.seq].phase = status === 'merging' ? 'merging' : 'resolving_conflict';
-          state.leases[ctx.seq].lastTransitionAt = new Date().toISOString();
-        }
-      });
-    } catch { /* best effort */ }
-  }
-
-  // ─── Individual Steps (unchanged) ──────────────────────────────
+  // ─── Individual Steps ──────────────────────────────────────────
 
   private async createMR(ctx: PostActionContext): Promise<StepResult> {
     try {
@@ -697,11 +348,7 @@ export class PostActions {
   ): Promise<StepResult> {
     try {
       const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
-      const resumePrompt = [
-        'The previous attempt did not fully complete. Please continue where you left off.',
-        'Check the current state of the code, and complete any remaining steps.',
-        'Remember to push your changes when done.',
-      ].join('\n');
+      const resumePrompt = this.loadPhaseResumePrompt(ctx);
 
       const outputFile = resolve(
         ctx.logsDir,
@@ -759,11 +406,7 @@ export class PostActions {
     }
 
     try {
-      const resumePrompt = [
-        'The previous attempt did not fully complete. Please continue where you left off.',
-        'Check the current state of the code, and complete any remaining steps.',
-        'Remember to push your changes when done.',
-      ].join('\n');
+      const resumePrompt = this.loadPhaseResumePrompt(ctx);
 
       const session = await this.resumeOrStartAgentRun(
         ctx,
@@ -792,7 +435,7 @@ export class PostActions {
     prompt: string,
     slotStatus: 'active' | 'resolving' | 'merging',
     updatedBy: string,
-    options?: { retryCount?: number; mergeRetryIncrement?: boolean },
+    options?: { retryCount?: number },
   ): Promise<ACPSessionRecord> {
     if (!this.agentRuntime) {
       throw new Error('ACP runtime is not configured');
@@ -854,64 +497,14 @@ export class PostActions {
     process.stderr.write(`[post-actions] ${msg}\n`);
   }
 
-  private resolveRepoDir(worktree: string): string {
-    const commonDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--git-common-dir'], {
-      timeout: 10_000,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-    const absCommonDir = commonDir.startsWith('/') ? commonDir : resolve(worktree, commonDir);
-    return dirname(absCommonDir);
-  }
-
-  private createMergeWorktree(repoDir: string, ctx: PostActionContext): string {
-    const mergeRoot = mkdtempSync(resolve(tmpdir(), `sps-merge-${ctx.project}-${ctx.seq}-`));
-    execFileSync('git', ['-C', repoDir, 'worktree', 'add', '--detach', mergeRoot, `origin/${ctx.baseBranch}`], {
-      timeout: 30_000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return mergeRoot;
-  }
-
-  private cleanupMergeWorktree(mergeWorktree: string | null): void {
-    if (!mergeWorktree) return;
-    let repoDir: string | null = null;
-    try {
-      repoDir = this.resolveRepoDir(mergeWorktree);
-    } catch {
-      repoDir = null;
-    }
-    try {
-      execFileSync('git', ['-C', repoDir || mergeWorktree, 'worktree', 'remove', '--force', mergeWorktree], {
-        timeout: 10_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch {
-      try {
-        rmSync(mergeWorktree, { recursive: true, force: true });
-      } catch {
-        // best effort
-      }
-      if (repoDir) {
-        try {
-          execFileSync('git', ['-C', repoDir, 'worktree', 'prune'], {
-            timeout: 10_000,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-        } catch {
-          // best effort
-        }
-      } else {
-        try {
-          execFileSync('git', ['-C', mergeWorktree, 'worktree', 'prune'], {
-            timeout: 10_000,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-        } catch {
-          // best effort
-        }
-      }
-    }
+  private loadPhaseResumePrompt(ctx: PostActionContext): string {
+    const phase = selectWorkerPhase(ctx.pmStateObserved ?? null, null);
+    const phasePromptPath = resolve(ctx.worktree, '.sps', promptFileForPhase(phase));
+    const legacyPromptPath = resolve(ctx.worktree, '.sps', LEGACY_TASK_PROMPT_FILE);
+    const originalPrompt = existsSync(phasePromptPath)
+      ? readFileSync(phasePromptPath, 'utf-8')
+      : (existsSync(legacyPromptPath) ? readFileSync(legacyPromptPath, 'utf-8') : null);
+    return buildResumePrompt(phase, ctx.worktree, ctx.branch, originalPrompt);
   }
 
   private syncAcpRuntimeState(
@@ -919,7 +512,7 @@ export class PostActions {
     session: ACPSessionRecord,
     slotStatus: 'active' | 'resolving' | 'merging',
     updatedBy: string,
-    options?: { retryCount?: number; mergeRetryIncrement?: boolean },
+    options?: { retryCount?: number },
   ): void {
     const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
     const nowIso = new Date().toISOString();
@@ -942,9 +535,6 @@ export class PostActions {
         slot.pid = null;
         slot.outputFile = null;
         slot.exitCode = null;
-        if (options?.mergeRetryIncrement) {
-          slot.mergeRetries = (slot.mergeRetries ?? 0) + 1;
-        }
         claimedAt = slot.claimedAt || nowIso;
       }
 
@@ -992,60 +582,6 @@ export class PostActions {
     });
   }
 
-  private async waitForAcpRun(
-    ctx: PostActionContext,
-    runId: string | null,
-    timeoutMs: number,
-    slotStatus: 'active' | 'resolving' | 'merging',
-  ): Promise<ACPSessionRecord> {
-    if (!this.agentRuntime) {
-      throw new Error('ACP runtime is not configured');
-    }
-
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const inspected = await this.agentRuntime.inspect(ctx.slot);
-      const session = inspected.sessions[ctx.slot];
-      if (!session) {
-        throw new Error(`ACP session for ${ctx.slot} was lost`);
-      }
-
-      this.syncAcpRuntimeState(ctx, session, slotStatus, 'post-actions-acp-poll');
-      const currentRun = session.currentRun;
-      if (runId && currentRun && currentRun.runId !== runId) {
-        await this.sleep(PID_POLL_INTERVAL);
-        continue;
-      }
-      if (currentRun && currentRun.status === 'waiting_input') {
-        this.log(`${ctx.transport.toUpperCase()} run ${currentRun.runId} is waiting for input`);
-        await this.sleep(PID_POLL_INTERVAL);
-        continue;
-      }
-      if (currentRun && this.isTerminalAcpStatus(currentRun.status)) {
-        const exitCode = currentRun.status === 'completed' ? 0 : 1;
-        this.supervisor.updateAcpHandle(`${ctx.project}:${ctx.slot}:${ctx.seq}`, {
-          exitCode,
-          exitedAt: new Date().toISOString(),
-          sessionState: session.sessionState,
-          remoteStatus: currentRun.status,
-          lastEventAt: session.lastSeenAt,
-        });
-        return session;
-      }
-
-      await this.sleep(PID_POLL_INTERVAL);
-    }
-
-    throw new Error(`ACP run timed out after ${Math.round(timeoutMs / 1000)}s`);
-  }
-
-  private isTerminalAcpStatus(status: ACPRunStatus): boolean {
-    return ['completed', 'failed', 'cancelled', 'lost'].includes(status);
-  }
-
-  private async sleep(ms: number): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────

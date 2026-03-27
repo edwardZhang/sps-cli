@@ -154,6 +154,7 @@ export class Recovery {
           outputFile: workerRef.outputFile,
           exitCode,
           logsDir: project.logsDir,
+          phase: selectWorkerPhase(lease.pmStateObserved ?? null, lease.phase),
         });
 
         const ctx = this.buildPostActionContext(project, slotName || 'worker-1', seq, workerRef);
@@ -252,6 +253,7 @@ export class Recovery {
         outputFile: slot.outputFile || null,
         exitCode,
         logsDir: project.logsDir,
+        phase: selectWorkerPhase(slot.pmStateObserved ?? null, undefined),
       };
       const completion = this.judge.judge(judgeInput);
       const ctx = this.buildPostActionContext(project, slotName, seq, slot);
@@ -339,6 +341,7 @@ export class Recovery {
       outputFile: null,
       exitCode,
       logsDir: project.logsDir,
+      phase: selectWorkerPhase(lease.pmStateObserved ?? null, lease.phase),
     };
 
     if (session) {
@@ -412,6 +415,7 @@ export class Recovery {
       outputFile: null,
       exitCode: 1,
       logsDir: project.logsDir,
+      phase: selectWorkerPhase(lease.pmStateObserved ?? null, lease.phase),
     };
     const completion = this.judge.judge(judgeInput);
     const postActionCtx = this.buildPostActionContext(project, slotName, seq, slot);

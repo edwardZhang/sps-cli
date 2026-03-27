@@ -41,7 +41,7 @@ export async function executePipelineTick(
   });
   const pmClient = createPMClient(ctx.config);
   const agentRuntime = createAgentRuntime(ctx);
-  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier, undefined, agentRuntime);
+  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier, agentRuntime);
   const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, supervisor, completionJudge, postActions, resourceLimiter, notifier, agentRuntime);
   const result = await engine.tick({ dryRun });
 

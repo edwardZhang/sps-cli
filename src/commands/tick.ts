@@ -10,7 +10,6 @@ import { createTaskBackend, createWorkerProvider, createRepoBackend, createNotif
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
 import { PostActions } from '../manager/post-actions.js';
-import { MergeMutex } from '../manager/merge-mutex.js';
 import { ResourceLimiter } from '../manager/resource-limiter.js';
 import { Recovery } from '../manager/recovery.js';
 import { createPMClient } from '../manager/pm-client.js';
@@ -111,8 +110,7 @@ function createRunner(project: string): ProjectRunner | null {
 
   // Create per-project Manager modules
   const pmClient = createPMClient(ctx.config);
-  const mergeMutex = new MergeMutex();
-  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier, mergeMutex, agentRuntime);
+  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier, agentRuntime);
 
   return {
     project,
@@ -209,12 +207,10 @@ export async function executeTick(
     }));
     // Per-project PostActions factory (each project uses its own PM config)
     const runnerMap = new Map(runners.map(r => [r.project, r]));
-    const mergeMutexMap = new Map(runners.map(r => [r.project, new MergeMutex()]));
     const postActionsFactory = (config: import('../core/config.js').ProjectConfig) => {
       const pmClient = createPMClient(config);
       const runner = runnerMap.get(config.PROJECT_NAME);
-      const mm = mergeMutexMap.get(config.PROJECT_NAME) || new MergeMutex();
-      return new PostActions(pmClient, supervisor, resourceLimiter, runner?.notifier || null, mm, runner?.agentRuntime || null);
+      return new PostActions(pmClient, supervisor, resourceLimiter, runner?.notifier || null, runner?.agentRuntime || null);
     };
     const recovery = new Recovery(supervisor, completionJudge, postActionsFactory, resourceLimiter);
     const result = await recovery.recover(projectInfos);

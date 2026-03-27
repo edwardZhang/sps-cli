@@ -2,7 +2,7 @@
  * CompletionJudge — determines whether a worker completed its task.
  *
  * Called immediately when a worker process exits (via Supervisor exit callback).
- * Checks git artifacts, auto-pushes if needed, falls back to keyword detection.
+ * Checks git artifacts and phase-specific completion evidence.
  */
 import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -12,6 +12,7 @@ import {
   branchCommitsAhead,
   extractLastAssistantText,
 } from '../providers/outputParser.js';
+import type { WorkerTaskPhase } from '../core/taskPrompts.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ export interface JudgeInput {
   outputFile: string | null;
   exitCode: number;
   logsDir?: string;
+  phase: WorkerTaskPhase;
 }
 
 export interface CompletionResult {
@@ -41,14 +43,32 @@ export class CompletionJudge {
    * Determine whether the worker completed the task based on artifacts.
    *
    * Priority:
-   * 1. Marker file (task_completed) — definitive signal
-   * 2. Branch pushed with new commits — strong signal
-   * 3. Local commits not pushed → auto-push, then completed
-   * 4. Output keywords (only when no git artifacts available)
-   * 5. No artifacts → incomplete or failed
+ * development:
+ * 1. Branch already merged into target -> completed (exception path)
+ * 2. Marker file (task_completed)
+ * 3. Branch pushed with commits ahead
+ * 4. Local commits ahead on task branch
+ * 5. Otherwise incomplete/failed
+ *
+ * integration:
+ * 1. Branch already merged into target -> completed
+ * 2. Otherwise incomplete/failed
    */
   judge(input: JudgeInput): CompletionResult {
-    const { worktree, branch, baseBranch, outputFile, exitCode, logsDir } = input;
+    const { worktree, branch, baseBranch, outputFile, exitCode, logsDir, phase } = input;
+
+    const mergedToBase = this.isMergedToBase(worktree, branch, baseBranch);
+    if (mergedToBase) {
+      this.log(`Branch ${branch} already merged into ${baseBranch}`);
+      return { status: 'completed', reason: 'already_merged' };
+    }
+
+    if (phase === 'integration') {
+      if (exitCode === 0) {
+        return { status: 'incomplete', reason: 'integration_not_merged' };
+      }
+      return { status: 'failed', reason: `crash(${exitCode})` };
+    }
 
     // 1. Marker file
     if (logsDir) {
@@ -65,37 +85,21 @@ export class CompletionJudge {
       if (ahead > 0) {
         return { status: 'completed', reason: 'branch_pushed' };
       }
-
-      // 2b. Branch pushed but commits ahead = 0 → may already be merged into target
-      // Use merge-base --is-ancestor: if branch tip is ancestor of target, it's merged
-      try {
-        execFileSync('git', [
-          '-C', worktree, 'merge-base', '--is-ancestor', branch, `origin/${baseBranch}`,
-        ], { timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] });
-        // Exit code 0 = branch IS ancestor of target = already merged
-        this.log(`Branch ${branch} already merged into ${baseBranch}`);
-        return { status: 'completed', reason: 'already_merged' };
-      } catch {
-        // Exit code 1 = NOT ancestor = not merged (or git error)
-      }
     }
 
-    // 3. Local commits not pushed → auto-push
-    if (!pushed) {
-      const localAhead = branchCommitsAhead(worktree, branch, baseBranch);
-      if (localAhead > 0) {
-        try {
-          execFileSync('git', ['-C', worktree, 'push', '-u', 'origin', branch], {
-            encoding: 'utf-8',
-            timeout: 30_000,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-          this.log(`Auto-pushed branch ${branch} (${localAhead} commits)`);
-          return { status: 'completed', reason: 'auto_pushed' };
-        } catch (err) {
-          this.log(`Auto-push failed for ${branch}: ${err}`);
-          // Fall through to other checks
-        }
+    // 3. Local commits not pushed are sufficient for development completion.
+    const localAhead = branchCommitsAhead(worktree, branch, baseBranch);
+    if (!pushed && localAhead > 0) {
+      return { status: 'completed', reason: 'branch_local_commits' };
+    }
+
+    if (pushed && localAhead === 0) {
+      try {
+        execFileSync('git', [
+          '-C', worktree, 'rev-parse', '--verify', '--quiet', 'HEAD',
+        ], { timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch {
+        this.log(`Unable to inspect HEAD for branch ${branch}`);
       }
     }
 
@@ -103,9 +107,6 @@ export class CompletionJudge {
     if (outputFile) {
       const lastText = extractLastAssistantText(outputFile);
       if (COMPLETION_KEYWORDS.test(lastText)) {
-        // Keywords without git artifacts are unreliable — worker may have said
-        // "done" without actually pushing. Mark as incomplete, not completed.
-        // PostActions will handle retry or NEEDS-FIX.
         this.log(`Completion keywords found but no git artifacts for branch ${branch}`);
       }
     }
@@ -115,6 +116,17 @@ export class CompletionJudge {
       return { status: 'incomplete', reason: 'no_artifacts' };
     }
     return { status: 'failed', reason: `crash(${exitCode})` };
+  }
+
+  private isMergedToBase(worktree: string, branch: string, baseBranch: string): boolean {
+    try {
+      execFileSync('git', [
+        '-C', worktree, 'merge-base', '--is-ancestor', branch, `origin/${baseBranch}`,
+      ], { timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private log(msg: string): void {

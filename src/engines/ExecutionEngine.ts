@@ -17,6 +17,7 @@ import {
   DEVELOPMENT_PROMPT_FILE,
   INTEGRATION_PROMPT_FILE,
   LEGACY_TASK_PROMPT_FILE,
+  selectWorkerPhase,
 } from '../core/taskPrompts.js';
 import { Logger } from '../core/logger.js';
 import { ProcessSupervisor, type WorkerHandle } from '../manager/supervisor.js';
@@ -878,6 +879,7 @@ export class ExecutionEngine {
       outputFile: handle?.outputFile || null,
       exitCode,
       logsDir: this.ctx.paths.logsDir,
+      phase: selectWorkerPhase(card.state, this.runtimeStore.readState().leases[card.seq]?.phase),
     });
 
     const ctx: PostActionContext = {
