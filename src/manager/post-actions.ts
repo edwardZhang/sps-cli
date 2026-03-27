@@ -380,7 +380,7 @@ export class PostActions {
             resolveExit(exitCode);
           },
         });
-        spawnedPid = handle.pid;
+        spawnedPid = handle.pid ?? 0;
       });
 
       // Update state with new PID
@@ -496,7 +496,9 @@ export class PostActions {
         state.workers[ctx.slot] = {
           status: 'idle', seq: null, branch: null, worktree: null,
           tmuxSession: null, claimedAt: null, lastHeartbeat: null,
-          mode: null, sessionId: null, pid: null, outputFile: null, exitCode: null,
+          mode: null, transport: null, agent: null,
+          sessionId: null, runId: null, sessionState: null, remoteStatus: null, lastEventAt: null,
+          pid: null, outputFile: null, exitCode: null,
           mergeRetries: 0, completedAt: null,
         };
       }

@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.20.0**
+**v0.21.0**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -119,7 +119,7 @@ Planning -> Backlog -> Todo -> Inprogress -> Done
 
 The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the persistent ACP transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary.
 
-ACP Phase 1 is now shipped as a standalone command surface. It does not replace the main pipeline launch path yet; instead, it provides a persistent local session transport that can ensure a long-lived Codex or Claude session, submit prompts as task runs, inspect session/run state via `runtime/acp-state.json`, and stop sessions cleanly.
+ACP Phase 2 now connects persistent ACP sessions to the main pipeline launch path. When `WORKER_TRANSPORT=acp`, `sps tick` launches work through `sessionId/runId` instead of a one-shot child process, persists that state into `runtime/state.json` plus `runtime/acp-state.json`, and lets recovery/status/dashboard inspect the live session/run state. Codex has been verified end-to-end on this path; Claude still depends on host-side `claude auth login` before reaching `ready`.
 
 ### MR_MODE=create (Optional)
 
@@ -431,7 +431,7 @@ sps status [--json]
 
 ### sps acp
 
-Manage persistent ACP-backed worker sessions outside the main pipeline launch path.
+Manage persistent ACP-backed worker sessions directly, or inspect the same transport that `sps tick` uses when `WORKER_TRANSPORT=acp`.
 
 ```bash
 sps acp ensure <project> <slot> [claude|codex] [--json]
@@ -441,12 +441,13 @@ sps acp status <project> [slot] [--json]
 sps acp stop <project> <slot> [--json]
 ```
 
-Phase 1 behavior:
+Current behavior:
 
 - `ensure` starts or reuses a persistent tmux-backed local session and mirrors it into `~/.coral/projects/<project>/runtime/acp-state.json`
 - `run` submits a prompt onto the session and records a new run snapshot
 - `status` refreshes session and run state from the local gateway
 - `stop` terminates the persistent session and marks the slot `offline`
+- `sps tick` reuses the same persistent transport when `WORKER_TRANSPORT=acp`
 
 Observed session states:
 
@@ -868,10 +869,10 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 |-------|----------|---------|-------------|
 | `WORKER_TOOL` | No | `claude` | Worker type: `claude` / `codex` |
 | `WORKER_MODE` | No | `print` | Execution mode: `print` (one-shot process) / `interactive` (tmux TUI) |
-| `WORKER_TRANSPORT` | No | `proc` | Worker transport: `proc` (current pipeline path) / `acp` (persistent session transport) |
-| `ACP_GATEWAY_MODE` | No | `local` | ACP gateway deployment mode; Phase 1 supports `local` only |
+| `WORKER_TRANSPORT` | No | `proc` | Worker transport: `proc` (one-shot child process) / `acp` (persistent session transport for `sps tick` and `sps acp`) |
+| `ACP_GATEWAY_MODE` | No | `local` | ACP gateway deployment mode; Phase 2 supports `local` only |
 | `ACP_AGENT` | No | `WORKER_TOOL` | Default ACP tool when `sps acp` does not receive a tool override |
-| `ACP_SESSION_STRATEGY` | No | `per-slot` | Session allocation strategy; Phase 1 supports `per-slot` only |
+| `ACP_SESSION_STRATEGY` | No | `per-slot` | Session allocation strategy; Phase 2 supports `per-slot` only |
 | `MAX_CONCURRENT_WORKERS` | No | `3` | Maximum parallel Workers (worker slot ceiling) |
 | `WORKER_RESTART_LIMIT` | No | `2` | Maximum restart count after Worker death |
 | `AUTOFIX_ATTEMPTS` | No | `2` | CI failure auto-fix attempt count |
@@ -919,7 +920,7 @@ PLANE_PROJECT_ID="project-uuid-here"
 # Worker
 WORKER_TOOL="claude"
 WORKER_MODE="print"              # print (recommended) or interactive (tmux fallback)
-WORKER_TRANSPORT="proc"          # proc (pipeline default) or acp (persistent session commands)
+WORKER_TRANSPORT="proc"          # proc (pipeline default) or acp (persistent session pipeline/runtime)
 ACP_GATEWAY_MODE="local"
 ACP_AGENT="claude"
 ACP_SESSION_STRATEGY="per-slot"

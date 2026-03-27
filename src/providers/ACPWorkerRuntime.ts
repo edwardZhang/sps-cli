@@ -32,19 +32,21 @@ export class ACPWorkerRuntime implements AgentRuntime {
     private readonly client: ACPClient = new LocalACPClient(),
   ) {}
 
-  async ensureSession(slot: string, tool?: ACPTool): Promise<ACPSessionRecord> {
+  async ensureSession(slot: string, tool?: ACPTool, cwdOverride?: string): Promise<ACPSessionRecord> {
     const state = readACPState(this.ctx.paths.acpStateFile);
     const normalizedSlot = this.normalizeSlot(slot);
     const selectedTool = tool || this.defaultTool();
     const existing = state.sessions[normalizedSlot];
     const sessionName = existing?.sessionName || this.buildSessionName(normalizedSlot);
-    const cwd = existing?.cwd || this.ctx.paths.repoDir;
+    const cwd = cwdOverride || existing?.cwd || this.ctx.paths.repoDir;
+    const resetExisting = !existing || (!!cwdOverride && existing.cwd !== cwdOverride);
+    const retainedRun = resetExisting ? null : (existing?.currentRun || null);
 
     const result = await this.client.ensureSession({
       sessionName,
       tool: selectedTool,
       cwd,
-      resetExisting: !existing,
+      resetExisting,
     });
 
     const session = this.upsertSession(state, normalizedSlot, {
@@ -54,10 +56,10 @@ export class ACPWorkerRuntime implements AgentRuntime {
       sessionName,
       cwd,
       status: result.sessionState === 'ready'
-        ? (existing?.currentRun ? 'active' : 'idle')
+        ? (retainedRun ? 'active' : 'idle')
         : 'launching',
       sessionState: result.sessionState,
-      currentRun: existing?.currentRun || null,
+      currentRun: retainedRun,
       createdAt: existing?.createdAt || now(),
       updatedAt: now(),
       lastSeenAt: result.lastSeenAt,
@@ -68,10 +70,10 @@ export class ACPWorkerRuntime implements AgentRuntime {
     return session;
   }
 
-  async startRun(slot: string, prompt: string, tool?: ACPTool): Promise<ACPSessionRecord> {
+  async startRun(slot: string, prompt: string, tool?: ACPTool, cwdOverride?: string): Promise<ACPSessionRecord> {
     const normalizedSlot = this.normalizeSlot(slot);
     const state = readACPState(this.ctx.paths.acpStateFile);
-    const session = await this.ensureSession(normalizedSlot, tool);
+    const session = await this.ensureSession(normalizedSlot, tool, cwdOverride);
     if (session.sessionState !== 'ready') {
       throw new Error(`ACP session ${session.sessionId} is not ready (state=${session.sessionState})`);
     }

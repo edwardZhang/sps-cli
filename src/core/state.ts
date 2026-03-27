@@ -10,9 +10,21 @@ export interface WorkerSlotState {
   claimedAt: string | null;
   lastHeartbeat: string | null;
   /** Worker execution mode — null for legacy state files */
-  mode?: 'print' | 'interactive' | null;
+  mode?: 'print' | 'interactive' | 'acp' | null;
+  /** Underlying worker transport */
+  transport?: 'proc' | 'acp' | null;
+  /** Worker tool currently bound to the slot */
+  agent?: 'claude' | 'codex' | null;
   /** Claude/Codex session ID for resume chains (print mode) */
   sessionId?: string | null;
+  /** ACP run ID for the active task */
+  runId?: string | null;
+  /** ACP session lifecycle status */
+  sessionState?: 'booting' | 'ready' | 'busy' | 'draining' | 'offline' | null;
+  /** ACP run lifecycle status */
+  remoteStatus?: 'submitted' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled' | 'lost' | null;
+  /** Last ACP event timestamp observed by SPS */
+  lastEventAt?: string | null;
   /** OS process ID of the worker (print mode) */
   pid?: number | null;
   /** Path to the JSONL output file (print mode) */
@@ -62,7 +74,13 @@ function idleWorkerSlot(): WorkerSlotState {
     claimedAt: null,
     lastHeartbeat: null,
     mode: null,
+    transport: null,
+    agent: null,
     sessionId: null,
+    runId: null,
+    sessionState: null,
+    remoteStatus: null,
+    lastEventAt: null,
     pid: null,
     outputFile: null,
     exitCode: null,
@@ -96,7 +114,13 @@ function reconcileState(raw: RuntimeState, maxWorkers: number): RuntimeState {
     const slotName = `worker-${i}`;
     if (!workers[slotName]) {
       workers[slotName] = idleWorkerSlot();
+      continue;
     }
+
+    workers[slotName] = {
+      ...idleWorkerSlot(),
+      ...workers[slotName],
+    };
   }
 
   return {

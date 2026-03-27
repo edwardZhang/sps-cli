@@ -8,6 +8,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { readState } from '../core/state.js';
+import { readACPState } from '../core/acpState.js';
 import { loadProjectConf } from '../core/config.js';
 
 const HOME = process.env.HOME || '/home/coral';
@@ -41,6 +42,7 @@ function getProjectStatus(project: string): ProjectStatus {
   const projectDir = resolve(PROJECTS_DIR, project);
   const lockFile = resolve(projectDir, 'runtime', 'tick.lock');
   const stateFile = resolve(projectDir, 'runtime', 'state.json');
+  const acpStateFile = resolve(projectDir, 'runtime', 'acp-state.json');
   const pipelineFile = resolve(projectDir, 'pipeline_order.json');
 
   // Tick status
@@ -66,17 +68,28 @@ function getProjectStatus(project: string): ProjectStatus {
     try {
       const maxWorkers = loadProjectConf(project).MAX_CONCURRENT_WORKERS;
       const state = readState(stateFile, maxWorkers);
-      const slots = Object.values(state.workers);
+      const acpState = readACPState(acpStateFile);
+      const slots = Object.entries(state.workers);
       let realActive = 0;
       let stale = 0;
       let merging = 0;
-      for (const slot of slots) {
+      for (const [slotName, slot] of slots) {
         if (slot.status === 'active') {
-          const workerPid = (slot as unknown as { pid?: number | null }).pid ?? null;
-          if (workerPid && isPidAlive(workerPid)) {
-            realActive++;
+          if (slot.transport === 'acp' || slot.mode === 'acp') {
+            const session = acpState.sessions[slotName];
+            const runStatus = session?.currentRun?.status || null;
+            if (session && session.sessionState !== 'offline' && runStatus && !['completed', 'failed', 'cancelled', 'lost'].includes(runStatus)) {
+              realActive++;
+            } else {
+              stale++;
+            }
           } else {
-            stale++;
+            const workerPid = (slot as unknown as { pid?: number | null }).pid ?? null;
+            if (workerPid && isPidAlive(workerPid)) {
+              realActive++;
+            } else {
+              stale++;
+            }
           }
         } else if (slot.status === 'merging' || slot.status === 'resolving') {
           merging++;
@@ -85,7 +98,7 @@ function getProjectStatus(project: string): ProjectStatus {
       workers = {
         total: slots.length,
         active: realActive,
-        idle: slots.filter(s => s.status === 'idle').length,
+        idle: slots.filter(([, s]) => s.status === 'idle').length,
         stale,
         merging,
       };

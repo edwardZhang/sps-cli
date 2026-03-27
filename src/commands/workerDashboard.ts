@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { readState, type WorkerSlotState } from '../core/state.js';
+import { readACPState } from '../core/acpState.js';
 import { isProcessAlive, tailFile } from '../providers/outputParser.js';
 import { renderClaudeStreamLines, renderCodexStreamLines } from '../providers/streamRenderer.js';
 
@@ -149,15 +150,24 @@ function collectPanels(projects: string[]): WorkerPanel[] {
     }
 
     const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
+    const acpState = readACPState(ctx.paths.acpStateFile);
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
       const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
       const isPrintMode = slot.mode === 'print';
+      const isAcpMode = slot.mode === 'acp' || slot.transport === 'acp';
 
       let sessionAlive: boolean;
       let paneLines: string[];
 
-      if (isPrintMode) {
+      if (isAcpMode) {
+        const session = acpState.sessions[slotName];
+        const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
+        sessionAlive = !!(session && session.sessionState !== 'offline');
+        paneLines = session?.lastPaneText
+          ? session.lastPaneText.split('\n')
+          : [`(acp ${slot.agent || 'worker'} ${sessionAlive ? 'connected' : 'offline'})`, `run: ${runStatus}`];
+      } else if (isPrintMode) {
         // Print mode: check PID liveness + tail output file
         sessionAlive = !!(slot.pid && slot.pid > 0 && isProcessAlive(slot.pid));
         if (slot.outputFile) {
@@ -237,7 +247,9 @@ function renderPanel(panel: WorkerPanel, panelWidth: number, panelHeight: number
     : '';
   const modeInfo = panel.slot.mode === 'print'
     ? `pid:${panel.slot.pid || '?'}${panel.slot.exitCode != null ? ` exit:${panel.slot.exitCode}` : ''}`
-    : '';
+    : panel.slot.mode === 'acp'
+      ? `acp:${panel.slot.sessionState || 'unknown'}${panel.slot.remoteStatus ? `/${panel.slot.remoteStatus}` : ''}`
+      : '';
   const timeLine = elapsed || heartbeat || modeInfo
     ? ` ${DIM}${[elapsed, heartbeat, modeInfo].filter(Boolean).join(' │ ')}${RESET}`
     : '';
@@ -433,17 +445,24 @@ function buildJsonOutput(projects: string[]): DashboardJson {
     } catch { continue; }
 
     const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
+    const acpState = readACPState(ctx.paths.acpStateFile);
     const workers: DashboardJson['projects'][0]['workers'] = [];
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
       const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
       const isPrintMode = slot.mode === 'print';
-      const sessionAlive = isPrintMode
-        ? !!(slot.pid && slot.pid > 0 && isProcessAlive(slot.pid))
-        : allSessions.has(sessionName);
-      const panePreview = sessionAlive && !isPrintMode
-        ? capturePaneText(sessionName, 5).trim()
-        : '';
+      const isAcpMode = slot.mode === 'acp' || slot.transport === 'acp';
+      const acpSession = acpState.sessions[slotName];
+      const sessionAlive = isAcpMode
+        ? !!(acpSession && acpSession.sessionState !== 'offline')
+        : isPrintMode
+          ? !!(slot.pid && slot.pid > 0 && isProcessAlive(slot.pid))
+          : allSessions.has(sessionName);
+      const panePreview = isAcpMode
+        ? (acpSession?.lastPaneText || '').trim()
+        : sessionAlive && !isPrintMode
+          ? capturePaneText(sessionName, 5).trim()
+          : '';
 
       workers.push({
         slot: slotName,

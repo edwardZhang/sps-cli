@@ -41,9 +41,10 @@ export interface ExitEvent {
 
 export interface WorkerHandle {
   id: string;
-  pid: number;
-  child: ChildProcess;
-  outputFile: string;
+  transport: 'proc' | 'acp';
+  pid: number | null;
+  child: ChildProcess | null;
+  outputFile: string | null;
   project: string;
   seq: string;
   slot: string;
@@ -52,6 +53,10 @@ export interface WorkerHandle {
   tool: 'claude' | 'codex';
   exitCode: number | null;
   sessionId: string | null;
+  runId: string | null;
+  sessionState: 'booting' | 'ready' | 'busy' | 'draining' | 'offline' | null;
+  remoteStatus: 'submitted' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled' | 'lost' | null;
+  lastEventAt: string | null;
   startedAt: string;
   exitedAt: string | null;
 }
@@ -111,6 +116,7 @@ export class ProcessSupervisor {
 
     const handle: WorkerHandle = {
       id: opts.id,
+      transport: 'proc',
       pid: child.pid ?? 0,
       child,
       outputFile: opts.outputFile,
@@ -122,6 +128,10 @@ export class ProcessSupervisor {
       tool: opts.tool,
       exitCode: null,
       sessionId: opts.resumeSessionId || null,
+      runId: null,
+      sessionState: null,
+      remoteStatus: null,
+      lastEventAt: null,
       startedAt: new Date().toISOString(),
       exitedAt: null,
     };
@@ -156,7 +166,7 @@ export class ProcessSupervisor {
   async kill(id: string): Promise<void> {
     const handle = this.workers.get(id);
     if (!handle) return;
-    if (handle.pid > 0 && isProcessAlive(handle.pid)) {
+    if (handle.transport === 'proc' && handle.pid && handle.pid > 0 && isProcessAlive(handle.pid)) {
       await killProcessGroup(handle.pid);
     }
     this.workers.delete(id);
@@ -187,6 +197,46 @@ export class ProcessSupervisor {
     return this.workers.size;
   }
 
+  registerAcpHandle(
+    handle: Omit<WorkerHandle, 'child' | 'transport'> & { child?: ChildProcess | null; transport?: 'acp' },
+  ): WorkerHandle {
+    const next: WorkerHandle = {
+      ...handle,
+      transport: 'acp',
+      pid: null,
+      child: handle.child ?? null,
+      outputFile: handle.outputFile ?? null,
+      runId: handle.runId ?? null,
+      sessionState: handle.sessionState ?? null,
+      remoteStatus: handle.remoteStatus ?? null,
+      lastEventAt: handle.lastEventAt ?? null,
+    };
+    this.workers.set(next.id, next);
+    return next;
+  }
+
+  updateAcpHandle(
+    id: string,
+    patch: Partial<Pick<WorkerHandle, 'sessionId' | 'runId' | 'sessionState' | 'remoteStatus' | 'lastEventAt' | 'exitCode' | 'exitedAt' | 'outputFile'>>,
+  ): WorkerHandle | undefined {
+    const current = this.workers.get(id);
+    if (!current) return undefined;
+    const next: WorkerHandle = {
+      ...current,
+      ...patch,
+      transport: 'acp',
+      pid: null,
+      child: current.child ?? null,
+      outputFile: patch.outputFile ?? current.outputFile ?? null,
+      runId: patch.runId ?? current.runId ?? null,
+      sessionState: patch.sessionState ?? current.sessionState ?? null,
+      remoteStatus: patch.remoteStatus ?? current.remoteStatus ?? null,
+      lastEventAt: patch.lastEventAt ?? current.lastEventAt ?? null,
+    };
+    this.workers.set(id, next);
+    return next;
+  }
+
   /**
    * Wait for all pending PostAction promises to settle.
    * Called by tick after each cycle to ensure exit callbacks complete.
@@ -210,7 +260,17 @@ export class ProcessSupervisor {
     onDead: (exitCode: number) => Promise<void> | void,
   ): void {
     // Store handle without child reference
-    const orphanHandle = { ...handle, child: null as unknown as ChildProcess };
+    const orphanHandle: WorkerHandle = {
+      ...handle,
+      transport: 'proc',
+      child: null,
+      pid,
+      outputFile: handle.outputFile ?? null,
+      runId: handle.runId ?? null,
+      sessionState: handle.sessionState ?? null,
+      remoteStatus: handle.remoteStatus ?? null,
+      lastEventAt: handle.lastEventAt ?? null,
+    };
     this.workers.set(id, orphanHandle);
 
     const timer = setInterval(() => {
@@ -249,7 +309,7 @@ export class ProcessSupervisor {
    * Infer exit code for an orphan worker by checking output file.
    * If output contains a successful result, assume exit code 0.
    */
-  private inferExitCode(handle: { outputFile: string; tool: string }): number {
+  private inferExitCode(handle: { outputFile: string | null; tool: string }): number {
     if (!handle.outputFile) return 1;
     try {
       const { extractLastAssistantText } = require('../providers/outputParser.js');

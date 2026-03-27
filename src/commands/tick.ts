@@ -6,7 +6,7 @@ import { SchedulerEngine } from '../engines/SchedulerEngine.js';
 import { ExecutionEngine } from '../engines/ExecutionEngine.js';
 import { CloseoutEngine } from '../engines/CloseoutEngine.js';
 import { MonitorEngine } from '../engines/MonitorEngine.js';
-import { createTaskBackend, createWorkerProvider, createRepoBackend, createNotifier } from '../providers/registry.js';
+import { createTaskBackend, createWorkerProvider, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
 import { PostActions } from '../manager/post-actions.js';
@@ -90,12 +90,13 @@ function createRunner(project: string): ProjectRunner | null {
   }
 
   // Create providers
-  let taskBackend, workerProvider, repoBackend, notifier;
+  let taskBackend, workerProvider, repoBackend, notifier, agentRuntime;
   try {
     taskBackend = createTaskBackend(ctx.config);
     workerProvider = createWorkerProvider(ctx.config);
     repoBackend = createRepoBackend(ctx.config);
     notifier = createNotifier(ctx.config);
+    agentRuntime = createAgentRuntime(ctx);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     fullLog.error(`Fatal: provider init failed for ${project}: ${msg}`);
@@ -122,7 +123,7 @@ function createRunner(project: string): ProjectRunner | null {
     execution: new ExecutionEngine(
       ctx, taskBackend, repoBackend,
       supervisor, completionJudge, postActions, resourceLimiter,
-      notifier,
+      notifier, agentRuntime,
     ),
     monitor: new MonitorEngine(ctx, taskBackend, workerProvider, repoBackend, notifier, supervisor),
     done: false,

@@ -15,6 +15,7 @@ const CODEX_READY = /›\s.*$/m;
 const CODEX_MODEL_LINE = /codex.*default.*·|gpt-.*codex/i;
 const CODEX_UPDATE_PROMPT = /Update available|Skip until next version|Press enter to continue/i;
 const CODEX_RATE_LIMIT_PROMPT = /rate limit|Switch to .+codex-mini|Keep current model/i;
+const CODEX_TRUST_PROMPT = /Do you trust the contents of this directory|1\.\s+Yes, continue|Working with untrusted contents/i;
 
 function isReady(text: string): boolean {
   return (CODEX_MODEL_LINE.test(text) && CODEX_READY.test(text))
@@ -87,10 +88,10 @@ export class CodexACPAdapter {
     }
     const pane = capturePaneText(input.sessionName, 120);
     let runState: InspectRunResult['runState'] = 'running';
-    if (waitingInput(pane)) {
-      runState = 'waiting_input';
-    } else if (isReady(pane)) {
+    if (isReady(pane)) {
       runState = 'completed';
+    } else if (waitingInput(pane)) {
+      runState = 'waiting_input';
     }
     return {
       runState,
@@ -149,6 +150,8 @@ export class CodexACPAdapter {
     while (Date.now() < deadline) {
       const text = capturePaneText(session, 30);
 
+      if (isReady(text)) return true;
+
       if (CODEX_UPDATE_PROMPT.test(text)) {
         if (/1\. Update now/i.test(text)) {
           tmux(['send-keys', '-t', session, 'Down']);
@@ -161,6 +164,12 @@ export class CodexACPAdapter {
         continue;
       }
 
+      if (CODEX_TRUST_PROMPT.test(text)) {
+        tmux(['send-keys', '-t', session, 'Enter']);
+        await sleep(3_000);
+        continue;
+      }
+
       if (CODEX_RATE_LIMIT_PROMPT.test(text)) {
         tmux(['send-keys', '-t', session, 'Escape']);
         await sleep(500);
@@ -168,8 +177,6 @@ export class CodexACPAdapter {
         await sleep(2_000);
         continue;
       }
-
-      if (isReady(text)) return true;
       await sleep(3_000);
     }
 

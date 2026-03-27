@@ -7,6 +7,7 @@ import type { CommandResult, ActionRecord, CheckResult, RecommendedAction } from
 import type { ProcessSupervisor } from '../manager/supervisor.js';
 import { existsSync, statSync } from 'node:fs';
 import { readState, writeState } from '../core/state.js';
+import { readACPState } from '../core/acpState.js';
 import { Logger } from '../core/logger.js';
 
 /**
@@ -80,6 +81,7 @@ export class MonitorEngine {
     actions: ActionRecord[],
   ): Promise<void> {
     const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const acpState = readACPState(this.ctx.paths.acpStateFile);
     let orphansFound = 0;
 
     for (const [slotName, slotState] of Object.entries(state.workers)) {
@@ -91,6 +93,10 @@ export class MonitorEngine {
 
       // If Supervisor is tracking this worker, it handles lifecycle — skip
       if (this.supervisor.get(workerId)) continue;
+
+      if ((slotState.transport === 'acp' || slotState.mode === 'acp') && this.isAcpSessionAlive(acpState.sessions[slotName])) {
+        continue;
+      }
 
       // Supervisor doesn't know about this worker.
       // PostActions exit callback may have already cleaned up state.
@@ -117,7 +123,13 @@ export class MonitorEngine {
         claimedAt: null,
         lastHeartbeat: null,
         mode: null,
+        transport: null,
+        agent: null,
         sessionId: null,
+        runId: null,
+        sessionState: null,
+        remoteStatus: null,
+        lastEventAt: null,
         pid: null,
         outputFile: null,
         exitCode: null,
@@ -165,6 +177,7 @@ export class MonitorEngine {
     recommendedActions: RecommendedAction[],
   ): Promise<void> {
     const inprogressCards = await this.taskBackend.listByState('Inprogress');
+    const acpState = readACPState(this.ctx.paths.acpStateFile);
     let staleCount = 0;
 
     for (const card of inprogressCards) {
@@ -184,6 +197,13 @@ export class MonitorEngine {
       }
 
       const [, slotState] = slotEntry;
+
+      if ((slotState.transport === 'acp' || slotState.mode === 'acp')) {
+        const session = acpState.sessions[slotEntry[0]];
+        if (this.isAcpSessionAlive(session)) {
+          continue;
+        }
+      }
 
       // Check if Supervisor is tracking this worker
       const seq = slotState.seq != null ? String(slotState.seq) : '';
@@ -482,6 +502,11 @@ export class MonitorEngine {
     for (const [slotName, slotState] of Object.entries(state.workers)) {
       if (slotState.status !== 'active') continue;
 
+      if ((slotState.transport === 'acp' || slotState.mode === 'acp')) {
+        const session = readACPState(this.ctx.paths.acpStateFile).sessions[slotName];
+        if (this.isAcpSessionAlive(session)) continue;
+      }
+
       const seq = slotState.seq != null ? String(slotState.seq) : '';
       const workerId = `${this.ctx.projectName}:${slotName}:${seq}`;
       const handle = this.supervisor.get(workerId);
@@ -619,7 +644,13 @@ export class MonitorEngine {
       claimedAt: null,
       lastHeartbeat: null,
       mode: null,
+      transport: null,
+      agent: null,
       sessionId: null,
+      runId: null,
+      sessionState: null,
+      remoteStatus: null,
+      lastEventAt: null,
       pid: null,
       outputFile: null,
       exitCode: null,
@@ -693,6 +724,13 @@ export class MonitorEngine {
       });
       this.logEvent('retry-exhausted', seq, 'ok', { retryCount, reason });
     }
+  }
+
+  private isAcpSessionAlive(
+    session: import('../models/acp.js').ACPSessionRecord | undefined,
+  ): boolean {
+    if (!session || session.sessionState === 'offline' || !session.currentRun) return false;
+    return ['submitted', 'running', 'waiting_input'].includes(session.currentRun.status);
   }
 
   // ─── Helpers ──────────────────────────────────────────────────

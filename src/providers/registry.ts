@@ -3,6 +3,7 @@ import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
+import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import { PlaneTaskBackend } from './PlaneTaskBackend.js';
 import { TrelloTaskBackend } from './TrelloTaskBackend.js';
 import { MarkdownTaskBackend } from './MarkdownTaskBackend.js';
@@ -12,6 +13,8 @@ import { ClaudeTmuxProvider } from './ClaudeTmuxProvider.js';
 import { CodexTmuxProvider } from './CodexTmuxProvider.js';
 import { GitLabRepoBackend } from './GitLabRepoBackend.js';
 import { MatrixNotifier } from './MatrixNotifier.js';
+import { ProjectContext } from '../core/context.js';
+import { ACPWorkerRuntime } from './ACPWorkerRuntime.js';
 
 export function createTaskBackend(config: ProjectConfig): TaskBackend {
   switch (config.PM_TOOL) {
@@ -48,4 +51,8 @@ export function createRepoBackend(config: ProjectConfig): RepoBackend {
 
 export function createNotifier(config: ProjectConfig): Notifier {
   return new MatrixNotifier(config);
+}
+
+export function createAgentRuntime(ctx: ProjectContext): AgentRuntime {
+  return new ACPWorkerRuntime(ctx);
 }

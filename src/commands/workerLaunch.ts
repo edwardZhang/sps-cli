@@ -1,6 +1,6 @@
 import { ProjectContext } from '../core/context.js';
 import { ExecutionEngine } from '../engines/ExecutionEngine.js';
-import { createTaskBackend, createRepoBackend, createNotifier } from '../providers/registry.js';
+import { createTaskBackend, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
 import { PostActions } from '../manager/post-actions.js';
@@ -51,7 +51,8 @@ export async function executeWorkerLaunch(
   });
   const pmClient = createPMClient(ctx.config);
   const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier);
-  const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, supervisor, completionJudge, postActions, resourceLimiter, notifier);
+  const agentRuntime = createAgentRuntime(ctx);
+  const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, supervisor, completionJudge, postActions, resourceLimiter, notifier, agentRuntime);
   const result = await engine.launchSingle(seq, { dryRun });
 
   if (jsonOutput) {
