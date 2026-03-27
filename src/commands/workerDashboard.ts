@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { type WorkerSlotState } from '../core/state.js';
@@ -163,6 +163,21 @@ interface WorkerPanel {
   paneLines: string[];
 }
 
+interface ProcessMetrics {
+  pid: number;
+  state: string;
+  cpu: number;
+  elapsed: string;
+}
+
+interface ACPDiagnostics {
+  screenStatus?: string;
+  promptText?: string;
+  process?: ProcessMetrics | null;
+  lastOutputAgeSec?: number | null;
+  stalledReason?: string | null;
+}
+
 function shortenPath(path: string | null | undefined): string {
   if (!path) return '';
   return path.startsWith(HOME) ? `~${path.slice(HOME.length)}` : path;
@@ -236,7 +251,87 @@ function extractClaudeScreenFacts(lines: string[]): {
   return facts;
 }
 
-function buildACPPanelLines(slot: WorkerSlotState, session: ACPSessionRecord | undefined): string[] {
+function getProcessMetrics(pid: number | null | undefined): ProcessMetrics | null {
+  if (!pid || pid <= 0) return null;
+  try {
+    const out = execFileSync('ps', ['-p', String(pid), '-o', 'pid=,state=,%cpu=,etime='], {
+      encoding: 'utf-8',
+      timeout: 5_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    if (!out) return null;
+    const match = out.match(/^\s*(\d+)\s+(\S+)\s+([\d.]+)\s+(.+)\s*$/);
+    if (!match) return null;
+    return {
+      pid: Number(match[1]),
+      state: match[2],
+      cpu: Number(match[3]),
+      elapsed: match[4].trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function latestPTYLogAgeSec(ctx: ProjectContext, slotName: string): number | null {
+  try {
+    const entries = readdirSync(ctx.paths.logsDir)
+      .filter(name => name.startsWith(`${slotName}-pty-`) && name.endsWith('.log'))
+      .map(name => resolve(ctx.paths.logsDir, name));
+    if (entries.length === 0) return null;
+    entries.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    const mtimeMs = statSync(entries[0]).mtimeMs;
+    return Math.max(0, Math.floor((Date.now() - mtimeMs) / 1000));
+  } catch {
+    return null;
+  }
+}
+
+function analyzeACPSession(
+  ctx: ProjectContext,
+  slotName: string,
+  slot: WorkerSlotState,
+  session: ACPSessionRecord | undefined,
+  sessionAlive: boolean,
+): ACPDiagnostics {
+  const rawLines = cleanScreenLines(session?.lastPaneText || '');
+  const tool = session?.tool || slot.agent || 'worker';
+  const facts = tool === 'codex' ? extractCodexScreenFacts(rawLines) : extractClaudeScreenFacts(rawLines);
+  const process = getProcessMetrics(session?.pid ?? slot.pid);
+  const lastOutputAgeSec = latestPTYLogAgeSec(ctx, slotName);
+
+  let stalledReason: string | null = null;
+  const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
+  const sessionState = session?.sessionState || slot.sessionState || 'offline';
+
+  if (
+    tool === 'codex' &&
+    sessionAlive &&
+    sessionState === 'busy' &&
+    runStatus === 'running' &&
+    facts.status === 'Codex home screen' &&
+    (lastOutputAgeSec ?? 0) >= 60 &&
+    ((process?.cpu ?? 0) <= 0.1)
+  ) {
+    stalledReason = `stalled at Codex home screen (${formatDuration(lastOutputAgeSec ?? 0)} no output, cpu ${process?.cpu?.toFixed(1) ?? '0.0'}%)`;
+  }
+
+  return {
+    screenStatus: facts.status,
+    promptText: facts.prompt,
+    process,
+    lastOutputAgeSec,
+    stalledReason,
+  };
+}
+
+function buildACPPanelLines(
+  ctx: ProjectContext,
+  slotName: string,
+  slot: WorkerSlotState,
+  session: ACPSessionRecord | undefined,
+  sessionAlive: boolean,
+): string[] {
   const lines: string[] = [];
   const tool = session?.tool || slot.agent || 'worker';
   const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
@@ -246,6 +341,7 @@ function buildACPPanelLines(slot: WorkerSlotState, session: ACPSessionRecord | u
   const codexFacts = extractCodexScreenFacts(rawLines);
   const claudeFacts = extractClaudeScreenFacts(rawLines);
   const facts = tool === 'codex' ? codexFacts : claudeFacts;
+  const diagnostics = analyzeACPSession(ctx, slotName, slot, session, sessionAlive);
 
   lines.push(`${BOLD}tool:${RESET} ${tool}`);
   lines.push(`${BOLD}session:${RESET} ${sessionState} / ${runStatus}`);
@@ -253,6 +349,15 @@ function buildACPPanelLines(slot: WorkerSlotState, session: ACPSessionRecord | u
     lines.push(`${BOLD}model:${RESET} ${codexFacts.model}`);
   }
   lines.push(`${BOLD}cwd:${RESET} ${worktree || '(unknown)'}`);
+  if (diagnostics.process) {
+    lines.push(`${BOLD}proc:${RESET} pid ${diagnostics.process.pid} · ${diagnostics.process.state} · cpu ${diagnostics.process.cpu.toFixed(1)}% · etime ${diagnostics.process.elapsed}`);
+  }
+  if (diagnostics.lastOutputAgeSec != null) {
+    lines.push(`${BOLD}output:${RESET} last PTY output ${formatDuration(diagnostics.lastOutputAgeSec)} ago`);
+  }
+  if (diagnostics.stalledReason) {
+    lines.push(`${FG.yellow}${BOLD}health:${RESET}${FG.yellow} ${diagnostics.stalledReason}${RESET}`);
+  }
 
   if (session?.pendingInput) {
     const danger = session.pendingInput.dangerous ? ' (dangerous)' : '';
@@ -261,11 +366,11 @@ function buildACPPanelLines(slot: WorkerSlotState, session: ACPSessionRecord | u
     return lines;
   }
 
-  if (facts.status) {
-    lines.push(`${BOLD}screen:${RESET} ${facts.status}`);
+  if (diagnostics.screenStatus) {
+    lines.push(`${BOLD}screen:${RESET} ${diagnostics.screenStatus}`);
   }
-  if (facts.prompt) {
-    lines.push(`${DIM}${facts.prompt}${RESET}`);
+  if (diagnostics.promptText) {
+    lines.push(`${DIM}${diagnostics.promptText}${RESET}`);
   } else if (session?.currentRun?.promptPreview) {
     lines.push(`${DIM}${session.currentRun.promptPreview}${RESET}`);
   } else if (rawLines.length > 0) {
@@ -319,7 +424,7 @@ function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[
         const session = acpState.sessions[slotName];
         const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
         sessionAlive = isPersistedSessionAlive(slot, session);
-        paneLines = buildACPPanelLines(slot, session);
+        paneLines = buildACPPanelLines(ctx, slotName, slot, session, sessionAlive);
         if (paneLines.length === 0) {
           paneLines = [`(acp ${slot.agent || 'worker'} ${sessionAlive ? 'connected' : 'offline'})`, `run: ${runStatus}`];
         }
@@ -479,6 +584,14 @@ function formatElapsed(from: Date): string {
   return `${hours}h${mins % 60}m`;
 }
 
+function formatDuration(totalSecs: number): string {
+  if (totalSecs < 60) return `${totalSecs}s`;
+  const mins = Math.floor(totalSecs / 60);
+  if (mins < 60) return `${mins}m${totalSecs % 60}s`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h${mins % 60}m`;
+}
+
 function getTerminalSize(): { cols: number; rows: number } {
   return {
     cols: process.stdout.columns || 120,
@@ -560,6 +673,10 @@ interface DashboardJson {
       sessionAlive: boolean;
       claimedAt: string | null;
       lastHeartbeat: string | null;
+      processCpu?: number | null;
+      processState?: string | null;
+      lastOutputAgeSec?: number | null;
+      stalledReason?: string | null;
       panePreview: string;
     }[];
     activeCards: Record<string, unknown>;
@@ -593,10 +710,13 @@ function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJ
           ? !!(slot.pid && slot.pid > 0 && isProcessAlive(slot.pid))
           : allSessions.has(sessionName);
       const panePreview = isAcpMode
-        ? buildACPPanelLines(slot, acpSession).join(' | ')
+        ? buildACPPanelLines(snapshot.ctx, slotName, slot, acpSession, sessionAlive).join(' | ')
         : sessionAlive && !isPrintMode
           ? buildInteractivePanelLines(slot, capturePaneText(sessionName, 5)).join(' | ')
           : '';
+      const diagnostics = isAcpMode
+        ? analyzeACPSession(snapshot.ctx, slotName, slot, acpSession, sessionAlive)
+        : null;
 
       workers.push({
         slot: slotName,
@@ -607,6 +727,10 @@ function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJ
         sessionAlive,
         claimedAt: slot.claimedAt,
         lastHeartbeat: slot.lastHeartbeat,
+        processCpu: diagnostics?.process?.cpu ?? null,
+        processState: diagnostics?.process?.state ?? null,
+        lastOutputAgeSec: diagnostics?.lastOutputAgeSec ?? null,
+        stalledReason: diagnostics?.stalledReason ?? null,
         panePreview,
       });
     }
