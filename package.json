@@ -1,6 +1,6 @@
 {
   "name": "@coralai/sps-cli",
-  "version": "0.23.4",
+  "version": "0.23.5",
   "description": "SPS CLI — AI-driven development pipeline orchestrator",
   "type": "module",
   "main": "dist/main.js",
@@ -37,7 +37,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "node-pty": "^1.1.0",
+    "node-pty": "^1.2.0-beta.12",
     "strip-ansi": "^7.2.0"
   }
 }

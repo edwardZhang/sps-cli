@@ -7,7 +7,9 @@
  */
 import * as pty from 'node-pty';
 import { EventEmitter } from 'node:events';
-import { createWriteStream, type WriteStream } from 'node:fs';
+import { chmodSync, createWriteStream, existsSync, statSync, type WriteStream } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -48,6 +50,43 @@ function stripAnsi(text: string): string {
   return text.replace(STRIP_ANSI_RE, '');
 }
 
+const require = createRequire(import.meta.url);
+let spawnHelpersVerified = false;
+
+function ensureSpawnHelpersExecutable(): void {
+  if (spawnHelpersVerified || process.platform !== 'darwin') return;
+
+  const packageJsonPath = require.resolve('node-pty/package.json');
+  const prebuildsDir = join(dirname(packageJsonPath), 'prebuilds');
+  const candidates = Array.from(new Set([
+    join(prebuildsDir, `darwin-${process.arch}`, 'spawn-helper'),
+    join(prebuildsDir, 'darwin-arm64', 'spawn-helper'),
+    join(prebuildsDir, 'darwin-x64', 'spawn-helper'),
+  ]));
+
+  for (const helperPath of candidates) {
+    if (!existsSync(helperPath)) continue;
+    const mode = statSync(helperPath).mode & 0o777;
+    if ((mode & 0o111) === 0o111) continue;
+    chmodSync(helperPath, mode | 0o111);
+    process.stderr.write(`[pty-session] Restored execute permission on ${helperPath}\n`);
+  }
+
+  spawnHelpersVerified = true;
+}
+
+function wrapSpawnError(tool: 'claude' | 'codex', error: unknown): Error {
+  const base = error instanceof Error ? error : new Error(String(error));
+  if (process.platform !== 'darwin' || !base.message.includes('posix_spawnp failed')) {
+    return base;
+  }
+  return new Error(
+    `Failed to launch ${tool} PTY session: ${base.message}. ` +
+    'On macOS this usually means node-pty spawn-helper is missing executable permissions.',
+    { cause: base },
+  );
+}
+
 // ─── PTYSession ─────────────────────────────────────────────────
 
 export class PTYSession extends EventEmitter {
@@ -78,13 +117,19 @@ export class PTYSession extends EventEmitter {
       ? ['--dangerously-skip-permissions']
       : ['--full-auto'];
 
-    this.terminal = pty.spawn(cmd, args, {
-      name: 'xterm-256color',
-      cols: 200,
-      rows: 50,
-      cwd,
-      env: { ...process.env },
-    });
+    ensureSpawnHelpersExecutable();
+
+    try {
+      this.terminal = pty.spawn(cmd, args, {
+        name: 'xterm-256color',
+        cols: 200,
+        rows: 50,
+        cwd,
+        env: { ...process.env },
+      });
+    } catch (error) {
+      throw wrapSpawnError(tool, error);
+    }
 
     this.pid = this.terminal.pid;
     this.sessionId = `pty-${tool}-${this.pid}-${Date.now()}`;

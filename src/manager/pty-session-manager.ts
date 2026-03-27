@@ -83,6 +83,18 @@ export class PTYSessionManager {
     // Auto-handle trust prompts
     if (opts.autoTrust !== false) {
       session.on('waiting-input', (event) => {
+        const prompt = event.prompt.toLowerCase();
+        const codexUpdateNotice = event.type === 'confirmation' && (
+          prompt.includes('update notice') ||
+          prompt.includes('press enter to continue')
+        );
+
+        if (codexUpdateNotice) {
+          this.log(`[${key}] Auto-skipping Codex update notice`);
+          session.write('\x1b[B\r');
+          return;
+        }
+
         if (event.type === 'trust') {
           this.log(`[${key}] Auto-confirming trust prompt`);
           session.confirm();
