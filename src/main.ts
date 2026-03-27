@@ -36,6 +36,7 @@ import { executeWorkerDashboard } from './commands/workerDashboard.js';
 import { executeLogs } from './commands/logs.js';
 import { executeStop } from './commands/stop.js';
 import { executeStatus } from './commands/status.js';
+import { executeAcpCommand } from './commands/acpCommand.js';
 
 import { createRequire } from 'node:module';
 const _require = createRequire(import.meta.url);
@@ -49,6 +50,7 @@ const COMMANDS: Record<string, { desc: string; usage: string }> = {
   scheduler: { desc: 'Planning → Backlog promotion', usage: 'sps scheduler <tick|inspect|validate> <project>' },
   pipeline:  { desc: 'Execution chain (Backlog → Todo → Inprogress)', usage: 'sps pipeline <tick|inspect> <project>' },
   worker:    { desc: 'Worker lifecycle management', usage: 'sps worker <launch|release|inspect|dashboard> <project> [seq|slot]' },
+  acp:       { desc: 'Persistent ACP session management', usage: 'sps acp <ensure|run|prompt|status|stop> <project> [args...]' },
   pm:        { desc: 'PM backend operations', usage: 'sps pm <scan|move|comment|checklist> <project> [args...]' },
   qa:        { desc: 'QA / closeout (QA → merge → Done)', usage: 'sps qa <tick|inspect> <project>' },
   monitor:   { desc: 'Anomaly detection and diagnostics', usage: 'sps monitor <tick|inspect-worker|inspect-card> <project>' },
@@ -81,7 +83,7 @@ interface ParsedArgs {
 }
 
 // Commands that always have subcommands
-const SUBCOMMAND_COMMANDS = new Set(['scheduler', 'pipeline', 'worker', 'pm', 'qa', 'monitor', 'project', 'card']);
+const SUBCOMMAND_COMMANDS = new Set(['scheduler', 'pipeline', 'worker', 'acp', 'pm', 'qa', 'monitor', 'project', 'card']);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const flags: Record<string, boolean> = {};
@@ -262,6 +264,20 @@ async function main() {
       await executeWorkerDashboard(projects, args.flags);
       return;
     }
+  }
+
+  // ─── acp ─────────────────────────────────────────────────────
+  if (args.command === 'acp') {
+    if (!args.subcommand) {
+      console.error('Usage: sps acp <ensure|run|prompt|status|stop> <project> [args...]');
+      process.exit(2);
+    }
+    if (!args.project) {
+      console.error(`Usage: sps acp ${args.subcommand} <project> [args...]`);
+      process.exit(2);
+    }
+    await executeAcpCommand(args.project, args.subcommand, args.positionals, args.flags);
+    return;
   }
 
   // ─── qa ─────────────────────────────────────────────────────

@@ -111,11 +111,16 @@ export interface ProjectConfig {
   // Worker
   WORKER_TOOL: 'claude' | 'codex';
   WORKER_MODE: 'print' | 'interactive';
+  WORKER_TRANSPORT: 'proc' | 'acp';
   MAX_CONCURRENT_WORKERS: number;
   WORKER_RESTART_LIMIT: number;
   AUTOFIX_ATTEMPTS: number;
   WORKER_SESSION_REUSE: boolean;
   MAX_ACTIONS_PER_TICK: number;
+  ACP_GATEWAY_MODE: 'local';
+  ACP_ENDPOINT?: string;
+  ACP_AGENT?: 'claude' | 'codex';
+  ACP_SESSION_STRATEGY: 'per-slot';
 
   // Worker health
   WORKER_LAUNCH_TIMEOUT_S: number;
@@ -196,11 +201,16 @@ export function loadProjectConf(projectName: string): ProjectConfig {
 
     WORKER_TOOL: (raw.WORKER_TOOL as ProjectConfig['WORKER_TOOL']) || 'claude',
     WORKER_MODE: (raw.WORKER_MODE as ProjectConfig['WORKER_MODE']) || 'print',
+    WORKER_TRANSPORT: (raw.WORKER_TRANSPORT as ProjectConfig['WORKER_TRANSPORT']) || 'proc',
     MAX_CONCURRENT_WORKERS: parseInt(raw.MAX_CONCURRENT_WORKERS || '3', 10),
     WORKER_RESTART_LIMIT: parseInt(raw.WORKER_RESTART_LIMIT || '2', 10),
     AUTOFIX_ATTEMPTS: parseInt(raw.AUTOFIX_ATTEMPTS || '2', 10),
     WORKER_SESSION_REUSE: raw.WORKER_SESSION_REUSE !== 'false',
     MAX_ACTIONS_PER_TICK: parseInt(raw.MAX_ACTIONS_PER_TICK || '1', 10),
+    ACP_GATEWAY_MODE: (raw.ACP_GATEWAY_MODE as ProjectConfig['ACP_GATEWAY_MODE']) || 'local',
+    ACP_ENDPOINT: raw.ACP_ENDPOINT,
+    ACP_AGENT: raw.ACP_AGENT as ProjectConfig['ACP_AGENT'] | undefined,
+    ACP_SESSION_STRATEGY: (raw.ACP_SESSION_STRATEGY as ProjectConfig['ACP_SESSION_STRATEGY']) || 'per-slot',
 
     WORKER_LAUNCH_TIMEOUT_S: parseInt(raw.WORKER_LAUNCH_TIMEOUT_S || '120', 10),
     WORKER_IDLE_TIMEOUT_M: parseInt(raw.WORKER_IDLE_TIMEOUT_M || '15', 10),

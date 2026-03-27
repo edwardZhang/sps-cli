@@ -1,0 +1,64 @@
+import type { ACPSessionStatus, ACPRunStatus, ACPTool } from '../models/acp.js';
+
+export interface EnsureSessionInput {
+  sessionName: string;
+  tool: ACPTool;
+  cwd: string;
+  resetExisting?: boolean;
+}
+
+export interface EnsureSessionResult {
+  sessionId: string;
+  sessionState: ACPSessionStatus;
+  paneText: string;
+  lastSeenAt: string;
+}
+
+export interface StartRunInput {
+  sessionName: string;
+  tool: ACPTool;
+  prompt: string;
+}
+
+export interface StartRunResult {
+  runId: string;
+  runState: ACPRunStatus;
+  paneText: string;
+  lastSeenAt: string;
+}
+
+export interface InspectSessionInput {
+  sessionName: string;
+  tool: ACPTool;
+}
+
+export interface InspectSessionResult {
+  sessionState: ACPSessionStatus;
+  paneText: string;
+  lastSeenAt: string;
+}
+
+export interface InspectRunInput {
+  sessionName: string;
+  tool: ACPTool;
+  activeRun: boolean;
+}
+
+export interface InspectRunResult {
+  runState: ACPRunStatus | null;
+  paneText: string;
+  lastSeenAt: string;
+}
+
+export interface StopSessionInput {
+  sessionName: string;
+  tool: ACPTool;
+}
+
+export interface ACPClient {
+  ensureSession(input: EnsureSessionInput): Promise<EnsureSessionResult>;
+  startRun(input: StartRunInput): Promise<StartRunResult>;
+  inspectSession(input: InspectSessionInput): Promise<InspectSessionResult>;
+  inspectRun(input: InspectRunInput): Promise<InspectRunResult>;
+  stopSession(input: StopSessionInput): Promise<void>;
+}

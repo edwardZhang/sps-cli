@@ -14,6 +14,8 @@ export interface ProjectPaths {
   runtimeDir: string;
   /** ~/.coral/projects/<project>/runtime/state.json */
   stateFile: string;
+  /** ~/.coral/projects/<project>/runtime/acp-state.json */
+  acpStateFile: string;
   /** ~/.coral/projects/<project>/runtime/tick.lock */
   tickLockFile: string;
   /** ~/.coral/projects/<project>/pm_meta/ */
@@ -51,6 +53,7 @@ export function resolveProjectPaths(projectName: string, overrides?: PathOverrid
     logsDir: resolve(instanceDir, 'logs'),
     runtimeDir,
     stateFile: resolve(runtimeDir, 'state.json'),
+    acpStateFile: resolve(runtimeDir, 'acp-state.json'),
     tickLockFile: resolve(runtimeDir, 'tick.lock'),
     pmMetaDir: resolve(instanceDir, 'pm_meta'),
     pipelineOrderFile: resolve(instanceDir, 'pipeline_order.json'),

@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.19.0**
+**v0.20.0**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -25,6 +25,7 @@ Create cards -> Start pipeline -> AI auto-codes -> Serial merge queue -> Notify 
   - [sps card add](#sps-card-add)
   - [sps tick](#sps-tick)
   - [sps status](#sps-status)
+  - [sps acp](#sps-acp)
   - [sps scheduler tick](#sps-scheduler-tick)
   - [sps pipeline tick](#sps-pipeline-tick)
   - [sps worker](#sps-worker)
@@ -61,7 +62,7 @@ npx tsx src/main.ts --help
 | Node.js | 18+ | CLI runtime |
 | git | 2.x | Branch and worktree management |
 | Claude Code CLI or Codex CLI | Latest | AI Worker |
-| tmux | 3.x | Only required for `WORKER_MODE=interactive` |
+| tmux | 3.x | Required for `WORKER_MODE=interactive` and ACP Phase 1 local sessions |
 
 ## Quick Start
 
@@ -116,7 +117,9 @@ Planning -> Backlog -> Todo -> Inprogress -> Done
 | Todo -> Inprogress | ExecutionEngine | Assign Worker slot, build task context, launch AI Worker |
 | Inprogress -> Done | PostActions + MergeMutex | Detect Worker completion, serialize merge to target branch, release resources, clean up worktree |
 
-The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the proposed persistent ACP transport model, the full worker state breakdown, and the recommended local same-user OAuth reuse model.
+The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the persistent ACP transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary.
+
+ACP Phase 1 is now shipped as a standalone command surface. It does not replace the main pipeline launch path yet; instead, it provides a persistent local session transport that can ensure a long-lived Codex or Claude session, submit prompts as task runs, inspect session/run state via `runtime/acp-state.json`, and stop sessions cleanly.
 
 ### MR_MODE=create (Optional)
 
@@ -423,6 +426,41 @@ sps status [--json]
 | Option | Description |
 |--------|-------------|
 | `--json` | Output structured JSON |
+
+---
+
+### sps acp
+
+Manage persistent ACP-backed worker sessions outside the main pipeline launch path.
+
+```bash
+sps acp ensure <project> <slot> [claude|codex] [--json]
+sps acp run <project> <slot> [claude|codex] "<prompt>" [--json]
+sps acp prompt <project> <slot> [claude|codex] "<prompt>" [--json]
+sps acp status <project> [slot] [--json]
+sps acp stop <project> <slot> [--json]
+```
+
+Phase 1 behavior:
+
+- `ensure` starts or reuses a persistent tmux-backed local session and mirrors it into `~/.coral/projects/<project>/runtime/acp-state.json`
+- `run` submits a prompt onto the session and records a new run snapshot
+- `status` refreshes session and run state from the local gateway
+- `stop` terminates the persistent session and marks the slot `offline`
+
+Observed session states:
+
+| State | Meaning |
+|-------|---------|
+| `ready` | Session is authenticated and idle, ready to accept a prompt |
+| `busy` | Session is alive and currently working |
+| `booting` | Session started but is still blocked on onboarding or authentication |
+| `offline` | Session is not reachable |
+
+Current verification scope:
+
+- Codex is verified in this release for `ensure -> run -> status -> stop`
+- Claude session bootstrap and status detection are implemented, but prompt execution still depends on host-side `claude auth login`
 
 ---
 
@@ -830,6 +868,10 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 |-------|----------|---------|-------------|
 | `WORKER_TOOL` | No | `claude` | Worker type: `claude` / `codex` |
 | `WORKER_MODE` | No | `print` | Execution mode: `print` (one-shot process) / `interactive` (tmux TUI) |
+| `WORKER_TRANSPORT` | No | `proc` | Worker transport: `proc` (current pipeline path) / `acp` (persistent session transport) |
+| `ACP_GATEWAY_MODE` | No | `local` | ACP gateway deployment mode; Phase 1 supports `local` only |
+| `ACP_AGENT` | No | `WORKER_TOOL` | Default ACP tool when `sps acp` does not receive a tool override |
+| `ACP_SESSION_STRATEGY` | No | `per-slot` | Session allocation strategy; Phase 1 supports `per-slot` only |
 | `MAX_CONCURRENT_WORKERS` | No | `3` | Maximum parallel Workers (worker slot ceiling) |
 | `WORKER_RESTART_LIMIT` | No | `2` | Maximum restart count after Worker death |
 | `AUTOFIX_ATTEMPTS` | No | `2` | CI failure auto-fix attempt count |
@@ -877,6 +919,10 @@ PLANE_PROJECT_ID="project-uuid-here"
 # Worker
 WORKER_TOOL="claude"
 WORKER_MODE="print"              # print (recommended) or interactive (tmux fallback)
+WORKER_TRANSPORT="proc"          # proc (pipeline default) or acp (persistent session commands)
+ACP_GATEWAY_MODE="local"
+ACP_AGENT="claude"
+ACP_SESSION_STRATEGY="per-slot"
 MAX_CONCURRENT_WORKERS=3
 MAX_ACTIONS_PER_TICK=1
 
