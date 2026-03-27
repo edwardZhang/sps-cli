@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.23.21**
+**v0.23.22**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -12,7 +12,7 @@ SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool d
 Create cards -> Start pipeline -> Development worker completes branch work -> QA worker integrates branch -> Notify completion
 ```
 
-Current design direction: SPS is converging on a worker-owned two-phase execution model. `Inprogress` is the development phase, `QA` is the integration/merge phase, and label-driven skill profile injection remains part of worker prompt construction. `v0.23.16` added per-worktree `.sps/development_prompt.txt` and `.sps/integration_prompt.txt`, plus phase-aware recovery prompt selection. `v0.23.17` moved the main integration path into the `QA` worker phase. `v0.23.18` finished the state-machine alignment so runtime projection and task-level recovery consistently map `Inprogress` to development and `QA` to integration. `v0.23.19` removes the old fixed merge/conflict flow from `PostActions` and `CloseoutEngine`, and makes `CompletionJudge` phase-aware so development completion stops at branch commits while QA completion requires merge evidence. `v0.23.20` adds explicit PTY/Codex stalled-run diagnostics so the dashboard can tell the difference between a healthy busy run and a Codex session stuck on the home screen. `v0.23.21` then upgrades PTY into a strong runtime contract: `waiting_input`, `needs_confirmation`, `running`, `completed`, plus internal `stalled_submit`; `tick`, `status`, `worker dashboard`, `card dashboard`, and `sps acp respond` now all consume the same PTY state surface, and Codex prompt submission can auto-repair by retrying `Enter` or re-sending the prompt when the CLI never leaves the home screen.
+Current design direction: SPS uses a worker-owned two-phase execution model, but the autonomous main workflow is now fixed on one-shot `proc` workers. `Inprogress` is the development phase, `QA` is the integration/merge phase, and label-driven skill profile injection remains part of worker prompt construction. `v0.23.16` added per-worktree `.sps/development_prompt.txt` and `.sps/integration_prompt.txt`, plus phase-aware recovery prompt selection. `v0.23.17` moved the main integration path into the `QA` worker phase. `v0.23.18` finished the state-machine alignment so runtime projection and task-level recovery consistently map `Inprogress` to development and `QA` to integration. `v0.23.19` removed the old fixed merge/conflict flow from `PostActions` and `CloseoutEngine`, and made `CompletionJudge` phase-aware so development completion stops at branch commits while QA completion requires merge evidence. `v0.23.22` keeps that two-phase state machine but reverts the autonomous `tick/pipeline/qa/recovery` path back to one-shot `codex exec` / `claude -p`; PTY/ACP remain available only for `sps acp`, dashboard visibility, and manual diagnostics.
 
 ## Table of Contents
 
@@ -126,7 +126,7 @@ Planning -> Backlog -> Todo -> Inprogress -> QA -> Done
 
 In this model, the development worker stops at “implementation complete and committed on the task branch”. The QA worker owns integration: it must inspect the current worktree, rebase/merge the task branch back into the target branch, resolve conflicts, and finish the integration. If a development worker merges early anyway, SPS absorbs that as an exception from git evidence and closes the task directly instead of forcing an extra QA run. See `docs/design/10-acp-worker-runtime-design.md` for the persistent Agent transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary. See `docs/design/11-runtime-state-authority-and-recovery-redesign.md` for the redesign that demotes `state.json` / `acp-state.json` to projections and re-centers recovery around PM state plus worktree/git evidence. See `docs/design/12-unified-runtime-state-machine.md` for the current unified state-machine model. See `docs/design/13-development-guardrails.md` for the non-negotiable development rules that prevent future features from reintroducing old state, merge, or prompt-model drift.
 
-PTY transport now extends the same session/run model into the default CLI-backed worker path, but the restart boundary is now explicit. Within a running `tick` process, `WORKER_TRANSPORT=pty` still uses `sessionId/runId` for retries on the same task phase. Across a `tick` restart, SPS no longer pretends it can recover the old PTY session; it recovers the task from `TaskLease + WorktreeEvidence`, judges completion from git/worktree evidence first, and starts a fresh PTY run in the same worktree only if work remains. `WORKER_TRANSPORT=acp` still keeps its session-based model. The PTY hardening sequence remains: v0.23.5 upgrades `node-pty` to a macOS-safe build, auto-restores missing execute permissions on `spawn-helper`, and auto-skips the benign Codex update notice during PTY boot so `ensureSession()` can reach `ready`; v0.23.6 fixes PTY run lifecycle tracking so newly submitted runs no longer get marked `completed` during the first inspect cycle before the CLI actually leaves the prompt; v0.23.7 switches `sps worker dashboard` from raw PTY pane dumps to structured worker summaries; v0.23.9 validates persisted PTY sessions by PID before treating them as alive; v0.23.10 aligns PM and read-only views around runtime-owned cards; v0.23.11 introduces PM + worktree + session-first runtime projection; v0.23.12 moves recovery/execution onto `TaskLease + WorktreeEvidence`; v0.23.13 pulls monitor/closeout onto the same lease-first model; v0.23.14 completes the write-path migration through `RuntimeStore`; v0.23.15 finalizes PTY restart behavior as task-level recovery instead of fake session-level recovery; v0.23.17 moves merge ownership into the QA worker phase; v0.23.18 aligns recovery/projection so `Inprogress` always resumes development and `QA` always resumes integration; v0.23.19 removes the old fixed merge/conflict path and makes completion evidence phase-aware; v0.23.20 adds PTY/Codex health diagnostics; and v0.23.21 adds the first strong PTY state contract plus prompt-submit repair. Runtime consumers now see `waiting_input`, `needs_confirmation`, `running`, `completed`, and internal `stalled_submit`; `worker dashboard` shows live output tail; and response/confirmation input now travels through the same cross-process PTY control queue used by `sps acp respond`. Codex has been verified on launch, task-level recovery, same-process resume, spawn-helper self-heal, immediate post-launch run-state inspection, summary-style dashboard rendering, cold-state liveness validation, runtime-owned PM reconciliation, read-only snapshot rendering, lease-first recovery/execution/monitor/closeout flow, stalled-home-screen detection, prompt-submit auto-repair, and strong-state completion detection; Claude still depends on host-side `claude auth login` before reaching `ready`.
+The autonomous main path now uses one-shot child processes by default. `WORKER_TRANSPORT=proc` is the workflow transport for `tick`, `pipeline tick`, `qa tick`, `worker launch`, and `recovery`; workers run through `codex exec` or `claude -p`, finish a single task phase, and exit. PTY/ACP still exist, but only for `sps acp`, dashboard observability, and manual diagnostics. Their strong runtime contract (`waiting_input`, `needs_confirmation`, `running`, `completed`, plus `stalled_submit`) remains useful for those manual surfaces, but it is no longer the default autonomous execution path.
 
 ### MR_MODE=create (Optional)
 
@@ -476,7 +476,7 @@ sps status [--json]
 
 ### sps acp
 
-Manage persistent session-backed worker sessions directly, or inspect the same transport that `sps tick` uses when `WORKER_TRANSPORT=pty` or `WORKER_TRANSPORT=acp`.
+Manage persistent session-backed worker sessions directly for diagnostics, manual intervention, and experiments. This is no longer the default transport used by `sps tick`.
 
 ```bash
 sps acp ensure <project> <slot> [claude|codex] [--json]
@@ -492,7 +492,7 @@ Current behavior:
 - `run` submits a prompt onto the session and records a new run snapshot
 - `status` refreshes session and run state from the local gateway
 - `stop` terminates the persistent session and marks the slot `offline`
-- `sps tick` reuses the same persistent transport when `WORKER_TRANSPORT=pty` or `WORKER_TRANSPORT=acp`
+- `sps tick` does not use this transport as its default autonomous execution chain
 - retry / conflict follow-up runs reuse the same slot session when possible, and now recreate a fresh persistent session automatically if the old one has already disappeared
 
 Observed session states:
@@ -917,7 +917,7 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 |-------|----------|---------|-------------|
 | `WORKER_TOOL` | No | `claude` | Worker type: `claude` / `codex` |
 | `WORKER_MODE` | No | `print` | Execution mode: `print` (one-shot process) / `interactive` (tmux TUI) |
-| `WORKER_TRANSPORT` | No | `proc` | Worker transport: `proc` (one-shot child process) / `acp` (persistent session transport for `sps tick` and `sps acp`) |
+| `WORKER_TRANSPORT` | No | `proc` | Worker transport. `proc` is the autonomous workflow path. `acp` / `pty` are retained for `sps acp`, dashboard observability, and manual diagnostics, not as the default `tick` execution chain. |
 | `ACP_GATEWAY_MODE` | No | `local` | ACP gateway deployment mode; current releases support `local` only |
 | `ACP_AGENT` | No | `WORKER_TOOL` | Default ACP tool when `sps acp` does not receive a tool override |
 | `ACP_SESSION_STRATEGY` | No | `per-slot` | Session allocation strategy; current releases support `per-slot` only |
@@ -968,7 +968,7 @@ PLANE_PROJECT_ID="project-uuid-here"
 # Worker
 WORKER_TOOL="claude"
 WORKER_MODE="print"              # print (recommended) or interactive (tmux fallback)
-WORKER_TRANSPORT="proc"          # proc (pipeline default) or acp (persistent session pipeline/runtime)
+WORKER_TRANSPORT="proc"          # proc (autonomous workflow default); acp/pty are manual diagnostic transports
 ACP_GATEWAY_MODE="local"
 ACP_AGENT="claude"
 ACP_SESSION_STRATEGY="per-slot"

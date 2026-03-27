@@ -103,10 +103,12 @@ Rules:
 3. If there are conflicts, resolve them carefully based on the task intent and current codebase
 4. Complete any required git add / rebase --continue / merge follow-up steps
 5. If the integration requires pushing the target branch or the task branch, do it as part of this phase
-6. Validate the repository state before finishing
-7. Do not restart development from scratch unless the repository state clearly requires code changes to complete integration
-8. If you are blocked by permissions, confirmations, or external policy, report the exact blocker instead of looping forever
-9. Say "done" only after integration work is complete or you have identified a concrete external blocker
+6. Before finishing, update docs/CHANGELOG.md with a concise summary of the integration or conflict-resolution work completed in this phase
+7. If you made architecture or technical decisions during integration, append them to docs/DECISIONS.md
+8. Validate the repository state before finishing
+9. Do not restart development from scratch unless the repository state clearly requires code changes to complete integration
+10. If you are blocked by permissions, confirmations, or external policy, report the exact blocker instead of looping forever
+11. Say "done" only after integration work is complete or you have identified a concrete external blocker
 
 Completion rule:
 - The preferred outcome of this phase is: branch ${ctx.branchName} has been successfully merged back into ${ctx.targetBranch}, and any required pushes have completed.
@@ -130,11 +132,13 @@ Rules:
 2. Complete the implementation for this task
 3. Run appropriate validation or tests when needed
 4. Commit the finished work to the current task branch ${ctx.branchName}
-5. Do not merge into the target branch ${ctx.targetBranch} in this phase
-6. Do not run merge scripts or perform integration work in this phase
-7. Do not push or update the target branch in this phase
-8. If you are blocked by permissions, confirmations, or missing environment requirements, report the exact blocker
-9. Say "done" only after the implementation work is complete and committed on ${ctx.branchName}
+5. Before finishing, update docs/CHANGELOG.md with a concise summary of the implementation completed in this phase
+6. If you made architecture or technical decisions, append them to docs/DECISIONS.md
+7. Do not merge into the target branch ${ctx.targetBranch} in this phase
+8. Do not run merge scripts or perform integration work in this phase
+9. Do not push or update the target branch in this phase
+10. If you are blocked by permissions, confirmations, or missing environment requirements, report the exact blocker
+11. Say "done" only after the implementation work is complete and committed on ${ctx.branchName}
 
 Completion rule:
 - The intended end of this phase is: the implementation is complete and committed on branch ${ctx.branchName}.

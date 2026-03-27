@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, readFileSync } from 'node:fs';
 import { RuntimeStore } from '../core/runtimeStore.js';
-import { resolveGitlabProjectId } from '../core/config.js';
+import { resolveGitlabProjectId, resolveWorkflowTransport } from '../core/config.js';
 import { ProjectContext } from '../core/context.js';
 import {
   buildResumePrompt,
@@ -74,6 +74,7 @@ export class Recovery {
     const result: RecoveryResult = { found: 0, alive: 0, completed: 0, failed: 0 };
 
     for (const project of projects) {
+      const workflowTransport = resolveWorkflowTransport(project.config);
       const state = this.stateStore(project).readState();
       const reservedSlots = new Set<string>();
       // Create per-project PostActions (C3 fix: use correct PM config per project)
@@ -86,8 +87,8 @@ export class Recovery {
           worktree: lease.worktree || slot?.worktree || null,
           outputFile: slot?.outputFile || null,
           sessionId: lease.sessionId || slot?.sessionId || null,
-          mode: slot?.mode || (project.config.WORKER_TRANSPORT === 'pty' ? 'pty' : project.config.WORKER_TRANSPORT === 'acp' ? 'acp' : project.config.WORKER_MODE) || null,
-          transport: slot?.transport || project.config.WORKER_TRANSPORT || null,
+          mode: slot?.transport === 'proc' ? (slot?.mode || project.config.WORKER_MODE) : (workflowTransport === 'proc' ? project.config.WORKER_MODE : workflowTransport),
+          transport: workflowTransport,
           agent: slot?.agent || (project.config.ACP_AGENT || project.config.WORKER_TOOL) as 'claude' | 'codex',
           pid: slot?.pid ?? null,
           exitCode: slot?.exitCode ?? null,
@@ -101,7 +102,9 @@ export class Recovery {
 
         result.found++;
 
-        const isAcpTransport = workerRef.transport === 'acp' || workerRef.transport === 'pty' || workerRef.mode === 'acp' || workerRef.mode === 'pty';
+        const isAcpTransport =
+          workflowTransport !== 'proc' &&
+          (workerRef.transport === 'acp' || workerRef.transport === 'pty' || workerRef.mode === 'acp' || workerRef.mode === 'pty');
         if (isAcpTransport && slotName) {
           const recovered = await this.recoverAcpSlot(project, slotName, seq, workerRef, postActions, lease);
           if (recovered === 'alive') result.alive++;
@@ -206,13 +209,12 @@ export class Recovery {
     },
   ): PostActionContext {
     const raw = project.config.raw;
+    const workflowTransport = resolveWorkflowTransport(project.config);
     return {
       project: project.name,
       seq,
       slot: slotName,
-      transport: slot.transport === 'pty' || slot.mode === 'pty'
-        ? 'pty'
-        : (slot.transport === 'acp' || slot.mode === 'acp' ? 'acp' : 'proc'),
+      transport: workflowTransport === 'pty' ? 'pty' : (workflowTransport === 'acp' ? 'acp' : 'proc'),
       branch: slot.branch || '',
       worktree: slot.worktree || '',
       baseBranch: project.config.GITLAB_MERGE_BRANCH,
@@ -525,7 +527,7 @@ export class Recovery {
     this.stateStore(project).updateState('recovery-acp-sync', (state) => {
       const slot = state.workers[slotName];
       if (!slot) return;
-      const transport = project.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+      const transport = resolveWorkflowTransport(project.config) === 'pty' ? 'pty' : 'acp';
       slot.mode = transport;
       slot.transport = transport;
       slot.agent = session.tool;
@@ -693,7 +695,7 @@ export class Recovery {
     project: ProjectInfo,
     slot: { transport?: 'proc' | 'acp' | 'pty' | null; mode?: string | null },
   ): boolean {
-    return slot.transport === 'pty' || slot.mode === 'pty' || project.config.WORKER_TRANSPORT === 'pty';
+    return slot.transport === 'pty' || slot.mode === 'pty' || resolveWorkflowTransport(project.config) === 'pty';
   }
 
   private isActiveRun(status: ACPRunStatus): boolean {

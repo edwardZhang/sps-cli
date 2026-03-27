@@ -1,4 +1,5 @@
 import { ProjectContext } from '../core/context.js';
+import { workflowUsesAgentRuntime } from '../core/config.js';
 import { acquireTickLock, releaseTickLock } from '../core/lock.js';
 import { readState } from '../core/state.js';
 import { Logger } from '../core/logger.js';
@@ -58,7 +59,7 @@ interface ProjectRunner {
   log: Logger;
   taskBackend: TaskBackend;
   notifier: Notifier;
-  agentRuntime: ReturnType<typeof createAgentRuntime>;
+  agentRuntime: ReturnType<typeof createAgentRuntime> | null;
   scheduler: SchedulerEngine;
   closeout: CloseoutEngine;
   execution: ExecutionEngine;
@@ -91,13 +92,16 @@ function createRunner(project: string): ProjectRunner | null {
   }
 
   // Create providers
-  let taskBackend, workerProvider, repoBackend, notifier, agentRuntime;
+  let taskBackend, workerProvider, repoBackend, notifier;
+  let agentRuntime: ReturnType<typeof createAgentRuntime> | null = null;
   try {
     taskBackend = createTaskBackend(ctx.config);
     workerProvider = createWorkerProvider(ctx.config);
     repoBackend = createRepoBackend(ctx.config);
     notifier = createNotifier(ctx.config);
-    agentRuntime = createAgentRuntime(ctx);
+    if (workflowUsesAgentRuntime(ctx.config)) {
+      agentRuntime = createAgentRuntime(ctx);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     fullLog.error(`Fatal: provider init failed for ${project}: ${msg}`);

@@ -145,6 +145,21 @@ export interface ProjectConfig {
   raw: RawConfig;
 }
 
+/**
+ * SPS main workflow currently runs workers as one-shot processes.
+ *
+ * PTY/ACP session transports remain available for manual/experimental
+ * commands such as `sps acp`, but tick/pipeline/qa/recovery should not
+ * use them as the default autonomous execution path.
+ */
+export function resolveWorkflowTransport(_config: ProjectConfig): ProjectConfig['WORKER_TRANSPORT'] {
+  return 'proc';
+}
+
+export function workflowUsesAgentRuntime(config: ProjectConfig): boolean {
+  return resolveWorkflowTransport(config) !== 'proc';
+}
+
 const REQUIRED_FIELDS = [
   'PROJECT_NAME',
   'GITLAB_PROJECT',

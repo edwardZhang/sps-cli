@@ -1,4 +1,5 @@
 import { ProjectContext } from '../core/context.js';
+import { workflowUsesAgentRuntime } from '../core/config.js';
 import { ExecutionEngine } from '../engines/ExecutionEngine.js';
 import { createTaskBackend, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
@@ -40,7 +41,7 @@ export async function executePipelineTick(
     maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '80', 10),
   });
   const pmClient = createPMClient(ctx.config);
-  const agentRuntime = createAgentRuntime(ctx);
+  const agentRuntime = workflowUsesAgentRuntime(ctx.config) ? createAgentRuntime(ctx) : null;
   const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier, agentRuntime);
   const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, supervisor, completionJudge, postActions, resourceLimiter, notifier, agentRuntime);
   const result = await engine.tick({ dryRun });

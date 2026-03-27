@@ -1,4 +1,5 @@
 import { ProjectContext } from '../core/context.js';
+import { workflowUsesAgentRuntime } from '../core/config.js';
 import { CloseoutEngine } from '../engines/CloseoutEngine.js';
 import { createTaskBackend, createWorkerProvider, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
 import { Logger } from '../core/logger.js';
@@ -27,7 +28,7 @@ export async function executeQaTick(
   const repoBackend = createRepoBackend(ctx.config);
   const workerProvider = createWorkerProvider(ctx.config);
   const notifier = createNotifier(ctx.config);
-  const agentRuntime = createAgentRuntime(ctx);
+  const agentRuntime = workflowUsesAgentRuntime(ctx.config) ? createAgentRuntime(ctx) : null;
   const engine = new CloseoutEngine(ctx, taskBackend, repoBackend, workerProvider, notifier, agentRuntime);
   const result = await engine.tick();
 

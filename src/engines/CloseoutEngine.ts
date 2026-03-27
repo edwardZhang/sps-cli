@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ProjectContext } from '../core/context.js';
+import { resolveWorkflowTransport } from '../core/config.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
@@ -182,8 +183,9 @@ export class CloseoutEngine {
       this.runtimeStore.updateState('closeout-sync-qa-session', (draft) => {
         const worker = draft.workers[slotName];
         if (!worker) return;
-        worker.mode = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
-        worker.transport = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+        const workflowTransport = resolveWorkflowTransport(this.ctx.config);
+        worker.mode = workflowTransport === 'pty' ? 'pty' : 'acp';
+        worker.transport = workflowTransport === 'pty' ? 'pty' : 'acp';
         worker.agent = session.tool;
         worker.tmuxSession = session.sessionName;
         worker.sessionId = session.sessionId;
@@ -331,7 +333,8 @@ export class CloseoutEngine {
       this.log.warn(`seq ${seq}: PM claim for QA worker failed: ${err instanceof Error ? err.message : err}`);
     }
 
-    if (this.ctx.config.WORKER_TRANSPORT !== 'proc' && this.agentRuntime) {
+    const workflowTransport = resolveWorkflowTransport(this.ctx.config);
+    if (workflowTransport !== 'proc' && this.agentRuntime) {
       const prompt = readFileSync(promptFile, 'utf-8').trim();
       const session = await this.agentRuntime.startRun(
         slotName,
@@ -349,8 +352,8 @@ export class CloseoutEngine {
         worker.worktree = worktree;
         worker.claimedAt = worker.claimedAt || new Date().toISOString();
         worker.lastHeartbeat = new Date().toISOString();
-        worker.mode = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
-        worker.transport = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+        worker.mode = workflowTransport === 'pty' ? 'pty' : 'acp';
+        worker.transport = workflowTransport === 'pty' ? 'pty' : 'acp';
         worker.agent = session.tool;
         worker.tmuxSession = session.sessionName;
         worker.sessionId = session.sessionId;
@@ -691,7 +694,7 @@ export class CloseoutEngine {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.info(
-        `seq ${seq}: Agent resume unavailable for ${slotName}: ${msg}. Creating a fresh ${this.ctx.config.WORKER_TRANSPORT.toUpperCase()} session.`,
+        `seq ${seq}: Agent resume unavailable for ${slotName}: ${msg}. Creating a fresh ${resolveWorkflowTransport(this.ctx.config).toUpperCase()} session.`,
       );
       await this.agentRuntime.ensureSession(slotName, undefined, worktree);
       session = await this.agentRuntime.startRun(slotName, prompt, undefined, worktree);
@@ -700,8 +703,9 @@ export class CloseoutEngine {
       const slot = state.workers[slotName];
       if (slot) {
         slot.status = slotStatus;
-        slot.mode = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
-        slot.transport = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+        const workflowTransport = resolveWorkflowTransport(this.ctx.config);
+        slot.mode = workflowTransport === 'pty' ? 'pty' : 'acp';
+        slot.transport = workflowTransport === 'pty' ? 'pty' : 'acp';
         slot.agent = session.tool;
         slot.tmuxSession = session.sessionName;
         slot.sessionId = session.sessionId;

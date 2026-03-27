@@ -9,7 +9,7 @@ import type { CommandResult, ActionRecord, Card, CardState, AuxiliaryState } fro
 import type { ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
 import type { RuntimeState, TaskLease, WorkerSlotState } from '../core/state.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
-import { resolveGitlabProjectId } from '../core/config.js';
+import { resolveGitlabProjectId, resolveWorkflowTransport } from '../core/config.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { readQueue } from '../core/queue.js';
 import {
@@ -465,6 +465,7 @@ export class ExecutionEngine {
     const seq = card.seq;
     const branchName = this.buildBranchName(card);
     const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
+    const workflowTransport = resolveWorkflowTransport(this.ctx.config);
 
     if (opts.dryRun) {
       this.log.info(`[dry-run] Would launch seq ${seq}`);
@@ -493,10 +494,10 @@ export class ExecutionEngine {
       tmuxSession: sessionName,
       claimedAt: new Date().toISOString(),
       lastHeartbeat: new Date().toISOString(),
-      mode: this.ctx.config.WORKER_TRANSPORT === 'proc'
+      mode: workflowTransport === 'proc'
         ? this.ctx.config.WORKER_MODE
-        : this.ctx.config.WORKER_TRANSPORT,
-      transport: this.ctx.config.WORKER_TRANSPORT,
+        : workflowTransport,
+      transport: workflowTransport,
       agent: (this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
       sessionId: null,
       runId: null,
@@ -595,7 +596,7 @@ export class ExecutionEngine {
       const prompt = readFileSync(promptFile, 'utf-8').trim();
       const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
 
-      if (this.ctx.config.WORKER_TRANSPORT !== 'proc') {
+      if (workflowTransport !== 'proc') {
         const runtime = this.requireAgentRuntime();
         const session = await runtime.startRun(
           slotName,
@@ -637,7 +638,7 @@ export class ExecutionEngine {
         });
 
         this.log.ok(
-          `Step 6: ${this.ctx.config.WORKER_TRANSPORT.toUpperCase()} worker launched for seq ${seq} ` +
+          `Step 6: ${workflowTransport.toUpperCase()} worker launched for seq ${seq} ` +
           `(session=${session.sessionId}, run=${session.currentRun?.runId || 'none'})`,
         );
       } else {
@@ -722,7 +723,7 @@ export class ExecutionEngine {
       // Rollback: kill worker, release slot
       const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
       try {
-        if (this.ctx.config.WORKER_TRANSPORT !== 'proc' && this.agentRuntime) {
+        if (workflowTransport !== 'proc' && this.agentRuntime) {
           await this.agentRuntime.stopSession(slotName);
         } else {
           await this.supervisor.kill(workerId);
@@ -826,14 +827,14 @@ export class ExecutionEngine {
         slot.branch || this.buildBranchName(card),
         this.acpRunExitCode(session.currentRun.status),
         handle,
-        this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp',
+        resolveWorkflowTransport(this.ctx.config) === 'pty' ? 'pty' : 'acp',
       );
 
       return {
         action: 'complete',
         entity: `seq:${seq}`,
         result: session.currentRun.status === 'completed' ? 'ok' : 'fail',
-        message: `${this.ctx.config.WORKER_TRANSPORT.toUpperCase()} run ${session.currentRun.status}`,
+        message: `${resolveWorkflowTransport(this.ctx.config).toUpperCase()} run ${session.currentRun.status}`,
       };
     }
 
@@ -862,7 +863,7 @@ export class ExecutionEngine {
       slot.branch || this.buildBranchName(card),
       1,
       handle,
-      this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp',
+      resolveWorkflowTransport(this.ctx.config) === 'pty' ? 'pty' : 'acp',
     );
 
     return {
@@ -943,7 +944,7 @@ export class ExecutionEngine {
   }
 
   private applyAcpSessionToSlot(slot: import('../core/state.js').WorkerSlotState, session: ACPSessionRecord): void {
-    const transport = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+    const transport = resolveWorkflowTransport(this.ctx.config) === 'pty' ? 'pty' : 'acp';
     slot.mode = transport;
     slot.transport = transport;
     slot.agent = session.tool;
