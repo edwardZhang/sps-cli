@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.23.5**
+**v0.23.6**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -119,7 +119,7 @@ Planning -> Backlog -> Todo -> Inprogress -> Done
 
 The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. Final integration now runs inside a temporary detached merge worktree, which avoids `main already used by worktree` failures and keeps the user's main checkout untouched. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the persistent Agent transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary.
 
-PTY transport now extends the same session/run model into the default CLI-backed worker path. When `WORKER_TRANSPORT=pty` or `WORKER_TRANSPORT=acp`, `sps tick` launches work through `sessionId/runId`, persists that state into `runtime/state.json` plus `runtime/acp-state.json`, and lets recovery/status/dashboard inspect the live session/run state. `PostActions` retry/conflict flows and `CloseoutEngine` autofix/conflict flows now resume the same session when possible and automatically rebuild a fresh persistent session when the original one is gone before a retry or merge-conflict follow-up run. v0.23.5 upgrades `node-pty` to a macOS-safe build, auto-restores missing execute permissions on `spawn-helper`, and auto-skips the benign Codex update notice during PTY boot so `ensureSession()` can reach `ready` on fresh launches instead of failing with `posix_spawnp failed`. Codex has been verified on launch, recovery, direct merge, same-session resume, PTY conflict fallback, and spawn-helper self-heal; Claude still depends on host-side `claude auth login` before reaching `ready`.
+PTY transport now extends the same session/run model into the default CLI-backed worker path. When `WORKER_TRANSPORT=pty` or `WORKER_TRANSPORT=acp`, `sps tick` launches work through `sessionId/runId`, persists that state into `runtime/state.json` plus `runtime/acp-state.json`, and lets recovery/status/dashboard inspect the live session/run state. `PostActions` retry/conflict flows and `CloseoutEngine` autofix/conflict flows now resume the same session when possible and automatically rebuild a fresh persistent session when the original one is gone before a retry or merge-conflict follow-up run. v0.23.5 upgrades `node-pty` to a macOS-safe build, auto-restores missing execute permissions on `spawn-helper`, and auto-skips the benign Codex update notice during PTY boot so `ensureSession()` can reach `ready` on fresh launches instead of failing with `posix_spawnp failed`. v0.23.6 further fixes PTY run lifecycle tracking so newly submitted conflict-resolution runs no longer get marked `completed` during the first inspect cycle before the CLI actually leaves the prompt. Codex has been verified on launch, recovery, direct merge, same-session resume, PTY conflict fallback, spawn-helper self-heal, and immediate post-launch run-state inspection; Claude still depends on host-side `claude auth login` before reaching `ready`.
 
 ### MR_MODE=create (Optional)
 

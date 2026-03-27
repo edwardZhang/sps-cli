@@ -115,7 +115,7 @@ export class PTYAgentRuntime implements AgentRuntime {
     const info = this.manager.inspect(this.ctx.projectName, normalizedSlot)!;
     const record = this.buildSessionRecord(normalizedSlot, info, selectedTool, cwd, {
       runId,
-      status: 'running',
+      status: 'submitted',
       promptPreview: previewPrompt(prompt),
       startedAt: now(),
     });
@@ -143,7 +143,7 @@ export class PTYAgentRuntime implements AgentRuntime {
     const tool = session.tool as ACPTool;
     const record = this.buildSessionRecord(normalizedSlot, info, tool, session.cwd, {
       runId,
-      status: 'running',
+      status: 'submitted',
       promptPreview: previewPrompt(prompt),
       startedAt: now(),
     });
@@ -300,13 +300,16 @@ export class PTYAgentRuntime implements AgentRuntime {
     const alive = isSessionInfo ? (info as SessionInfo).alive : (info as any).isAlive();
     const buffer = isSessionInfo ? (info as SessionInfo).buffer : (info as any).getBuffer(30);
 
+    const hasRun = !!run;
     const sessionState: ACPSessionRecord['sessionState'] =
       !alive ? 'offline' :
+      hasRun ? 'busy' :
       state === 'busy' || state === 'waiting_input' ? 'busy' :
       state === 'ready' ? 'ready' :
       'booting';
 
     const slotStatus: ACPSessionRecord['status'] =
+      hasRun ? 'active' :
       state === 'busy' ? 'active' :
       state === 'waiting_input' ? 'active' :
       'idle';
@@ -339,19 +342,46 @@ export class PTYAgentRuntime implements AgentRuntime {
     const existing = state.sessions[slotName];
     if (!existing) return;
 
-    existing.sessionState = info.alive
+    const prevSessionState = existing.sessionState;
+    const prevRunStatus = existing.currentRun?.status ?? null;
+    const nextSessionState = info.alive
       ? (info.state === 'busy' || info.state === 'waiting_input' ? 'busy' : info.state === 'ready' ? 'ready' : 'booting')
       : 'offline';
-    existing.status = info.state === 'busy' || info.state === 'waiting_input' ? 'active' : 'idle';
+    const nextSlotStatus = info.state === 'busy' || info.state === 'waiting_input' ? 'active' : 'idle';
+
+    existing.sessionState = nextSessionState;
+    existing.status = nextSlotStatus;
     existing.lastSeenAt = now();
     existing.lastPaneText = info.buffer;
     existing.updatedAt = now();
 
-    // Update run status if run completed
-    if (existing.currentRun && info.state === 'ready' && existing.status === 'idle') {
-      existing.currentRun.status = 'completed';
-      existing.currentRun.completedAt = now();
-      existing.currentRun.updatedAt = now();
+    if (existing.currentRun) {
+      if (info.state === 'waiting_input') {
+        existing.currentRun.status = 'waiting_input';
+        existing.currentRun.updatedAt = now();
+        return;
+      }
+
+      if (info.state === 'busy' && (
+        prevRunStatus === 'submitted' ||
+        prevRunStatus === 'running' ||
+        prevRunStatus === 'waiting_input'
+      )) {
+        existing.currentRun.status = 'running';
+        existing.currentRun.updatedAt = now();
+        return;
+      }
+
+      if (
+        info.state === 'ready' &&
+        nextSlotStatus === 'idle' &&
+        (prevSessionState === 'busy' || prevRunStatus === 'running' || prevRunStatus === 'waiting_input') &&
+        prevRunStatus !== 'completed'
+      ) {
+        existing.currentRun.status = 'completed';
+        existing.currentRun.completedAt = now();
+        existing.currentRun.updatedAt = now();
+      }
     }
   }
 }

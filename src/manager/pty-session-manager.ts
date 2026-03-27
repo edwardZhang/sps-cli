@@ -144,6 +144,7 @@ export class PTYSessionManager {
 
     const runId = String(Date.now());
     session.setRunId(runId);
+    session.setState('busy');
     session.sendPrompt(prompt);
 
     this.log(`[${project}:${slot}] Run started: ${runId}`);
@@ -161,6 +162,7 @@ export class PTYSessionManager {
 
     const runId = String(Date.now());
     session.setRunId(runId);
+    session.setState('busy');
     session.sendPrompt(instruction);
 
     this.log(`[${project}:${slot}] Resume run started: ${runId}`);
