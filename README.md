@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.21.0**
+**v0.22.0**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -62,7 +62,7 @@ npx tsx src/main.ts --help
 | Node.js | 18+ | CLI runtime |
 | git | 2.x | Branch and worktree management |
 | Claude Code CLI or Codex CLI | Latest | AI Worker |
-| tmux | 3.x | Required for `WORKER_MODE=interactive` and ACP Phase 1 local sessions |
+| tmux | 3.x | Required for `WORKER_MODE=interactive` and local ACP sessions |
 
 ## Quick Start
 
@@ -117,9 +117,9 @@ Planning -> Backlog -> Todo -> Inprogress -> Done
 | Todo -> Inprogress | ExecutionEngine | Assign Worker slot, build task context, launch AI Worker |
 | Inprogress -> Done | PostActions + MergeMutex | Detect Worker completion, serialize merge to target branch, release resources, clean up worktree |
 
-The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the persistent ACP transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary.
+The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. Final integration now runs inside a temporary detached merge worktree, which avoids `main already used by worktree` failures and keeps the user's main checkout untouched. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the persistent ACP transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary.
 
-ACP Phase 2 now connects persistent ACP sessions to the main pipeline launch path. When `WORKER_TRANSPORT=acp`, `sps tick` launches work through `sessionId/runId` instead of a one-shot child process, persists that state into `runtime/state.json` plus `runtime/acp-state.json`, and lets recovery/status/dashboard inspect the live session/run state. Codex has been verified end-to-end on this path; Claude still depends on host-side `claude auth login` before reaching `ready`.
+ACP Phase 3 now extends the main pipeline launch path with same-session follow-up runs. When `WORKER_TRANSPORT=acp`, `sps tick` launches work through `sessionId/runId`, persists that state into `runtime/state.json` plus `runtime/acp-state.json`, and lets recovery/status/dashboard inspect the live session/run state. `PostActions` retry/conflict flows and `CloseoutEngine` autofix/conflict flows now resume the same ACP session instead of spawning a new print-mode `--resume` process. Codex has been verified on launch, recovery, direct merge, and same-session resume; Claude still depends on host-side `claude auth login` before reaching `ready`.
 
 ### MR_MODE=create (Optional)
 
@@ -448,6 +448,7 @@ Current behavior:
 - `status` refreshes session and run state from the local gateway
 - `stop` terminates the persistent session and marks the slot `offline`
 - `sps tick` reuses the same persistent transport when `WORKER_TRANSPORT=acp`
+- retry / conflict follow-up runs reuse the same slot session when ACP transport is active
 
 Observed session states:
 
@@ -870,9 +871,9 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 | `WORKER_TOOL` | No | `claude` | Worker type: `claude` / `codex` |
 | `WORKER_MODE` | No | `print` | Execution mode: `print` (one-shot process) / `interactive` (tmux TUI) |
 | `WORKER_TRANSPORT` | No | `proc` | Worker transport: `proc` (one-shot child process) / `acp` (persistent session transport for `sps tick` and `sps acp`) |
-| `ACP_GATEWAY_MODE` | No | `local` | ACP gateway deployment mode; Phase 2 supports `local` only |
+| `ACP_GATEWAY_MODE` | No | `local` | ACP gateway deployment mode; current releases support `local` only |
 | `ACP_AGENT` | No | `WORKER_TOOL` | Default ACP tool when `sps acp` does not receive a tool override |
-| `ACP_SESSION_STRATEGY` | No | `per-slot` | Session allocation strategy; Phase 2 supports `per-slot` only |
+| `ACP_SESSION_STRATEGY` | No | `per-slot` | Session allocation strategy; current releases support `per-slot` only |
 | `MAX_CONCURRENT_WORKERS` | No | `3` | Maximum parallel Workers (worker slot ceiling) |
 | `WORKER_RESTART_LIMIT` | No | `2` | Maximum restart count after Worker death |
 | `AUTOFIX_ATTEMPTS` | No | `2` | CI failure auto-fix attempt count |

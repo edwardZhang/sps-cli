@@ -40,8 +40,8 @@ export async function executePipelineTick(
     maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '80', 10),
   });
   const pmClient = createPMClient(ctx.config);
-  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier);
   const agentRuntime = createAgentRuntime(ctx);
+  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier, undefined, agentRuntime);
   const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, supervisor, completionJudge, postActions, resourceLimiter, notifier, agentRuntime);
   const result = await engine.tick({ dryRun });
 

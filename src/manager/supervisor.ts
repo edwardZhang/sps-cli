@@ -136,7 +136,7 @@ export class ProcessSupervisor {
       exitedAt: null,
     };
 
-    this.workers.set(opts.id, handle);
+    this.upsertHandle(handle);
 
     child.on('exit', (code) => {
       handle.exitCode = code ?? 1;
@@ -200,19 +200,7 @@ export class ProcessSupervisor {
   registerAcpHandle(
     handle: Omit<WorkerHandle, 'child' | 'transport'> & { child?: ChildProcess | null; transport?: 'acp' },
   ): WorkerHandle {
-    const next: WorkerHandle = {
-      ...handle,
-      transport: 'acp',
-      pid: null,
-      child: handle.child ?? null,
-      outputFile: handle.outputFile ?? null,
-      runId: handle.runId ?? null,
-      sessionState: handle.sessionState ?? null,
-      remoteStatus: handle.remoteStatus ?? null,
-      lastEventAt: handle.lastEventAt ?? null,
-    };
-    this.workers.set(next.id, next);
-    return next;
+    return this.upsertHandle(this.normalizeAcpHandle(handle));
   }
 
   updateAcpHandle(
@@ -221,20 +209,7 @@ export class ProcessSupervisor {
   ): WorkerHandle | undefined {
     const current = this.workers.get(id);
     if (!current) return undefined;
-    const next: WorkerHandle = {
-      ...current,
-      ...patch,
-      transport: 'acp',
-      pid: null,
-      child: current.child ?? null,
-      outputFile: patch.outputFile ?? current.outputFile ?? null,
-      runId: patch.runId ?? current.runId ?? null,
-      sessionState: patch.sessionState ?? current.sessionState ?? null,
-      remoteStatus: patch.remoteStatus ?? current.remoteStatus ?? null,
-      lastEventAt: patch.lastEventAt ?? current.lastEventAt ?? null,
-    };
-    this.workers.set(id, next);
-    return next;
+    return this.upsertHandle(this.normalizeAcpHandle({ ...current, ...patch }));
   }
 
   /**
@@ -271,7 +246,7 @@ export class ProcessSupervisor {
       remoteStatus: handle.remoteStatus ?? null,
       lastEventAt: handle.lastEventAt ?? null,
     };
-    this.workers.set(id, orphanHandle);
+    this.upsertHandle(orphanHandle);
 
     const timer = setInterval(() => {
       if (!isProcessAlive(pid)) {
@@ -406,5 +381,26 @@ export class ProcessSupervisor {
 
   private log(msg: string): void {
     process.stderr.write(`[supervisor] ${msg}\n`);
+  }
+
+  private normalizeAcpHandle(
+    handle: Omit<WorkerHandle, 'transport' | 'child'> & { child?: ChildProcess | null; transport?: 'acp' | 'proc' },
+  ): WorkerHandle {
+    return {
+      ...handle,
+      transport: 'acp',
+      pid: null,
+      child: handle.child ?? null,
+      outputFile: handle.outputFile ?? null,
+      runId: handle.runId ?? null,
+      sessionState: handle.sessionState ?? null,
+      remoteStatus: handle.remoteStatus ?? null,
+      lastEventAt: handle.lastEventAt ?? null,
+    };
+  }
+
+  private upsertHandle(handle: WorkerHandle): WorkerHandle {
+    this.workers.set(handle.id, handle);
+    return handle;
   }
 }

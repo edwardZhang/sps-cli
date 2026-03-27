@@ -79,38 +79,23 @@ export class ACPWorkerRuntime implements AgentRuntime {
     }
     const freshState = readACPState(this.ctx.paths.acpStateFile);
     const existing = freshState.sessions[normalizedSlot] || session;
+    return this.launchRun(freshState, normalizedSlot, existing, prompt, 'acp-start-run');
+  }
 
-    if (existing.currentRun && !['completed', 'failed', 'cancelled', 'lost'].includes(existing.currentRun.status)) {
-      throw new Error(`Slot ${normalizedSlot} already has an active run (${existing.currentRun.runId})`);
+  async resumeRun(slot: string, prompt: string): Promise<ACPSessionRecord> {
+    const normalizedSlot = this.normalizeSlot(slot);
+    const inspected = await this.inspect(normalizedSlot);
+    const existing = inspected.sessions[normalizedSlot];
+    if (!existing) {
+      throw new Error(`ACP session not found for slot ${normalizedSlot}`);
     }
-
-    const result = await this.client.startRun({
-      sessionName: existing.sessionName,
-      tool: existing.tool,
-      prompt,
-    });
-
-    const run: ACPRunRecord = {
-      runId: result.runId,
-      status: result.runState,
-      promptPreview: previewPrompt(prompt),
-      startedAt: now(),
-      updatedAt: now(),
-      completedAt: result.runState === 'completed' ? now() : null,
-    };
-
-    const updated = this.upsertSession(freshState, normalizedSlot, {
-      ...existing,
-      status: this.slotStatusFromRun(result.runState),
-      sessionState: result.runState === 'completed' ? 'ready' : 'busy',
-      currentRun: run,
-      updatedAt: now(),
-      lastSeenAt: result.lastSeenAt,
-      lastPaneText: result.paneText,
-    });
-
-    writeACPState(this.ctx.paths.acpStateFile, freshState, 'acp-start-run');
-    return updated;
+    if (existing.sessionState === 'offline') {
+      throw new Error(`ACP session ${existing.sessionId} is offline`);
+    }
+    if (existing.sessionState !== 'ready') {
+      throw new Error(`ACP session ${existing.sessionId} is not ready for resume (state=${existing.sessionState})`);
+    }
+    return this.launchRun(inspected, normalizedSlot, existing, prompt, 'acp-resume-run');
   }
 
   async inspect(slot?: string): Promise<ACPState> {
@@ -235,5 +220,45 @@ export class ACPWorkerRuntime implements AgentRuntime {
   ): ACPSessionRecord {
     state.sessions[slot] = session;
     return session;
+  }
+
+  private async launchRun(
+    state: ACPState,
+    slot: string,
+    session: ACPSessionRecord,
+    prompt: string,
+    updatedBy: string,
+  ): Promise<ACPSessionRecord> {
+    if (session.currentRun && !isTerminalRunStatus(session.currentRun.status)) {
+      throw new Error(`Slot ${slot} already has an active run (${session.currentRun.runId})`);
+    }
+
+    const result = await this.client.startRun({
+      sessionName: session.sessionName,
+      tool: session.tool,
+      prompt,
+    });
+
+    const run: ACPRunRecord = {
+      runId: result.runId,
+      status: result.runState,
+      promptPreview: previewPrompt(prompt),
+      startedAt: now(),
+      updatedAt: now(),
+      completedAt: result.runState === 'completed' ? now() : null,
+    };
+
+    const updated = this.upsertSession(state, slot, {
+      ...session,
+      status: this.slotStatusFromRun(result.runState),
+      sessionState: result.runState === 'completed' ? 'ready' : 'busy',
+      currentRun: run,
+      updatedAt: now(),
+      lastSeenAt: result.lastSeenAt,
+      lastPaneText: result.paneText,
+    });
+
+    writeACPState(this.ctx.paths.acpStateFile, state, updatedBy);
+    return updated;
   }
 }

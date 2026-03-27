@@ -8,8 +8,9 @@
  * --resume worker to resolve conflicts before retrying.
  */
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { readState, writeState } from '../core/state.js';
 import { isProcessAlive } from '../providers/outputParser.js';
 import type { CompletionResult } from './completion-judge.js';
@@ -18,6 +19,8 @@ import type { ProcessSupervisor, SpawnOpts } from './supervisor.js';
 import type { ResourceLimiter } from './resource-limiter.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { MergeMutex } from './merge-mutex.js';
+import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
+import type { ACPRunStatus, ACPSessionRecord } from '../models/acp.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -25,6 +28,7 @@ export interface PostActionContext {
   project: string;
   seq: string;
   slot: string;
+  transport: 'proc' | 'acp';
   branch: string;
   worktree: string;
   baseBranch: string;
@@ -65,6 +69,7 @@ export class PostActions {
     private readonly resourceLimiter: ResourceLimiter,
     private readonly notifier: Notifier | null,
     private readonly mergeMutex?: MergeMutex,
+    private readonly agentRuntime: AgentRuntime | null = null,
   ) {}
 
   /**
@@ -140,37 +145,54 @@ export class PostActions {
   ): Promise<StepResult[]> {
     const results: StepResult[] = [];
 
-    if (retryCount < ctx.maxRetries && sessionId) {
-      // Release old worker resources BEFORE respawning
-      this.resourceLimiter.release();
-      const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
-      this.supervisor.remove(workerId);
+    if (retryCount < ctx.maxRetries) {
+      if (ctx.transport === 'acp' && this.agentRuntime) {
+        results.push(await this.pmComment(
+          ctx,
+          `Worker ${completion.reason} (exit ${exitCode}). Retry #${retryCount + 1} on the same ACP session...`,
+        ));
 
-      // Retry with --resume
-      results.push(await this.pmComment(
-        ctx,
-        `Worker ${completion.reason} (exit ${exitCode}). Retry #${retryCount + 1} with --resume...`,
-      ));
+        const respawnResult = await this.respawnAcp(ctx, retryCount);
+        results.push(respawnResult);
+        if (respawnResult.ok) {
+          return results;
+        }
+      } else if (sessionId) {
+        // Release old worker resources BEFORE respawning
+        this.resourceLimiter.release();
+        const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
+        this.supervisor.remove(workerId);
 
-      results.push(await this.respawn(ctx, sessionId, retryCount, respawnOpts));
-    } else {
-      // Retries exhausted → NEEDS-FIX
-      results.push(await this.pmAddLabel(ctx, 'NEEDS-FIX'));
-      results.push(await this.pmComment(
-        ctx,
-        `Worker ${completion.reason} (exit ${exitCode}). Retries exhausted (${retryCount}/${ctx.maxRetries}).`,
-      ));
-      results.push(await this.releaseSlot(ctx));
-      results.push(await this.notify(
-        ctx,
-        `seq:${ctx.seq} FAILED — ${completion.reason}, retries exhausted`,
-        'error',
-      ));
+        // Retry with --resume
+        results.push(await this.pmComment(
+          ctx,
+          `Worker ${completion.reason} (exit ${exitCode}). Retry #${retryCount + 1} with --resume...`,
+        ));
 
-      this.resourceLimiter.release();
-      const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
-      this.supervisor.remove(workerId);
+        const respawnResult = await this.respawn(ctx, sessionId, retryCount, respawnOpts);
+        results.push(respawnResult);
+        if (respawnResult.ok) {
+          return results;
+        }
+      }
     }
+
+    // Retries exhausted or retry launch failed → NEEDS-FIX
+    results.push(await this.pmAddLabel(ctx, 'NEEDS-FIX'));
+    results.push(await this.pmComment(
+      ctx,
+      `Worker ${completion.reason} (exit ${exitCode}). Retries exhausted (${retryCount}/${ctx.maxRetries}).`,
+    ));
+    results.push(await this.releaseSlot(ctx));
+    results.push(await this.notify(
+      ctx,
+      `seq:${ctx.seq} FAILED — ${completion.reason}, retries exhausted`,
+      'error',
+    ));
+
+    this.resourceLimiter.release();
+    const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
+    this.supervisor.remove(workerId);
 
     return results;
   }
@@ -207,7 +229,7 @@ export class PostActions {
     this.abortRebase(ctx.worktree);
 
     // L2: Spawn --resume Worker to resolve conflicts
-    if (!sessionId) {
+    if (ctx.transport !== 'acp' && !sessionId) {
       this.log(`L2: No sessionId for ${ctx.branch}, cannot spawn resume worker`);
       results.push({ step: 'merge-l0', ok: false, error: l0Result.error });
       await this.markConflict(ctx, results, `Merge conflict, no session to resume`);
@@ -224,7 +246,9 @@ export class PostActions {
       if (this.mergeMutex) this.mergeMutex.release();
 
       // Spawn resume worker and wait for exit
-      const resolveResult = await this.spawnConflictResolver(ctx, sessionId, attempt);
+      const resolveResult = ctx.transport === 'acp'
+        ? await this.spawnAcpConflictResolver(ctx, attempt)
+        : await this.spawnConflictResolver(ctx, sessionId!, attempt);
 
       // Re-acquire mutex for merge retry
       if (this.mergeMutex) await this.mergeMutex.acquire();
@@ -260,6 +284,7 @@ export class PostActions {
    * Try rebase + merge (L0). Returns { ok, error }.
    */
   private tryRebaseMerge(ctx: PostActionContext): { ok: boolean; error?: string } {
+    let mergeWorktree: string | null = null;
     try {
       const { worktree, branch, baseBranch } = ctx;
 
@@ -287,24 +312,30 @@ export class PostActions {
         timeout: 30_000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
       });
 
-      // Switch to target, merge, push
-      execFileSync('git', ['-C', worktree, 'checkout', baseBranch], {
+      // Final integration happens in a temporary detached merge worktree so we do
+      // not touch the user's main working copy or hit "branch already in use".
+      const repoDir = this.resolveRepoDir(worktree);
+      mergeWorktree = this.createMergeWorktree(repoDir, ctx);
+
+      execFileSync('git', ['-C', mergeWorktree, 'fetch', 'origin', '--quiet'], {
         timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
       });
-      execFileSync('git', ['-C', worktree, 'pull', 'origin', baseBranch], {
+      execFileSync('git', ['-C', mergeWorktree, 'reset', '--hard', `origin/${baseBranch}`], {
         timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
       });
-      execFileSync('git', ['-C', worktree, 'merge', '--no-ff', branch, '-m',
+      execFileSync('git', ['-C', mergeWorktree, 'merge', '--no-ff', `origin/${branch}`, '-m',
         `Merge ${branch} into ${baseBranch}`], {
         timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
       });
-      execFileSync('git', ['-C', worktree, 'push', 'origin', baseBranch], {
+      execFileSync('git', ['-C', mergeWorktree, 'push', 'origin', `HEAD:${baseBranch}`], {
         timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      this.cleanupMergeWorktree(mergeWorktree);
     }
   }
 
@@ -414,6 +445,58 @@ export class PostActions {
     } catch (err) {
       this.resourceLimiter.release();
       this.supervisor.remove(workerId);
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  private async spawnAcpConflictResolver(
+    ctx: PostActionContext,
+    attempt: number,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!this.agentRuntime) {
+      return { ok: false, error: 'ACP runtime is not configured' };
+    }
+
+    const instruction = [
+      `There is a merge conflict on branch ${ctx.branch} when rebasing onto origin/${ctx.baseBranch}.`,
+      `Working directory: ${ctx.worktree}`,
+      '',
+      'Please resolve the conflict:',
+      `1. Run: cd ${ctx.worktree}`,
+      `2. Run: git fetch origin && git checkout ${ctx.branch}`,
+      `3. Run: git rebase origin/${ctx.baseBranch}`,
+      '4. For each conflicting file: open it, understand both sides, resolve the conflict',
+      '5. Run: git add <resolved-files> && git rebase --continue',
+      '6. Run: git push --force-with-lease origin ' + ctx.branch,
+      '7. Say "done"',
+      '',
+      'You are resuming the same task session. Use the existing context to make correct conflict resolution decisions.',
+    ].join('\n');
+
+    try {
+      const session = await this.agentRuntime.resumeRun(ctx.slot, instruction);
+      this.syncAcpRuntimeState(ctx, session, 'resolving', 'post-actions-conflict-resume', {
+        mergeRetryIncrement: true,
+      });
+      this.log(
+        `Spawned ACP conflict resolver for ${ctx.project}:${ctx.slot}:${ctx.seq} ` +
+        `(run=${session.currentRun?.runId || 'unknown'})`,
+      );
+
+      const completed = await this.waitForAcpRun(
+        ctx,
+        session.currentRun?.runId || null,
+        RESOLVE_TIMEOUT,
+        'resolving',
+      );
+      if (!completed.currentRun) {
+        return { ok: false, error: 'ACP conflict resolver finished without a run record' };
+      }
+      if (completed.currentRun.status === 'completed') {
+        return { ok: true };
+      }
+      return { ok: false, error: `ACP conflict resolver ended with ${completed.currentRun.status}` };
+    } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
@@ -624,6 +707,38 @@ export class PostActions {
     }
   }
 
+  private async respawnAcp(
+    ctx: PostActionContext,
+    retryCount: number,
+  ): Promise<StepResult> {
+    if (!this.agentRuntime) {
+      return { step: 'respawn-acp', ok: false, error: 'ACP runtime is not configured' };
+    }
+
+    try {
+      const resumePrompt = [
+        'The previous attempt did not fully complete. Please continue where you left off.',
+        'Check the current state of the code, and complete any remaining steps.',
+        'Remember to push your changes when done.',
+      ].join('\n');
+
+      const session = await this.agentRuntime.resumeRun(ctx.slot, resumePrompt);
+      this.syncAcpRuntimeState(ctx, session, 'active', 'post-actions-retry-acp', {
+        retryCount: retryCount + 1,
+      });
+
+      this.log(
+        `Respawned ${ctx.project}:${ctx.slot}:${ctx.seq} on ACP session ${session.sessionId} ` +
+        `(retry #${retryCount + 1})`,
+      );
+      return { step: 'respawn-acp', ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log(`ACP respawn failed: ${msg}`);
+      return { step: 'respawn-acp', ok: false, error: msg };
+    }
+  }
+
   private async pmComment(ctx: PostActionContext, text: string): Promise<StepResult> {
     try {
       await this.pmClient.comment(ctx.seq, text);
@@ -661,6 +776,179 @@ export class PostActions {
 
   private log(msg: string): void {
     process.stderr.write(`[post-actions] ${msg}\n`);
+  }
+
+  private resolveRepoDir(worktree: string): string {
+    const commonDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--git-common-dir'], {
+      timeout: 10_000,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    const absCommonDir = commonDir.startsWith('/') ? commonDir : resolve(worktree, commonDir);
+    return dirname(absCommonDir);
+  }
+
+  private createMergeWorktree(repoDir: string, ctx: PostActionContext): string {
+    const mergeRoot = mkdtempSync(resolve(tmpdir(), `sps-merge-${ctx.project}-${ctx.seq}-`));
+    execFileSync('git', ['-C', repoDir, 'worktree', 'add', '--detach', mergeRoot, `origin/${ctx.baseBranch}`], {
+      timeout: 30_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return mergeRoot;
+  }
+
+  private cleanupMergeWorktree(mergeWorktree: string | null): void {
+    if (!mergeWorktree) return;
+    let repoDir: string | null = null;
+    try {
+      repoDir = this.resolveRepoDir(mergeWorktree);
+    } catch {
+      repoDir = null;
+    }
+    try {
+      execFileSync('git', ['-C', repoDir || mergeWorktree, 'worktree', 'remove', '--force', mergeWorktree], {
+        timeout: 10_000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch {
+      try {
+        rmSync(mergeWorktree, { recursive: true, force: true });
+      } catch {
+        // best effort
+      }
+      if (repoDir) {
+        try {
+          execFileSync('git', ['-C', repoDir, 'worktree', 'prune'], {
+            timeout: 10_000,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+        } catch {
+          // best effort
+        }
+      } else {
+        try {
+          execFileSync('git', ['-C', mergeWorktree, 'worktree', 'prune'], {
+            timeout: 10_000,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+        } catch {
+          // best effort
+        }
+      }
+    }
+  }
+
+  private syncAcpRuntimeState(
+    ctx: PostActionContext,
+    session: ACPSessionRecord,
+    slotStatus: 'active' | 'resolving' | 'merging',
+    updatedBy: string,
+    options?: { retryCount?: number; mergeRetryIncrement?: boolean },
+  ): void {
+    const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
+    const nowIso = new Date().toISOString();
+    const state = readState(ctx.stateFile, ctx.maxWorkers);
+    const slot = state.workers[ctx.slot];
+
+    if (slot) {
+      slot.status = slotStatus;
+      slot.mode = 'acp';
+      slot.transport = 'acp';
+      slot.agent = session.tool;
+      slot.tmuxSession = session.sessionName;
+      slot.sessionId = session.sessionId;
+      slot.runId = session.currentRun?.runId || null;
+      slot.sessionState = session.sessionState;
+      slot.remoteStatus = session.currentRun?.status || null;
+      slot.lastEventAt = session.lastSeenAt;
+      slot.lastHeartbeat = nowIso;
+      slot.pid = null;
+      slot.outputFile = null;
+      slot.exitCode = null;
+      if (options?.mergeRetryIncrement) {
+        slot.mergeRetries = (slot.mergeRetries ?? 0) + 1;
+      }
+    }
+
+    const card = state.activeCards[ctx.seq];
+    if (card && options?.retryCount != null) {
+      card.retryCount = options.retryCount;
+    }
+
+    writeState(ctx.stateFile, state, updatedBy);
+
+    this.supervisor.registerAcpHandle({
+      id: workerId,
+      pid: null,
+      outputFile: null,
+      project: ctx.project,
+      seq: ctx.seq,
+      slot: ctx.slot,
+      branch: ctx.branch,
+      worktree: ctx.worktree,
+      tool: session.tool,
+      exitCode: null,
+      sessionId: session.sessionId,
+      runId: session.currentRun?.runId || null,
+      sessionState: session.sessionState,
+      remoteStatus: session.currentRun?.status || null,
+      lastEventAt: session.lastSeenAt,
+      startedAt: slot?.claimedAt || nowIso,
+      exitedAt: null,
+    });
+  }
+
+  private async waitForAcpRun(
+    ctx: PostActionContext,
+    runId: string | null,
+    timeoutMs: number,
+    slotStatus: 'active' | 'resolving' | 'merging',
+  ): Promise<ACPSessionRecord> {
+    if (!this.agentRuntime) {
+      throw new Error('ACP runtime is not configured');
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const inspected = await this.agentRuntime.inspect(ctx.slot);
+      const session = inspected.sessions[ctx.slot];
+      if (!session) {
+        throw new Error(`ACP session for ${ctx.slot} was lost`);
+      }
+
+      this.syncAcpRuntimeState(ctx, session, slotStatus, 'post-actions-acp-poll');
+      const currentRun = session.currentRun;
+      if (runId && currentRun && currentRun.runId !== runId) {
+        await this.sleep(PID_POLL_INTERVAL);
+        continue;
+      }
+      if (currentRun && currentRun.status === 'waiting_input') {
+        throw new Error(`ACP run ${currentRun.runId} is waiting for input`);
+      }
+      if (currentRun && this.isTerminalAcpStatus(currentRun.status)) {
+        const exitCode = currentRun.status === 'completed' ? 0 : 1;
+        this.supervisor.updateAcpHandle(`${ctx.project}:${ctx.slot}:${ctx.seq}`, {
+          exitCode,
+          exitedAt: new Date().toISOString(),
+          sessionState: session.sessionState,
+          remoteStatus: currentRun.status,
+          lastEventAt: session.lastSeenAt,
+        });
+        return session;
+      }
+
+      await this.sleep(PID_POLL_INTERVAL);
+    }
+
+    throw new Error(`ACP run timed out after ${Math.round(timeoutMs / 1000)}s`);
+  }
+
+  private isTerminalAcpStatus(status: ACPRunStatus): boolean {
+    return ['completed', 'failed', 'cancelled', 'lost'].includes(status);
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 

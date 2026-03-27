@@ -58,6 +58,7 @@ interface ProjectRunner {
   log: Logger;
   taskBackend: TaskBackend;
   notifier: Notifier;
+  agentRuntime: ReturnType<typeof createAgentRuntime>;
   scheduler: SchedulerEngine;
   closeout: CloseoutEngine;
   execution: ExecutionEngine;
@@ -110,7 +111,7 @@ function createRunner(project: string): ProjectRunner | null {
   // Create per-project Manager modules
   const pmClient = createPMClient(ctx.config);
   const mergeMutex = new MergeMutex();
-  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier, mergeMutex);
+  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier, mergeMutex, agentRuntime);
 
   return {
     project,
@@ -118,8 +119,9 @@ function createRunner(project: string): ProjectRunner | null {
     log: fullLog,
     taskBackend,
     notifier,
+    agentRuntime,
     scheduler: new SchedulerEngine(ctx, taskBackend, notifier),
-    closeout: new CloseoutEngine(ctx, taskBackend, repoBackend, workerProvider, notifier),
+    closeout: new CloseoutEngine(ctx, taskBackend, repoBackend, workerProvider, notifier, agentRuntime),
     execution: new ExecutionEngine(
       ctx, taskBackend, repoBackend,
       supervisor, completionJudge, postActions, resourceLimiter,
@@ -197,7 +199,7 @@ export async function executeTick(
       const pmClient = createPMClient(config);
       const runner = runnerMap.get(config.PROJECT_NAME);
       const mm = mergeMutexMap.get(config.PROJECT_NAME) || new MergeMutex();
-      return new PostActions(pmClient, supervisor, resourceLimiter, runner?.notifier || null, mm);
+      return new PostActions(pmClient, supervisor, resourceLimiter, runner?.notifier || null, mm, runner?.agentRuntime || null);
     };
     const recovery = new Recovery(supervisor, completionJudge, postActionsFactory, resourceLimiter);
     const result = await recovery.recover(projectInfos);

@@ -741,6 +741,7 @@ export class ExecutionEngine {
       project: this.ctx.projectName,
       seq: card.seq,
       slot: slotName,
+      transport,
       branch,
       worktree,
       baseBranch: this.ctx.mergeBranch,
@@ -753,7 +754,7 @@ export class ExecutionEngine {
       doneStateId: this.ctx.config.raw.PLANE_STATE_DONE || this.ctx.config.raw.TRELLO_DONE_LIST_ID || '',
       maxRetries: this.ctx.config.WORKER_RESTART_LIMIT,
       logsDir: this.ctx.paths.logsDir,
-      tool: this.ctx.config.WORKER_TOOL,
+      tool: handle?.tool || this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL,
     };
 
     const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);

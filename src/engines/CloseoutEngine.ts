@@ -3,6 +3,7 @@ import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
 import type { Notifier } from '../interfaces/Notifier.js';
+import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type { CommandResult, ActionRecord, Card, RecommendedAction } from '../models/types.js';
 import { readState, writeState } from '../core/state.js';
 import { resolveWorktreePath } from '../core/paths.js';
@@ -31,6 +32,7 @@ export class CloseoutEngine {
     private repoBackend: RepoBackend,
     private workerProvider: WorkerProvider,
     private notifier?: Notifier,
+    private agentRuntime: AgentRuntime | null = null,
   ) {
     this.log = new Logger('qa', ctx.projectName, ctx.paths.logsDir);
   }
@@ -298,6 +300,7 @@ export class CloseoutEngine {
     _recommendedActions: RecommendedAction[],
   ): Promise<void> {
     const seq = card.seq;
+    const branchName = this.buildBranchName(card);
     const maxAttempts = this.ctx.config.AUTOFIX_ATTEMPTS;
 
     // Read autofix attempts from card meta
@@ -321,11 +324,22 @@ export class CloseoutEngine {
         const [slotName, slotState] = slotEntry;
         const session = slotState.tmuxSession!;
         const isPrintMode = slotState.mode === 'print';
+        const isAcpMode = slotState.transport === 'acp' || slotState.mode === 'acp';
 
         try {
           const fixPrompt = `CI pipeline has failed. Please review the CI logs, fix the issues, commit, and push. This is autofix attempt ${autofixAttempts + 1} of ${maxAttempts}.`;
 
-          if (isPrintMode) {
+          if (isAcpMode && this.agentRuntime) {
+            await this.resumeAcpWorker(
+              slotName,
+              seq,
+              slotState.worktree || '',
+              branchName,
+              fixPrompt,
+              'active',
+              'closeout-autofix-resume',
+            );
+          } else if (isPrintMode) {
             // Print mode: spawn new process with --resume (process already exited)
             const resumeResult = await this.workerProvider.sendFix(
               session, fixPrompt, slotState.sessionId || undefined,
@@ -651,9 +665,24 @@ export class CloseoutEngine {
     }
 
     const isPrintMode = slotState.mode === 'print';
+    const isAcpMode = slotState.transport === 'acp' || slotState.mode === 'acp';
 
     try {
-      if (isPrintMode) {
+      if (isAcpMode && this.agentRuntime) {
+        await this.resumeAcpWorker(
+          slotName,
+          seq,
+          worktree,
+          branchName,
+          [
+            `There is a merge conflict on branch ${branchName} against ${baseBranch}.`,
+            `Working directory: ${worktree}`,
+            'Please resolve the conflict, continue the rebase/merge, and push the fixed branch.',
+          ].join('\n'),
+          'resolving',
+          'closeout-conflict-resume',
+        );
+      } else if (isPrintMode) {
         // Print mode: spawn new process with --resume
         this.log.info(`seq ${seq}: L2 — spawning conflict resolution via --resume`);
         const resumeResult = await this.workerProvider.resolveConflict(
@@ -799,6 +828,43 @@ export class CloseoutEngine {
     } catch {
       // Notification failures are never fatal
     }
+  }
+
+  private async resumeAcpWorker(
+    slotName: string,
+    seq: string,
+    worktree: string,
+    branchName: string,
+    prompt: string,
+    slotStatus: 'active' | 'resolving',
+    updatedBy: string,
+  ): Promise<void> {
+    if (!this.agentRuntime) {
+      throw new Error('ACP runtime is not configured');
+    }
+
+    const session = await this.agentRuntime.resumeRun(slotName, prompt);
+    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const slot = state.workers[slotName];
+    if (slot) {
+      slot.status = slotStatus;
+      slot.mode = 'acp';
+      slot.transport = 'acp';
+      slot.agent = session.tool;
+      slot.tmuxSession = session.sessionName;
+      slot.sessionId = session.sessionId;
+      slot.runId = session.currentRun?.runId || null;
+      slot.sessionState = session.sessionState;
+      slot.remoteStatus = session.currentRun?.status || null;
+      slot.lastEventAt = session.lastSeenAt;
+      slot.lastHeartbeat = new Date().toISOString();
+      slot.branch = slot.branch || branchName;
+      slot.worktree = slot.worktree || worktree;
+      slot.pid = null;
+      slot.outputFile = null;
+      slot.exitCode = null;
+    }
+    writeState(this.ctx.paths.stateFile, state, updatedBy);
   }
 
   private logEvent(

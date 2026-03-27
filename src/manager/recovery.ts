@@ -179,13 +179,20 @@ export class Recovery {
     project: ProjectInfo,
     slotName: string,
     seq: string,
-    slot: { branch?: string | null; worktree?: string | null },
+    slot: {
+      branch?: string | null;
+      worktree?: string | null;
+      transport?: 'proc' | 'acp' | null;
+      mode?: string | null;
+      agent?: 'claude' | 'codex' | null;
+    },
   ): PostActionContext {
     const raw = project.config.raw;
     return {
       project: project.name,
       seq,
       slot: slotName,
+      transport: slot.transport === 'acp' || slot.mode === 'acp' ? 'acp' : 'proc',
       branch: slot.branch || '',
       worktree: slot.worktree || '',
       baseBranch: project.config.GITLAB_MERGE_BRANCH,
@@ -198,7 +205,7 @@ export class Recovery {
       doneStateId: raw.PLANE_STATE_DONE || raw.TRELLO_DONE_LIST_ID || '',
       maxRetries: project.config.WORKER_RESTART_LIMIT,
       logsDir: project.logsDir,
-      tool: project.config.WORKER_TOOL as 'claude' | 'codex',
+      tool: slot.agent || (project.config.ACP_AGENT || project.config.WORKER_TOOL) as 'claude' | 'codex',
     };
   }
 
