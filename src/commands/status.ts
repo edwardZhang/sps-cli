@@ -10,7 +10,8 @@ import { resolve } from 'node:path';
 import { readState } from '../core/state.js';
 import { readACPState } from '../core/acpState.js';
 import { loadProjectConf } from '../core/config.js';
-import { hasPersistedActiveRun, isACPBackedSlot, isProcessAlive, isPersistedSessionAlive } from '../core/sessionLiveness.js';
+import { isProcessAlive } from '../core/sessionLiveness.js';
+import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 
 const HOME = process.env.HOME || '/home/coral';
 const PROJECTS_DIR = resolve(HOME, '.coral', 'projects');
@@ -25,7 +26,7 @@ interface ProjectStatus {
   tick: 'running' | 'stopped' | 'stale-lock';
   pid: number | null;
   startedAt: string | null;
-  workers: { total: number; active: number; idle: number; stale: number; merging: number };
+  workers: { total: number; active: number; idle: number; stale: number; merging: number; working: number };
   activeCards: number;
   pipelineQueue: number;
 }
@@ -54,47 +55,14 @@ function getProjectStatus(project: string): ProjectStatus {
   }
 
   // Worker status — verify PIDs are actually alive
-  let workers = { total: 0, active: 0, idle: 0, stale: 0, merging: 0 };
+  let workers = { total: 0, active: 0, idle: 0, stale: 0, merging: 0, working: 0 };
   let activeCards = 0;
   if (existsSync(stateFile)) {
     try {
       const maxWorkers = loadProjectConf(project).MAX_CONCURRENT_WORKERS;
       const state = readState(stateFile, maxWorkers);
       const acpState = readACPState(acpStateFile);
-      const slots = Object.entries(state.workers);
-      let realActive = 0;
-      let stale = 0;
-      let merging = 0;
-      for (const [slotName, slot] of slots) {
-        if (slot.status === 'active') {
-          if (isACPBackedSlot(slot)) {
-            const session = acpState.sessions[slotName];
-            if (hasPersistedActiveRun(slot, session)) {
-              realActive++;
-            } else if (session && isPersistedSessionAlive(slot, session)) {
-              stale++;
-            } else {
-              stale++;
-            }
-          } else {
-            const workerPid = (slot as unknown as { pid?: number | null }).pid ?? null;
-            if (workerPid && isProcessAlive(workerPid)) {
-              realActive++;
-            } else {
-              stale++;
-            }
-          }
-        } else if (slot.status === 'merging' || slot.status === 'resolving') {
-          merging++;
-        }
-      }
-      workers = {
-        total: slots.length,
-        active: realActive,
-        idle: slots.filter(([, s]) => s.status === 'idle').length,
-        stale,
-        merging,
-      };
+      workers = summarizeWorkerRuntime(state, acpState);
       activeCards = Object.keys(state.activeCards).length;
     } catch { /* corrupt state */ }
   }

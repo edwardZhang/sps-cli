@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { readState, type WorkerSlotState } from '../core/state.js';
 import { readACPState, writeACPState } from '../core/acpState.js';
+import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import {
   hasPersistedActiveRun,
   isACPBackedSlot,
@@ -435,34 +436,15 @@ function renderIdleSummary(projects: string[], termWidth: number): string[] {
 
     const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
     const acpState = readACPState(ctx.paths.acpStateFile);
-    const total = Object.keys(state.workers).length;
-    let realActive = 0;
-    let stale = 0;
-    let merging = 0;
-    for (const [slotName, w] of Object.entries(state.workers)) {
-      if (w.status === 'active') {
-        if (isACPBackedSlot(w)) {
-          const session = acpState.sessions[slotName];
-          if (hasPersistedActiveRun(w, session)) realActive++;
-          else stale++;
-        } else {
-          const wPid = (w as unknown as { pid?: number | null }).pid ?? null;
-          if (wPid && isProcessAlive(wPid)) realActive++;
-          else stale++;
-        }
-      } else if (w.status === 'merging' || w.status === 'resolving') {
-        merging++;
-      }
-    }
-    const idle = Object.values(state.workers).filter(w => w.status === 'idle').length;
+    const summary = summarizeWorkerRuntime(state, acpState);
     const activeCards = Object.keys(state.activeCards).length;
     const extraParts: string[] = [];
-    if (merging > 0) extraParts.push(`${FG.yellow}${merging} merging${RESET}`);
-    if (stale > 0) extraParts.push(`${FG.yellow}${stale} stale${RESET}`);
+    if (summary.merging > 0) extraParts.push(`${FG.yellow}${summary.merging} merging${RESET}`);
+    if (summary.stale > 0) extraParts.push(`${FG.yellow}${summary.stale} stale${RESET}`);
     const extraStr = extraParts.length > 0 ? ` / ${extraParts.join(' / ')}` : '';
 
     lines.push(
-      `  ${BOLD}${projectName}${RESET}: ${FG.green}${realActive} active${RESET} / ${FG.gray}${idle} idle${RESET}${extraStr} / ${total} total  │  ${FG.cyan}${activeCards} cards${RESET}`
+      `  ${BOLD}${projectName}${RESET}: ${FG.green}${summary.active} active${RESET} / ${FG.gray}${summary.idle} idle${RESET}${extraStr} / ${summary.total} total  │  ${FG.cyan}${activeCards} cards${RESET}`
     );
   }
   return lines;

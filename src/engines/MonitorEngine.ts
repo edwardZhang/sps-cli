@@ -179,7 +179,7 @@ export class MonitorEngine {
     actions: ActionRecord[],
     recommendedActions: RecommendedAction[],
   ): Promise<void> {
-    const inprogressCards = await this.taskBackend.listByState('Inprogress');
+    const inprogressCards = await this.listRuntimeAwareInprogressCards();
     const acpState = readACPState(this.ctx.paths.acpStateFile);
     let staleCount = 0;
 
@@ -264,6 +264,23 @@ export class MonitorEngine {
         ? `Detected ${staleCount} stale runtime(s)`
         : 'No stale runtimes detected',
     });
+  }
+
+  private async listRuntimeAwareInprogressCards(): Promise<{ seq: string; name: string; labels: string[] }[]> {
+    const cards = await this.taskBackend.listByState('Inprogress');
+    const bySeq = new Map(cards.map(card => [card.seq, card]));
+    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+
+    for (const [seq, activeCard] of Object.entries(state.activeCards)) {
+      const slot = activeCard.worker ? state.workers[activeCard.worker] : null;
+      if (activeCard.state !== 'Inprogress' || bySeq.has(seq) || !slot || slot.status === 'idle') continue;
+      const card = await this.taskBackend.getBySeq(seq);
+      if (card) bySeq.set(seq, card);
+    }
+
+    return Array.from(bySeq.values())
+      .sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10))
+      .map(card => ({ seq: card.seq, name: card.name, labels: card.labels }));
   }
 
   private async handleStaleRuntime(

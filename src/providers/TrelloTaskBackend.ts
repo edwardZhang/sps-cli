@@ -136,6 +136,14 @@ export class TrelloTaskBackend implements TaskBackend {
     return cards.map((c) => this.cardToCard(c));
   }
 
+  async listAll(): Promise<Card[]> {
+    const cards = await this.get<TrelloCard[]>(
+      `/boards/${this.boardId}/cards`,
+      'fields=id,idShort,name,desc,idList,labels',
+    );
+    return cards.map((card) => this.cardToCard(card));
+  }
+
   async getBySeq(seq: string): Promise<Card | null> {
     // Trello doesn't have a direct idShort lookup API.
     // Search all lists for the card.

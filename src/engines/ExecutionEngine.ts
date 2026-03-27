@@ -5,7 +5,7 @@ import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
-import type { CommandResult, ActionRecord, Card, AuxiliaryState } from '../models/types.js';
+import type { CommandResult, ActionRecord, Card, CardState, AuxiliaryState } from '../models/types.js';
 import type { ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
 import { readState, writeState } from '../core/state.js';
 import { resolveGitlabProjectId } from '../core/config.js';
@@ -52,11 +52,13 @@ export class ExecutionEngine {
     const maxActions = this.ctx.config.MAX_ACTIONS_PER_TICK;
 
     try {
+      actions.push(...await this.reconcilePmStatesWithRuntime());
+
       // 1. Process Inprogress cards (detect completion → move to QA)
       //    This runs first to free slots before launching new workers.
       //    Completion detection does NOT consume action quota — it's a
       //    prerequisite for freeing slots, not a new forward action.
-      const inprogressCards = await this.taskBackend.listByState('Inprogress');
+      const inprogressCards = await this.listRuntimeAwareInprogressCards();
       for (const card of inprogressCards) {
         if (this.shouldSkip(card)) continue;
         const checkResult = await this.checkInprogressCard(card, opts);
@@ -198,6 +200,77 @@ export class ExecutionEngine {
 
   private shouldSkip(card: Card): boolean {
     return SKIP_LABELS.some((label) => card.labels.includes(label));
+  }
+
+  private async listRuntimeAwareInprogressCards(): Promise<Card[]> {
+    const cards = await this.taskBackend.listByState('Inprogress');
+    const bySeq = new Map(cards.map(card => [card.seq, card]));
+    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+
+    for (const [seq, activeCard] of Object.entries(state.activeCards)) {
+      const slot = activeCard.worker ? state.workers[activeCard.worker] : null;
+      if (activeCard.state !== 'Inprogress' || bySeq.has(seq) || !this.isRuntimeOwnedSlot(slot)) continue;
+      const card = await this.taskBackend.getBySeq(seq);
+      if (card) bySeq.set(seq, card);
+    }
+
+    return Array.from(bySeq.values()).sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10));
+  }
+
+  private async reconcilePmStatesWithRuntime(): Promise<ActionRecord[]> {
+    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const actions: ActionRecord[] = [];
+
+    for (const [seq, activeCard] of Object.entries(state.activeCards)) {
+      const slot = activeCard.worker ? state.workers[activeCard.worker] : null;
+      const targetState = this.derivePmStateFromRuntime(activeCard.state, slot);
+      if (!targetState) continue;
+
+      const card = await this.taskBackend.getBySeq(seq);
+      if (!card || card.state === targetState) continue;
+
+      try {
+        await this.taskBackend.move(seq, targetState);
+        this.log.info(`Reconciled seq ${seq} ${card.state} → ${targetState} to match runtime state`);
+        actions.push({
+          action: 'pm-reconcile',
+          entity: `seq:${seq}`,
+          result: 'ok',
+          message: `${card.state} → ${targetState}`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.warn(`Failed to reconcile PM state for seq ${seq}: ${msg}`);
+        actions.push({
+          action: 'pm-reconcile',
+          entity: `seq:${seq}`,
+          result: 'skip',
+          message: msg,
+        });
+      }
+    }
+
+    return actions;
+  }
+
+  private derivePmStateFromRuntime(
+    activeState: string,
+    slot: import('../core/state.js').WorkerSlotState | null,
+  ): CardState | null {
+    if (!this.isRuntimeOwnedSlot(slot)) return null;
+    if (activeState === 'Todo') {
+      return 'Todo';
+    }
+    if (slot && ['active', 'merging', 'resolving', 'releasing'].includes(slot.status)) {
+      return 'Inprogress';
+    }
+    return null;
+  }
+
+  private isRuntimeOwnedSlot(
+    slot: import('../core/state.js').WorkerSlotState | null | undefined,
+  ): boolean {
+    return !!slot && slot.status !== 'idle';
   }
 
   /**

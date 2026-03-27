@@ -1,6 +1,7 @@
 import type { Card, CardState } from '../models/types.js';
 
 export interface TaskBackend {
+  listAll(): Promise<Card[]>;
   listByState(state: CardState): Promise<Card[]>;
   getBySeq(seq: string): Promise<Card | null>;
   move(seq: string, targetState: CardState): Promise<void>;

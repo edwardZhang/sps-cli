@@ -194,6 +194,12 @@ export class PlaneTaskBackend implements TaskBackend {
     return Promise.all(filtered.map((i) => this.resolveIssueToCard(i)));
   }
 
+  async listAll(): Promise<Card[]> {
+    const data = await this.request<PlaneListResponse>('GET', '/issues/');
+    const issues: PlaneIssue[] = Array.isArray(data) ? data : (data.results ?? []);
+    return Promise.all(issues.map((issue) => this.resolveIssueToCard(issue)));
+  }
+
   async getBySeq(seq: string): Promise<Card | null> {
     // Plane API doesn't have a direct "get by sequence_id" endpoint,
     // so we filter issues by sequence_id.

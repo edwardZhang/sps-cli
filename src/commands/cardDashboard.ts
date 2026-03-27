@@ -4,6 +4,7 @@ import { ProjectContext } from '../core/context.js';
 import { readState } from '../core/state.js';
 import { readACPState } from '../core/acpState.js';
 import { isPersistedSessionAlive } from '../core/sessionLiveness.js';
+import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import { createTaskBackend } from '../providers/registry.js';
 import type { Card, CardState } from '../models/types.js';
 
@@ -53,6 +54,9 @@ interface ProjectBoardSnapshot {
   cards: CardSnapshot[];
   counts: Record<CardState, number>;
   activeWorkers: number;
+  mergingWorkers: number;
+  staleWorkers: number;
+  workingWorkers: number;
   waitingCards: number;
   conflictCards: number;
   error?: string;
@@ -183,21 +187,22 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
   try {
     const ctx = ProjectContext.load(projectName);
     const taskBackend = createTaskBackend(ctx.config);
-    const [state, acpState, cardLists] = await Promise.all([
+    const [state, acpState, cards] = await Promise.all([
       Promise.resolve(readState(ctx.paths.stateFile, ctx.maxWorkers)),
       Promise.resolve(readACPState(ctx.paths.acpStateFile)),
-      Promise.all(STATES.map(async stateName => taskBackend.listByState(stateName))),
+      taskBackend.listAll(),
     ]);
-
-    const cards: Card[] = cardLists.flat();
     const snapshots: CardSnapshot[] = cards.map(card => {
       const active = state.activeCards[card.seq];
       const workerSlot = active?.worker ?? null;
       const worker = workerSlot ? state.workers[workerSlot] : null;
       const session = workerSlot ? acpState.sessions[workerSlot] : null;
-      const effectiveState = (active?.state as CardState | undefined) || card.state;
+      const runtimeOwned = !!worker && worker.status !== 'idle';
+      const effectiveState = runtimeOwned ? ((active?.state as CardState | undefined) || card.state) : card.state;
       const sessionAlive = worker ? isPersistedSessionAlive(worker, session) : false;
-      const runtimeStatus = worker?.status === 'active' && worker && !sessionAlive
+      const runtimeStatus = !runtimeOwned
+        ? null
+        : worker?.status === 'active' && worker && !sessionAlive
         ? 'stale'
         : session?.pendingInput
           ? 'waiting_input'
@@ -208,25 +213,18 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
         title: card.name,
         state: effectiveState,
         labels: card.labels,
-        workerSlot,
+        workerSlot: runtimeOwned ? workerSlot : null,
         runtimeStatus,
-        branch: worker?.branch || null,
+        branch: runtimeOwned ? (worker?.branch || null) : null,
         blockedReason,
-        updatedAt: session?.updatedAt || worker?.lastHeartbeat || active?.startedAt || null,
+        updatedAt: runtimeOwned ? (session?.updatedAt || worker?.lastHeartbeat || active?.startedAt || null) : null,
       };
     }).sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10));
 
     const counts = Object.fromEntries(STATES.map(stateName => [stateName, 0])) as Record<CardState, number>;
     for (const card of snapshots) counts[card.state] += 1;
 
-    const activeWorkers = Object.values(state.workers).filter(worker => {
-      if (worker.status !== 'active') return false;
-      if (worker.transport === 'pty' || worker.transport === 'acp' || worker.mode === 'pty' || worker.mode === 'acp') {
-        const slotName = Object.entries(state.workers).find(([, slot]) => slot === worker)?.[0];
-        return !!(slotName && isPersistedSessionAlive(worker, acpState.sessions[slotName]));
-      }
-      return true;
-    }).length;
+    const workerSummary = summarizeWorkerRuntime(state, acpState);
 
     const waitingCards = snapshots.filter(card => card.runtimeStatus === 'waiting_input' || card.blockedReason === 'WAITING').length;
     const conflictCards = snapshots.filter(card => card.blockedReason === 'CONFLICT').length;
@@ -236,7 +234,10 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
       displayName: ctx.config.PROJECT_NAME || projectName,
       cards: snapshots,
       counts,
-      activeWorkers,
+      activeWorkers: workerSummary.active,
+      mergingWorkers: workerSummary.merging,
+      staleWorkers: workerSummary.stale,
+      workingWorkers: workerSummary.working,
       waitingCards,
       conflictCards,
     };
@@ -249,6 +250,9 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
       cards: [],
       counts,
       activeWorkers: 0,
+      mergingWorkers: 0,
+      staleWorkers: 0,
+      workingWorkers: 0,
       waitingCards: 0,
       conflictCards: 0,
       error: msg,
@@ -274,6 +278,8 @@ function renderHeader(termWidth: number): string[] {
 function renderProjectSummary(board: ProjectBoardSnapshot): string {
   const parts = [
     `${FG.green}${board.activeWorkers} active${RESET}`,
+    `${FG.yellow}${board.mergingWorkers} merging${RESET}`,
+    `${FG.red}${board.staleWorkers} stale${RESET}`,
     `${FG.cyan}${board.cards.length} cards${RESET}`,
   ];
   if (board.waitingCards > 0) parts.push(`${FG.yellow}${board.waitingCards} waiting${RESET}`);
@@ -390,7 +396,12 @@ function renderMiniProject(board: ProjectBoardSnapshot, width: number, height: n
   if (board.error) {
     lines.push(`${FG.gray}│${RESET}${padOrTruncate(`${FG.red}${board.error}${RESET}`, width - 2)}${FG.gray}│${RESET}`);
   } else {
-    const summary = `${FG.green}${board.activeWorkers} active${RESET} ${DIM}│${RESET} ${FG.cyan}${board.cards.length} cards${RESET}`;
+    const summary = [
+      `${FG.green}${board.activeWorkers} active${RESET}`,
+      `${FG.yellow}${board.mergingWorkers} merging${RESET}`,
+      `${FG.red}${board.staleWorkers} stale${RESET}`,
+      `${FG.cyan}${board.cards.length} cards${RESET}`,
+    ].join(` ${DIM}│${RESET} `);
     lines.push(`${FG.gray}│${RESET}${padOrTruncate(summary, width - 2)}${FG.gray}│${RESET}`);
     lines.push(`${FG.gray}│${RESET}${padOrTruncate(compactStateRow(board, ['Planning', 'Backlog', 'Todo']), width - 2)}${FG.gray}│${RESET}`);
     lines.push(`${FG.gray}│${RESET}${padOrTruncate(compactStateRow(board, ['Inprogress', 'QA', 'Done']), width - 2)}${FG.gray}│${RESET}`);

@@ -71,6 +71,14 @@ export class MarkdownTaskBackend implements TaskBackend {
     return files.map((f) => this.readCard(resolve(dir, f), state));
   }
 
+  async listAll(): Promise<Card[]> {
+    const cards: Card[] = [];
+    for (const state of ALL_STATES) {
+      cards.push(...await this.listByState(state));
+    }
+    return cards.sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10));
+  }
+
   async getBySeq(seq: string): Promise<Card | null> {
     for (const state of ALL_STATES) {
       const dir = resolve(this.cardsDir, STATE_DIR[state]);
