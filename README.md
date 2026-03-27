@@ -4,12 +4,12 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.18.9**
+**v0.19.0**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
 ```
-Create cards -> Start pipeline -> AI auto-codes -> Auto-merge to target branch -> Notify completion
+Create cards -> Start pipeline -> AI auto-codes -> Serial merge queue -> Notify completion
 ```
 
 ## Table of Contents
@@ -103,7 +103,7 @@ Each task card progresses through the following state machine, fully driven by S
 
 ### MR_MODE=none (Default, Recommended)
 
-After completing coding, the Worker merges directly to the target branch, skipping MR/CI/QA stages:
+After completing coding, the Worker pushes the feature branch. SPS then serializes final integration to the target branch, skipping MR/CI/QA stages:
 
 ```
 Planning -> Backlog -> Todo -> Inprogress -> Done
@@ -112,11 +112,11 @@ Planning -> Backlog -> Todo -> Inprogress -> Done
 | Phase | Trigger Engine | Action |
 |-------|---------------|--------|
 | Planning -> Backlog | SchedulerEngine | Select card for queue, check admission criteria |
-| Backlog -> Todo | ExecutionEngine | Create branch, create worktree, generate `.sps/merge.sh` |
+| Backlog -> Todo | ExecutionEngine | Create branch, create worktree, generate fallback `.sps/merge.sh` |
 | Todo -> Inprogress | ExecutionEngine | Assign Worker slot, build task context, launch AI Worker |
-| Inprogress -> Done | ExecutionEngine | Detect Worker completion (code merged to target branch), release resources, clean up worktree |
+| Inprogress -> Done | PostActions + MergeMutex | Detect Worker completion, serialize merge to target branch, release resources, clean up worktree |
 
-The Worker's final step is running `bash .sps/merge.sh`, which automatically rebases and merges the feature branch into the target branch.
+The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the proposed ACP transport model and the full worker state breakdown.
 
 ### MR_MODE=create (Optional)
 
