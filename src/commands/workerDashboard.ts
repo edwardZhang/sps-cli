@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { readState, type WorkerSlotState } from '../core/state.js';
 import { readACPState, writeACPState } from '../core/acpState.js';
+import type { ACPSessionRecord } from '../models/acp.js';
 import { isProcessAlive, tailFile } from '../providers/outputParser.js';
 import { renderClaudeStreamLines, renderCodexStreamLines } from '../providers/streamRenderer.js';
 import { getSharedPTYManager } from '../providers/PTYAgentRuntime.js';
@@ -59,6 +60,7 @@ const FG = {
 const BG = {
   black: '\x1b[40m',
 };
+const STRIP_ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b\[[\?]?[0-9;]*[hlm]/g;
 
 function statusColor(status: string): string {
   switch (status) {
@@ -85,7 +87,7 @@ function sessionStatusIcon(alive: boolean): string {
 // ── Strip ANSI escape codes for width calculations ────────────────────
 
 function stripAnsi(s: string): string {
-  return s.replace(/\x1b\[[0-9;]*m/g, '');
+  return s.replace(STRIP_ANSI_RE, '');
 }
 
 function visibleLength(s: string): number {
@@ -138,6 +140,140 @@ interface WorkerPanel {
   paneLines: string[];
 }
 
+function shortenPath(path: string | null | undefined): string {
+  if (!path) return '';
+  return path.startsWith(HOME) ? `~${path.slice(HOME.length)}` : path;
+}
+
+function cleanScreenLines(text: string): string[] {
+  const lines = stripAnsi(text)
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map(line => line.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const deduped: string[] = [];
+  for (const line of lines) {
+    if (deduped[deduped.length - 1] !== line) deduped.push(line);
+  }
+  return deduped;
+}
+
+function extractCodexScreenFacts(lines: string[]): {
+  model?: string;
+  directory?: string;
+  prompt?: string;
+  status?: string;
+} {
+  const facts: { model?: string; directory?: string; prompt?: string; status?: string } = {};
+  for (const line of lines) {
+    if (!facts.model) {
+      const match = line.match(/model:\s+(.+?)(?:\s+\/model.*)?$/i);
+      if (match) facts.model = match[1].trim();
+    }
+    if (!facts.directory) {
+      const match = line.match(/directory:\s+(.+)$/i);
+      if (match) facts.directory = match[1].trim();
+    }
+    if (!facts.prompt) {
+      const match = line.match(/^[›❯>]\s+(.+)$/);
+      if (match && !/^\d+\./.test(match[1])) facts.prompt = match[1].trim();
+    }
+    if (!facts.status) {
+      if (/Do you trust the contents of this directory/i.test(line)) {
+        facts.status = 'Trust confirmation required';
+      } else if (/Press enter to continue/i.test(line)) {
+        facts.status = 'Startup confirmation required';
+      } else if (/OpenAI Codex/i.test(line)) {
+        facts.status = 'Codex home screen';
+      }
+    }
+  }
+  return facts;
+}
+
+function extractClaudeScreenFacts(lines: string[]): {
+  prompt?: string;
+  status?: string;
+} {
+  const facts: { prompt?: string; status?: string } = {};
+  for (const line of lines) {
+    if (!facts.prompt) {
+      const match = line.match(/^[›❯>]\s+(.+)$/);
+      if (match) facts.prompt = match[1].trim();
+    }
+    if (!facts.status) {
+      if (/trust this folder/i.test(line)) {
+        facts.status = 'Trust confirmation required';
+      } else if (/Enter to confirm|Esc to cancel/i.test(line)) {
+        facts.status = 'Confirmation required';
+      }
+    }
+  }
+  return facts;
+}
+
+function buildACPPanelLines(slot: WorkerSlotState, session: ACPSessionRecord | undefined): string[] {
+  const lines: string[] = [];
+  const tool = session?.tool || slot.agent || 'worker';
+  const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
+  const sessionState = session?.sessionState || slot.sessionState || 'offline';
+  const worktree = shortenPath(slot.worktree || session?.cwd || '');
+  const rawLines = cleanScreenLines(session?.lastPaneText || '');
+  const codexFacts = extractCodexScreenFacts(rawLines);
+  const claudeFacts = extractClaudeScreenFacts(rawLines);
+  const facts = tool === 'codex' ? codexFacts : claudeFacts;
+
+  lines.push(`${BOLD}tool:${RESET} ${tool}`);
+  lines.push(`${BOLD}session:${RESET} ${sessionState} / ${runStatus}`);
+  if (tool === 'codex' && codexFacts.model) {
+    lines.push(`${BOLD}model:${RESET} ${codexFacts.model}`);
+  }
+  lines.push(`${BOLD}cwd:${RESET} ${worktree || '(unknown)'}`);
+
+  if (session?.pendingInput) {
+    const danger = session.pendingInput.dangerous ? ' (dangerous)' : '';
+    lines.push(`${FG.yellow}${BOLD}waiting:${RESET}${FG.yellow} ${session.pendingInput.type}${danger}${RESET}`);
+    lines.push(`${DIM}${session.pendingInput.prompt}${RESET}`);
+    return lines;
+  }
+
+  if (facts.status) {
+    lines.push(`${BOLD}screen:${RESET} ${facts.status}`);
+  }
+  if (facts.prompt) {
+    lines.push(`${DIM}${facts.prompt}${RESET}`);
+  } else if (session?.currentRun?.promptPreview) {
+    lines.push(`${DIM}${session.currentRun.promptPreview}${RESET}`);
+  } else if (rawLines.length > 0) {
+    lines.push(`${DIM}${rawLines[rawLines.length - 1]}${RESET}`);
+  }
+
+  return lines;
+}
+
+function buildPrintPanelLines(slot: WorkerSlotState, rawLines: string[]): string[] {
+  const lines = rawLines
+    .map(line => line.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim())
+    .filter(Boolean)
+    .slice(-8);
+
+  return lines.length > 0 ? lines : ['(worker running, no output yet)'];
+}
+
+function buildInteractivePanelLines(slot: WorkerSlotState, paneText: string): string[] {
+  const lines = cleanScreenLines(paneText);
+  const worktree = shortenPath(slot.worktree || '');
+  const summary: string[] = [
+    `${BOLD}mode:${RESET} interactive/tmux`,
+    `${BOLD}cwd:${RESET} ${worktree || '(unknown)'}`,
+  ];
+  const interesting = lines.slice(-4);
+  if (interesting.length === 0) summary.push('(no pane output)');
+  else summary.push(...interesting.map(line => `${DIM}${line}${RESET}`));
+  return summary;
+}
+
 function collectPanels(projects: string[]): WorkerPanel[] {
   const panels: WorkerPanel[] = [];
   const allSessions = new Set(listTmuxSessions());
@@ -166,19 +302,8 @@ function collectPanels(projects: string[]): WorkerPanel[] {
         const session = acpState.sessions[slotName];
         const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
         sessionAlive = !!(session && session.sessionState !== 'offline');
-        if (session?.pendingInput) {
-          const pi = session.pendingInput;
-          const dangerStr = pi.dangerous ? `${FG.red} DANGEROUS${RESET}` : '';
-          paneLines = [
-            `${FG.yellow}⚠ WAITING INPUT${dangerStr}${RESET}`,
-            '',
-            `  ${pi.prompt}`,
-            '',
-            `  Respond: sps acp respond ${projectName} ${slotName} "Y"`,
-          ];
-        } else if (session?.lastPaneText) {
-          paneLines = session.lastPaneText.split('\n');
-        } else {
+        paneLines = buildACPPanelLines(slot, session);
+        if (paneLines.length === 0) {
           paneLines = [`(acp ${slot.agent || 'worker'} ${sessionAlive ? 'connected' : 'offline'})`, `run: ${runStatus}`];
         }
       } else if (isPrintMode) {
@@ -190,7 +315,7 @@ function collectPanels(projects: string[]): WorkerPanel[] {
           const rendered = slot.tmuxSession?.includes('codex')
             ? renderCodexStreamLines(rawLines)
             : renderClaudeStreamLines(rawLines);
-          paneLines = rendered.length > 0 ? rendered : rawLines;
+          paneLines = buildPrintPanelLines(slot, rendered.length > 0 ? rendered : rawLines);
         } else {
           paneLines = sessionAlive ? ['(worker running, no output yet)'] : ['(no output file)'];
         }
@@ -198,7 +323,7 @@ function collectPanels(projects: string[]): WorkerPanel[] {
         // Interactive (tmux) mode
         sessionAlive = allSessions.has(sessionName);
         const paneText = sessionAlive ? capturePaneText(sessionName, 30) : '';
-        paneLines = paneText.split('\n');
+        paneLines = buildInteractivePanelLines(slot, paneText);
       }
 
       // Skip idle slots with no live session/process
@@ -284,7 +409,7 @@ function renderPanel(panel: WorkerPanel, panelWidth: number, panelHeight: number
 
   for (let i = 0; i < contentHeight; i++) {
     const raw = trimmedLines[i] ?? '';
-    const content = padOrTruncate(`${DIM}${raw}${RESET}`, innerWidth);
+    const content = padOrTruncate(raw, innerWidth);
     lines.push(`${FG.gray}│${RESET}${content}${FG.gray}│${RESET}`);
   }
 
@@ -303,18 +428,23 @@ function renderIdleSummary(projects: string[], termWidth: number): string[] {
     } catch { continue; }
 
     const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
+    const acpState = readACPState(ctx.paths.acpStateFile);
     const total = Object.keys(state.workers).length;
-    // Verify PID liveness for active workers
     let realActive = 0;
     let stale = 0;
     let merging = 0;
-    for (const w of Object.values(state.workers)) {
+    for (const [slotName, w] of Object.entries(state.workers)) {
       if (w.status === 'active') {
-        const wPid = (w as unknown as { pid?: number | null }).pid ?? null;
-        if (wPid && isProcessAlive(wPid)) {
-          realActive++;
+        const isPtyMode = w.transport === 'pty';
+        const isAcpMode = isPtyMode || w.mode === 'acp' || w.transport === 'acp';
+        if (isAcpMode) {
+          const session = acpState.sessions[slotName];
+          if (session && session.sessionState !== 'offline') realActive++;
+          else stale++;
         } else {
-          stale++;
+          const wPid = (w as unknown as { pid?: number | null }).pid ?? null;
+          if (wPid && isProcessAlive(wPid)) realActive++;
+          else stale++;
         }
       } else if (w.status === 'merging' || w.status === 'resolving') {
         merging++;
@@ -474,9 +604,9 @@ function buildJsonOutput(projects: string[]): DashboardJson {
           ? !!(slot.pid && slot.pid > 0 && isProcessAlive(slot.pid))
           : allSessions.has(sessionName);
       const panePreview = isAcpMode
-        ? (acpSession?.lastPaneText || '').trim()
+        ? buildACPPanelLines(slot, acpSession).join(' | ')
         : sessionAlive && !isPrintMode
-          ? capturePaneText(sessionName, 5).trim()
+          ? buildInteractivePanelLines(slot, capturePaneText(sessionName, 5)).join(' | ')
           : '';
 
       workers.push({
