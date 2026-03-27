@@ -4,15 +4,15 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.23.16**
+**v0.23.17**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
 ```
-Create cards -> Start pipeline -> AI auto-codes -> Serial merge queue -> Notify completion
+Create cards -> Start pipeline -> Development worker completes branch work -> QA worker integrates branch -> Notify completion
 ```
 
-Current design direction: SPS is converging on a worker-owned two-phase execution model. `Inprogress` is the development phase, `QA` is the integration/merge phase, and label-driven skill profile injection remains part of worker prompt construction. `v0.23.16` lands the first concrete step: per-worktree `.sps/development_prompt.txt` and `.sps/integration_prompt.txt`, plus phase-aware recovery prompt selection. Merge ownership still remains to be moved out of fixed closeout logic and into the `QA` worker phase.
+Current design direction: SPS is converging on a worker-owned two-phase execution model. `Inprogress` is the development phase, `QA` is the integration/merge phase, and label-driven skill profile injection remains part of worker prompt construction. `v0.23.16` added per-worktree `.sps/development_prompt.txt` and `.sps/integration_prompt.txt`, plus phase-aware recovery prompt selection. `v0.23.17` moves the main integration path into the `QA` worker phase: development completion hands tasks to QA, and QA now launches or resumes an integration worker instead of relying on a fixed merge script as the primary path.
 
 ## Table of Contents
 
@@ -110,20 +110,21 @@ Each task card progresses through the following state machine, fully driven by S
 
 ### MR_MODE=none (Default, Recommended)
 
-After completing coding, the Worker pushes the feature branch. SPS then serializes final integration to the target branch, skipping MR/CI/QA stages:
+The main path is now a worker-owned two-phase flow:
 
 ```
-Planning -> Backlog -> Todo -> Inprogress -> Done
+Planning -> Backlog -> Todo -> Inprogress -> QA -> Done
 ```
 
 | Phase | Trigger Engine | Action |
 |-------|---------------|--------|
 | Planning -> Backlog | SchedulerEngine | Select card for queue, check admission criteria |
-| Backlog -> Todo | ExecutionEngine | Create branch, create worktree, generate fallback `.sps/merge.sh` |
-| Todo -> Inprogress | ExecutionEngine | Assign Worker slot, build task context, launch AI Worker |
-| Inprogress -> Done | PostActions + MergeMutex | Detect Worker completion, serialize merge to target branch, release resources, clean up worktree |
+| Backlog -> Todo | ExecutionEngine | Create branch, create worktree, generate phase prompts |
+| Todo -> Inprogress | ExecutionEngine | Assign Worker slot, launch development worker |
+| Inprogress -> QA | PostActions | Detect development completion, release slot, move card to QA |
+| QA -> Done | CloseoutEngine | Launch/resume integration worker, verify merge evidence, release resources, clean up worktree |
 
-The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. Final integration now runs inside a temporary detached merge worktree, which avoids `main already used by worktree` failures and keeps the user's main checkout untouched. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the persistent Agent transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary. See `docs/design/11-runtime-state-authority-and-recovery-redesign.md` for the redesign that demotes `state.json` / `acp-state.json` to projections and re-centers recovery around PM state plus worktree/git evidence. See `docs/design/12-unified-runtime-state-machine.md` for the next-step module cleanup plan that converges `Execution`, `Recovery`, `Monitor`, `Closeout`, and `PostActions` into one state machine authority plus a single runtime coordinator/write path.
+In this model, the development worker stops at “implementation complete and committed on the task branch”. The QA worker owns integration: it must inspect the current worktree, rebase/merge the task branch back into the target branch, resolve conflicts, and finish the integration. `.sps/merge.sh` remains only as a legacy/manual fallback while the old merge helpers are being removed. See `docs/design/10-acp-worker-runtime-design.md` for the persistent Agent transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary. See `docs/design/11-runtime-state-authority-and-recovery-redesign.md` for the redesign that demotes `state.json` / `acp-state.json` to projections and re-centers recovery around PM state plus worktree/git evidence. See `docs/design/12-unified-runtime-state-machine.md` for the next-step module cleanup plan that converges `Execution`, `Recovery`, `Monitor`, `Closeout`, and `PostActions` into one state machine authority plus a single runtime coordinator/write path.
 
 PTY transport now extends the same session/run model into the default CLI-backed worker path, but the restart boundary is now explicit. Within a running `tick` process, `WORKER_TRANSPORT=pty` still uses `sessionId/runId` for retries and conflict follow-up runs. Across a `tick` restart, SPS no longer pretends it can recover the old PTY session; it recovers the task from `TaskLease + WorktreeEvidence`, judges completion from git/worktree evidence first, and starts a fresh PTY run in the same worktree only if work remains. `WORKER_TRANSPORT=acp` still keeps its session-based model. The PTY hardening sequence remains: v0.23.5 upgrades `node-pty` to a macOS-safe build, auto-restores missing execute permissions on `spawn-helper`, and auto-skips the benign Codex update notice during PTY boot so `ensureSession()` can reach `ready`; v0.23.6 fixes PTY run lifecycle tracking so newly submitted conflict-resolution runs no longer get marked `completed` during the first inspect cycle before the CLI actually leaves the prompt; v0.23.7 switches `sps worker dashboard` from raw PTY pane dumps to structured worker summaries; v0.23.9 validates persisted PTY sessions by PID before treating them as alive; v0.23.10 aligns PM and read-only views around runtime-owned cards; v0.23.11 introduces PM + worktree + session-first runtime projection; v0.23.12 moves recovery/execution onto `TaskLease + WorktreeEvidence`; v0.23.13 pulls monitor/closeout onto the same lease-first model; v0.23.14 completes the write-path migration through `RuntimeStore`; and v0.23.15 finalizes PTY restart behavior as task-level recovery instead of fake session-level recovery. Codex has been verified on launch, task-level recovery, direct merge, same-process resume, PTY conflict fallback, spawn-helper self-heal, immediate post-launch run-state inspection, summary-style dashboard rendering, cold-state liveness validation, runtime-owned PM reconciliation, read-only snapshot rendering, and lease-first recovery/execution/monitor/closeout flow; Claude still depends on host-side `claude auth login` before reaching `ready`.
 
@@ -395,7 +396,7 @@ sps tick <project> [project2] [project3] ... [--once] [--json] [--dry-run]
 **Execution order (per tick cycle):**
 
 1. **scheduler tick** -- Planning -> Backlog (select cards for queue)
-2. **qa tick** -- QA -> merge -> Done (prioritize freeing Worker slots)
+2. **qa tick** -- QA -> integration worker -> Done (prioritize finishing branch integration and freeing Worker slots)
 3. **pipeline tick** -- Backlog -> Todo -> Inprogress (prepare environment + launch Worker)
 4. **monitor tick** -- Anomaly inspection and alignment
 
@@ -542,7 +543,7 @@ sps pipeline tick <project> [--json] [--dry-run]
 **Internal steps:**
 
 1. **Check Inprogress cards** -- Detect Worker completion status. MR_MODE=none pushes directly to Done; MR_MODE=create confirms MR then pushes to Done
-2. **Process Backlog cards** -- Create branch + create worktree + generate `.sps/merge.sh` -> push to Todo
+2. **Process Backlog cards** -- Create branch + create worktree + generate phase prompts -> push to Todo
 3. **Process Todo cards** -- Assign Worker slot + build task context + launch Worker -> push to Inprogress
 
 Limited by `MAX_ACTIONS_PER_TICK` (default 1) to prevent launching too many Workers in a single tick cycle. There is a delay between multiple Worker launches (2 seconds in print mode, 10 seconds in interactive mode).
@@ -767,9 +768,9 @@ QA close-out and worktree cleanup.
 sps qa tick <project> [--json]
 ```
 
-**When MR_MODE=none:** The QA phase primarily handles worktree cleanup. After Worker completion, the ExecutionEngine pushes directly to Done.
+**When MR_MODE=none:** QA is the integration phase. The QA worker must inspect the task worktree, continue merge/rebase work, resolve conflicts, and drive the branch back into the target branch. `qa tick` launches or resumes that integration worker and only moves the card to `Done` after merge evidence is observed.
 
-**When MR_MODE=create:** QA serves as a legacy compatibility path, processing cards that reach QA state (auto-creates MR or tags `NEEDS-FIX`).
+**When MR_MODE=create:** QA remains a compatibility path while MR flow is still being converged on the same worker-owned model.
 
 **Automatic worktree cleanup:**
 
@@ -825,8 +826,10 @@ sps monitor tick my-project --json
 |------|---------|-----------------|
 | `CLAUDE.md` | Project rules for Claude Code Worker | Yes |
 | `AGENTS.md` | Project rules for Codex Worker | Yes |
-| `.sps/task_prompt.txt` | Specific task description per assignment (generated independently in each worktree) | No (.gitignore) |
-| `.sps/merge.sh` | Merge script (git merge for MR_MODE=none, GitLab API MR creation for MR_MODE=create) | No (.gitignore) |
+| `.sps/task_prompt.txt` | Development-phase compatibility prompt alias | No (.gitignore) |
+| `.sps/development_prompt.txt` | Development-phase worker prompt | No (.gitignore) |
+| `.sps/integration_prompt.txt` | Integration-phase worker prompt | No (.gitignore) |
+| `.sps/merge.sh` | Legacy/manual merge fallback script | No (.gitignore) |
 | `docs/DECISIONS.md` | Project knowledge base -- architecture decisions and technical choices | Yes (Worker auto-maintained) |
 | `docs/CHANGELOG.md` | Project knowledge base -- change log | Yes (Worker auto-maintained) |
 
@@ -843,8 +846,9 @@ Prompt assembly order: Skill Profile -> CLAUDE.md/AGENTS.md -> DECISIONS.md/CHAN
 1. `CLAUDE.md` and `AGENTS.md` are committed to the repository's main branch
 2. When creating a git worktree, these files are automatically inherited
 3. On startup, the Worker reads CLAUDE.md to understand project rules (auto-discovered in interactive mode; auto-loaded from cwd in print mode)
-4. Task-specific information (seq, branch name, description) is written to `.sps/task_prompt.txt`, passed to the Worker via stdin (print mode) or tmux paste (interactive mode)
-5. `.sps/merge.sh` is auto-generated in each worktree. After pushing, the Worker runs this script to complete the merge or MR creation
+4. Task-specific information is written into `.sps/development_prompt.txt` and `.sps/integration_prompt.txt` inside each worktree; `.sps/task_prompt.txt` remains as a development-phase compatibility alias
+5. Development workers use the development prompt and stop at a committed task branch; QA workers use the integration prompt and complete merge/conflict work
+6. `.sps/merge.sh` remains only as a legacy/manual fallback while the fixed merge path is being removed
 
 ### Project Knowledge Base
 
@@ -907,7 +911,7 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 |-------|----------|---------|-------------|
 | `PM_TOOL` | No | `trello` | PM backend type: `plane` / `trello` / `markdown` |
 | `PIPELINE_LABEL` | No | `AI-PIPELINE` | Pipeline card label |
-| `MR_MODE` | No | `none` | Merge mode: `none` (direct merge to target branch) / `create` (create MR, review flow under development) |
+| `MR_MODE` | No | `none` | Merge mode: `none` (worker-owned QA integration back to target branch) / `create` (create MR, review flow under development) |
 
 #### Worker
 
@@ -974,7 +978,7 @@ MAX_CONCURRENT_WORKERS=3
 MAX_ACTIONS_PER_TICK=1
 
 # Merge mode
-MR_MODE="none"                   # none (direct merge) or create (create MR)
+MR_MODE="none"                   # none (worker-owned QA integration) or create (create MR)
 ```
 
 ---
@@ -1029,7 +1033,7 @@ Layer 0  Core Runtime          Configuration, paths, state, locks, logging
 | Engine | Responsibility |
 |--------|---------------|
 | SchedulerEngine | Planning -> Backlog (card selection, sorting, admission checks) |
-| ExecutionEngine | Backlog -> Todo -> Inprogress -> Done (prepare environment, launch Worker, detect completion, release resources) |
+| ExecutionEngine | Backlog -> Todo -> Inprogress (prepare environment, launch development Worker, detect completion handoff to QA) |
 | CloseoutEngine | Worktree cleanup (legacy QA card handling when MR_MODE=create) |
 | MonitorEngine | Anomaly detection (orphan cleanup, timeouts, blocks, state alignment, dead Worker completion detection) |
 

@@ -1,3 +1,6 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ProjectContext } from '../core/context.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
@@ -6,23 +9,18 @@ import type { Notifier } from '../interfaces/Notifier.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type { ACPSessionRecord } from '../models/acp.js';
 import type { CommandResult, ActionRecord, Card, RecommendedAction } from '../models/types.js';
+import { INTEGRATION_PROMPT_FILE, LEGACY_TASK_PROMPT_FILE } from '../core/taskPrompts.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { Logger } from '../core/logger.js';
 
 /**
- * CloseoutEngine handles the QA → merge → Done → resource release pipeline.
+ * CloseoutEngine handles the QA → Done pipeline.
  *
- * Decision tree per 01 §10.3.2:
- *   QA card → check MR exists?
- *     ├─ MR not found → NEEDS-FIX
- *     └─ MR exists → check MR state
- *         ├─ already merged → resource release → Done
- *         ├─ open + CI success + can_be_merged → attempt merge
- *         ├─ open + CI failed → self-repair or NEEDS-FIX
- *         ├─ open + CI running/pending → skip
- *         ├─ open + cannot_be_merged → CONFLICT
- *         └─ closed (not merged) → NEEDS-FIX
+ * In the worker-owned two-phase model, QA means integration:
+ * - the worker performs rebase / merge / conflict resolution
+ * - SPS only checks evidence, starts or resumes the integration worker,
+ *   and finalizes the task after the branch is merged.
  */
 export class CloseoutEngine {
   private log: Logger;
@@ -114,70 +112,329 @@ export class CloseoutEngine {
     recommendedActions: RecommendedAction[],
   ): Promise<void> {
     const seq = card.seq;
-    const branchName = this.buildBranchName(card);
+    const state = this.runtimeStore.readState();
+    const runtime = this.runtimeStore.getTask(seq, state);
+    const branchName =
+      runtime.lease?.branch ||
+      runtime.evidence?.branch ||
+      this.buildBranchName(card);
+    const worktree =
+      runtime.lease?.worktree ||
+      runtime.evidence?.worktree ||
+      resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
 
-    // Check MR status
-    const mrStatus = await this.repoBackend.getMrStatus(branchName);
+    if (!worktree || !existsSync(worktree)) {
+      await this.markNeedsFix(seq, 'QA task has no usable worktree');
+      actions.push({
+        action: 'mark-needs-fix',
+        entity: `seq:${seq}`,
+        result: 'ok',
+        message: 'No usable worktree for QA task',
+      });
+      return;
+    }
 
-    if (!mrStatus.exists || mrStatus.state === 'not_found') {
-      // MR not found → auto-create it (worker may have pushed but not created MR)
-      this.log.warn(`seq ${seq}: MR not found for branch ${branchName}, auto-creating`);
-      try {
-        const mrResult = await this.repoBackend.createOrUpdateMr(
-          branchName,
-          `${card.seq}: ${card.name}`,
-          `Auto-created by CloseoutEngine for seq:${card.seq}.\n\nBranch: ${branchName}`,
-        );
-        this.log.ok(`seq ${seq}: Auto-created MR ${mrResult.url} (iid=${mrResult.iid})`);
+    if (this.isMergedToBase(worktree, branchName)) {
+      this.log.info(`seq ${seq}: integration already complete, proceeding to release`);
+      await this.releaseAndDone(card, actions);
+      return;
+    }
+
+    const activeStatus = await this.inspectQaWorker(card, runtime.slotName, worktree, branchName, actions);
+    if (activeStatus === 'active' || activeStatus === 'waiting' || activeStatus === 'done') {
+      return;
+    }
+    if (activeStatus === 'failed') {
+      recommendedActions.push({
+        action: `Review QA task seq:${seq}`,
+        reason: 'Integration worker exited without merging the branch',
+        severity: 'warning',
+        autoExecutable: false,
+        requiresConfirmation: true,
+        safeToRetry: true,
+      });
+      return;
+    }
+
+    await this.startIntegrationWorker(card, runtime.slotName, worktree, branchName, actions);
+  }
+
+  private async inspectQaWorker(
+    card: Card,
+    slotName: string | null,
+    worktree: string,
+    branchName: string,
+    actions: ActionRecord[],
+  ): Promise<'idle' | 'active' | 'waiting' | 'failed' | 'done'> {
+    if (!slotName) return 'idle';
+
+    const state = this.runtimeStore.readState();
+    const slot = state.workers[slotName];
+    if (!slot || slot.status === 'idle') return 'idle';
+
+    if (slot.transport === 'pty' || slot.transport === 'acp' || slot.mode === 'pty' || slot.mode === 'acp') {
+      if (!this.agentRuntime) return 'failed';
+      const inspected = await this.agentRuntime.inspect(slotName);
+      const session = inspected.sessions[slotName];
+
+      if (!session) return 'idle';
+
+      this.runtimeStore.updateState('closeout-sync-qa-session', (draft) => {
+        const worker = draft.workers[slotName];
+        if (!worker) return;
+        worker.mode = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+        worker.transport = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+        worker.agent = session.tool;
+        worker.tmuxSession = session.sessionName;
+        worker.sessionId = session.sessionId;
+        worker.runId = session.currentRun?.runId || null;
+        worker.sessionState = session.sessionState;
+        worker.remoteStatus = session.currentRun?.status || null;
+        worker.lastEventAt = session.lastSeenAt;
+        worker.lastHeartbeat = new Date().toISOString();
+        worker.pid = session.pid ?? null;
+        worker.outputFile = null;
+        worker.exitCode = null;
+        worker.status = session.pendingInput || session.currentRun?.status === 'waiting_input'
+          ? 'resolving'
+          : 'merging';
+        if (draft.leases[card.seq]) {
+          draft.leases[card.seq].slot = slotName;
+          draft.leases[card.seq].sessionId = session.sessionId;
+          draft.leases[card.seq].runId = session.currentRun?.runId || null;
+          draft.leases[card.seq].phase = session.pendingInput || session.currentRun?.status === 'waiting_input'
+            ? 'waiting_confirmation'
+            : 'merging';
+          draft.leases[card.seq].pmStateObserved = 'QA';
+          draft.leases[card.seq].lastTransitionAt = new Date().toISOString();
+        }
+      });
+
+      const run = session.currentRun;
+      if (!run) return 'idle';
+      if (run.status === 'waiting_input') {
         actions.push({
-          action: 'auto-create-mr',
-          entity: `seq:${seq}`,
-          result: 'ok',
-          message: `Auto-created MR (iid=${mrResult.iid})`,
+          action: 'qa-waiting',
+          entity: `seq:${card.seq}`,
+          result: 'skip',
+          message: 'Integration worker waiting for input',
         });
-        this.logEvent('closeout-auto-mr', seq, 'ok', { url: mrResult.url, iid: mrResult.iid });
-        // Re-check MR status and process it on next tick
-        return;
-      } catch (mrErr) {
-        const mrMsg = mrErr instanceof Error ? mrErr.message : String(mrErr);
-        this.log.error(`seq ${seq}: Failed to auto-create MR: ${mrMsg}`);
-        await this.markNeedsFix(seq, `MR not found and auto-creation failed: ${mrMsg}`);
-        actions.push({
-          action: 'mark-needs-fix',
-          entity: `seq:${seq}`,
-          result: 'ok',
-          message: `MR auto-creation failed: ${mrMsg}`,
-        });
-        this.logEvent('closeout-no-mr', seq, 'ok');
-        return;
+        return 'waiting';
       }
-    }
-
-    // MR exists — check state
-    switch (mrStatus.state) {
-      case 'merged':
-        // Already merged externally (doc 12 §6.2) → resource release → Done
-        this.log.info(`seq ${seq}: MR already merged, proceeding to release`);
-        await this.releaseAndDone(card, actions);
-        return;
-
-      case 'closed':
-        // Closed without merge → NEEDS-FIX
-        this.log.warn(`seq ${seq}: MR is closed (not merged)`);
-        await this.markNeedsFix(seq, 'MR was closed without merging');
+      if (['submitted', 'running'].includes(run.status)) {
         actions.push({
-          action: 'mark-needs-fix',
-          entity: `seq:${seq}`,
-          result: 'ok',
-          message: 'MR closed without merge',
+          action: 'qa-running',
+          entity: `seq:${card.seq}`,
+          result: 'skip',
+          message: `Integration worker ${run.status}`,
         });
-        this.logEvent('closeout-mr-closed', seq, 'ok');
-        return;
+        return 'active';
+      }
+      if (this.isMergedToBase(worktree, branchName)) {
+        await this.releaseAndDone(card, actions);
+        return 'done';
+      }
 
-      case 'opened':
-        await this.processOpenMr(card, mrStatus, actions, recommendedActions);
-        return;
+      await this.releaseQaSlot(card.seq, slotName);
+      await this.markNeedsFix(card.seq, `Integration run ${run.status} before merge completed`);
+      actions.push({
+        action: 'mark-needs-fix',
+        entity: `seq:${card.seq}`,
+        result: 'ok',
+        message: `Integration run ${run.status} before merge completed`,
+      });
+      return 'failed';
     }
+
+    const sessionName = slot.tmuxSession || `${this.ctx.projectName}-${slotName}`;
+    try {
+      const inspection = await this.workerProvider.inspect(sessionName);
+      if (inspection.alive) {
+        this.runtimeStore.updateState('closeout-sync-qa-proc', (draft) => {
+          const worker = draft.workers[slotName];
+          if (!worker) return;
+          worker.lastHeartbeat = new Date().toISOString();
+          worker.status = 'merging';
+        });
+        actions.push({
+          action: 'qa-running',
+          entity: `seq:${card.seq}`,
+          result: 'skip',
+          message: 'Integration worker running',
+        });
+        return 'active';
+      }
+    } catch {
+      // fall through to merged/failure checks
+    }
+
+    if (this.isMergedToBase(worktree, branchName)) {
+      await this.releaseAndDone(card, actions);
+      return 'done';
+    }
+
+    await this.releaseQaSlot(card.seq, slotName);
+    await this.markNeedsFix(card.seq, 'Integration worker exited before merge completed');
+    actions.push({
+      action: 'mark-needs-fix',
+      entity: `seq:${card.seq}`,
+      result: 'ok',
+      message: 'Integration worker exited before merge completed',
+    });
+    return 'failed';
+  }
+
+  private async startIntegrationWorker(
+    card: Card,
+    preferredSlot: string | null,
+    worktree: string,
+    branchName: string,
+    actions: ActionRecord[],
+  ): Promise<void> {
+    const seq = card.seq;
+    const state = this.runtimeStore.readState();
+    const slotName = this.runtimeStore.findAvailableSlot(state, { preferred: preferredSlot });
+    if (!slotName) {
+      actions.push({
+        action: 'qa-launch',
+        entity: `seq:${seq}`,
+        result: 'skip',
+        message: 'No idle worker slot for integration',
+      });
+      return;
+    }
+
+    const promptFile = this.resolveIntegrationPrompt(worktree);
+    if (!promptFile) {
+      await this.markNeedsFix(seq, 'Missing integration prompt in worktree');
+      actions.push({
+        action: 'mark-needs-fix',
+        entity: `seq:${seq}`,
+        result: 'ok',
+        message: 'Missing integration prompt in worktree',
+      });
+      return;
+    }
+
+    try {
+      await this.taskBackend.claim(seq, slotName);
+    } catch (err) {
+      this.log.warn(`seq ${seq}: PM claim for QA worker failed: ${err instanceof Error ? err.message : err}`);
+    }
+
+    if (this.ctx.config.WORKER_TRANSPORT !== 'proc' && this.agentRuntime) {
+      const prompt = readFileSync(promptFile, 'utf-8').trim();
+      const session = await this.agentRuntime.startRun(
+        slotName,
+        prompt,
+        (this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
+        worktree,
+      );
+
+      this.runtimeStore.updateState('closeout-launch-integration', (draft) => {
+        const worker = draft.workers[slotName];
+        if (!worker) return;
+        worker.status = 'merging';
+        worker.seq = parseInt(seq, 10);
+        worker.branch = branchName;
+        worker.worktree = worktree;
+        worker.claimedAt = worker.claimedAt || new Date().toISOString();
+        worker.lastHeartbeat = new Date().toISOString();
+        worker.mode = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+        worker.transport = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+        worker.agent = session.tool;
+        worker.tmuxSession = session.sessionName;
+        worker.sessionId = session.sessionId;
+        worker.runId = session.currentRun?.runId || null;
+        worker.sessionState = session.sessionState;
+        worker.remoteStatus = session.currentRun?.status || null;
+        worker.lastEventAt = session.lastSeenAt;
+        worker.pid = session.pid ?? null;
+        worker.outputFile = null;
+        worker.exitCode = null;
+
+        draft.activeCards[seq] = {
+          seq: parseInt(seq, 10),
+          state: 'QA',
+          worker: slotName,
+          mrUrl: draft.activeCards[seq]?.mrUrl || null,
+          conflictDomains: draft.activeCards[seq]?.conflictDomains || [],
+          startedAt: draft.activeCards[seq]?.startedAt || new Date().toISOString(),
+          retryCount: draft.activeCards[seq]?.retryCount ?? draft.leases[seq]?.retryCount ?? 0,
+        };
+
+        draft.leases[seq] = {
+          seq: parseInt(seq, 10),
+          pmStateObserved: 'QA',
+          phase: session.pendingInput ? 'waiting_confirmation' : 'merging',
+          slot: slotName,
+          branch: branchName,
+          worktree,
+          sessionId: session.sessionId,
+          runId: session.currentRun?.runId || null,
+          claimedAt: worker.claimedAt,
+          retryCount: draft.leases[seq]?.retryCount ?? 0,
+          lastTransitionAt: new Date().toISOString(),
+        };
+      });
+    } else {
+      const sessionName = `${this.ctx.projectName}-${slotName}`;
+      const result = await this.workerProvider.launch(sessionName, worktree, promptFile);
+      this.runtimeStore.updateState('closeout-launch-integration-proc', (draft) => {
+        const worker = draft.workers[slotName];
+        if (!worker) return;
+        worker.status = 'merging';
+        worker.seq = parseInt(seq, 10);
+        worker.branch = branchName;
+        worker.worktree = worktree;
+        worker.claimedAt = worker.claimedAt || new Date().toISOString();
+        worker.lastHeartbeat = new Date().toISOString();
+        worker.mode = 'print';
+        worker.transport = 'proc';
+        worker.agent = this.ctx.config.WORKER_TOOL;
+        worker.tmuxSession = sessionName;
+        worker.sessionId = result.sessionId || null;
+        worker.runId = null;
+        worker.sessionState = null;
+        worker.remoteStatus = null;
+        worker.lastEventAt = null;
+        worker.pid = result.pid;
+        worker.outputFile = result.outputFile;
+        worker.exitCode = null;
+
+        draft.activeCards[seq] = {
+          seq: parseInt(seq, 10),
+          state: 'QA',
+          worker: slotName,
+          mrUrl: draft.activeCards[seq]?.mrUrl || null,
+          conflictDomains: draft.activeCards[seq]?.conflictDomains || [],
+          startedAt: draft.activeCards[seq]?.startedAt || new Date().toISOString(),
+          retryCount: draft.activeCards[seq]?.retryCount ?? draft.leases[seq]?.retryCount ?? 0,
+        };
+
+        draft.leases[seq] = {
+          seq: parseInt(seq, 10),
+          pmStateObserved: 'QA',
+          phase: 'merging',
+          slot: slotName,
+          branch: branchName,
+          worktree,
+          sessionId: result.sessionId || null,
+          runId: null,
+          claimedAt: worker.claimedAt,
+          retryCount: draft.leases[seq]?.retryCount ?? 0,
+          lastTransitionAt: new Date().toISOString(),
+        };
+      });
+    }
+
+    actions.push({
+      action: 'qa-launch',
+      entity: `seq:${seq}`,
+      result: 'ok',
+      message: `Started integration worker on ${slotName}`,
+    });
+    this.logEvent('qa-launch', seq, 'ok', { worker: slotName });
   }
 
   private async processOpenMr(
@@ -538,7 +795,7 @@ export class CloseoutEngine {
     }
 
     // Step 4: Release worker session (keeps session alive for reuse if configured)
-    if (sessionName) {
+    if (sessionName && slotEntry?.[1].transport === 'proc') {
       try {
         await this.workerProvider.release(sessionName);
         this.log.ok(`seq ${seq}: Worker session ${sessionName} released`);
@@ -906,5 +1163,52 @@ export class CloseoutEngine {
       result,
       meta,
     });
+  }
+
+  private resolveIntegrationPrompt(worktree: string): string | null {
+    const promptPath = resolve(worktree, '.sps', INTEGRATION_PROMPT_FILE);
+    if (existsSync(promptPath)) return promptPath;
+
+    const legacyPromptPath = resolve(worktree, '.sps', LEGACY_TASK_PROMPT_FILE);
+    if (existsSync(legacyPromptPath)) return legacyPromptPath;
+
+    return null;
+  }
+
+  private isMergedToBase(worktree: string, branchName: string): boolean {
+    try {
+      execFileSync('git', ['-C', worktree, 'fetch', 'origin', this.ctx.mergeBranch], { stdio: 'ignore' });
+    } catch {
+      // Best effort. A stale fetch is still usable for local containment checks.
+    }
+
+    try {
+      execFileSync(
+        'git',
+        ['-C', worktree, 'merge-base', '--is-ancestor', branchName, `origin/${this.ctx.mergeBranch}`],
+        { stdio: 'ignore' },
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async releaseQaSlot(seq: string, slotName: string): Promise<void> {
+    this.runtimeStore.updateState('closeout-release-qa-slot', (draft) => {
+      this.runtimeStore.releaseTaskProjection(draft, seq, {
+        dropLease: false,
+        phase: 'merging',
+        keepWorktree: true,
+        pmStateObserved: 'QA',
+      });
+    });
+
+    try {
+      await this.taskBackend.releaseClaim(seq);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.warn(`seq ${seq}: Failed to release QA claim for ${slotName}: ${msg}`);
+    }
   }
 }

@@ -38,11 +38,14 @@ export interface PostActionContext {
   gitlabProjectId: string;
   gitlabUrl: string;
   gitlabToken: string;
+  /** Plane/Trello target for QA handoff */
+  qaStateId: string;
   /** Plane state UUID for Done (or Trello list ID) */
   doneStateId: string;
   maxRetries: number;
   logsDir: string;
   tool: 'claude' | 'codex';
+  pmStateObserved?: 'Planning' | 'Backlog' | 'Todo' | 'Inprogress' | 'QA' | 'Done' | null;
 }
 
 interface StepResult {
@@ -80,54 +83,62 @@ export class PostActions {
   }
 
   /**
-   * Handle worker completion — serial merge + PM update + release + notify.
+   * Handle worker completion.
+   *
+   * Main path:
+   *   development complete -> move card to QA and release the execution slot
+   *
+   * Exception path:
+   *   if the branch is already merged into the target branch, absorb the result
+   *   and finish directly as Done.
    */
   async executeCompletion(
     ctx: PostActionContext,
     completion: CompletionResult,
-    sessionId: string | null,
+    _sessionId: string | null,
+  ): Promise<StepResult[]> {
+    if (completion.reason === 'already_merged' || ctx.pmStateObserved === 'QA') {
+      return this.executeIntegratedCompletion(ctx, completion);
+    }
+    return this.executeDevelopmentCompletion(ctx, completion);
+  }
+
+  private async executeDevelopmentCompletion(
+    ctx: PostActionContext,
+    completion: CompletionResult,
+  ): Promise<StepResult[]> {
+    const results: StepResult[] = [];
+    results.push(await this.pmMoveQa(ctx));
+    const qaMoveOk = results[results.length - 1].ok;
+    results.push(await this.releaseSlotToQa(ctx, qaMoveOk));
+    results.push(await this.pmReleaseClaim(ctx));
+    results.push(await this.notify(
+      ctx,
+      `seq:${ctx.seq} completed development (${completion.reason}), moved to QA`,
+      'success',
+    ));
+
+    this.resourceLimiter.release();
+    const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
+    this.supervisor.remove(workerId);
+
+    return results;
+  }
+
+  private async executeIntegratedCompletion(
+    ctx: PostActionContext,
+    completion: CompletionResult,
   ): Promise<StepResult[]> {
     const results: StepResult[] = [];
 
-    // ── Phase 1: Set slot to "merging" ──────────────────────────
-    this.setSlotStatus(ctx, 'merging');
-
-    // ── Phase 2: Serial merge (via MergeMutex) ──────────────────
-    let mergeOk = false;
-    if (ctx.mrMode === 'none') {
-      if (this.mergeMutex) {
-        await this.mergeMutex.acquire();
-      }
-      try {
-        mergeOk = await this.serialMerge(ctx, sessionId, results);
-      } finally {
-        if (this.mergeMutex) {
-          this.mergeMutex.release();
-        }
-      }
-    } else {
-      results.push(await this.createMR(ctx));
-      mergeOk = results[results.length - 1].ok;
-    }
-
-    if (!mergeOk) {
-      // Merge failed after all retries — release and bail
-      results.push(await this.releaseSlot(ctx));
-      this.resourceLimiter.release();
-      const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
-      this.supervisor.remove(workerId);
-      return results;
-    }
-
-    // ── Phase 3: Post-merge cleanup ─────────────────────────────
-    results.push(await this.pmMove(ctx));
+    results.push(await this.pmMoveDone(ctx));
     results.push(await this.releaseSlot(ctx));
     results.push(await this.pmReleaseClaim(ctx));
     results.push(await this.markWorktreeCleanup(ctx));
     results.push(await this.archiveKnowledge(ctx));
     results.push(await this.notify(
       ctx,
-      `seq:${ctx.seq} completed (${completion.reason}), merged to ${ctx.baseBranch}`,
+      `seq:${ctx.seq} completed (${completion.reason}), integrated to ${ctx.baseBranch}`,
       'success',
     ));
 
@@ -577,12 +588,37 @@ export class PostActions {
     }
   }
 
-  private async pmMove(ctx: PostActionContext): Promise<StepResult> {
+  private async pmMoveQa(ctx: PostActionContext): Promise<StepResult> {
+    try {
+      await this.pmClient.move(ctx.seq, ctx.qaStateId);
+      return { step: 'pm-move-qa', ok: true };
+    } catch (err) {
+      return { step: 'pm-move-qa', ok: false, error: String(err) };
+    }
+  }
+
+  private async pmMoveDone(ctx: PostActionContext): Promise<StepResult> {
     try {
       await this.pmClient.move(ctx.seq, ctx.doneStateId);
       return { step: 'pm-move-done', ok: true };
     } catch (err) {
       return { step: 'pm-move-done', ok: false, error: String(err) };
+    }
+  }
+
+  private async releaseSlotToQa(ctx: PostActionContext, qaMoveOk: boolean): Promise<StepResult> {
+    try {
+      this.stateStore(ctx).updateState('post-actions-release-to-qa', (state) => {
+        this.stateStore(ctx).releaseTaskProjection(state, ctx.seq, {
+          dropLease: false,
+          phase: 'merging',
+          keepWorktree: true,
+          pmStateObserved: qaMoveOk ? 'QA' : (ctx.pmStateObserved ?? 'Inprogress'),
+        });
+      });
+      return { step: 'release-slot-to-qa', ok: true };
+    } catch (err) {
+      return { step: 'release-slot-to-qa', ok: false, error: String(err) };
     }
   }
 

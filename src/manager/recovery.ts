@@ -96,6 +96,7 @@ export class Recovery {
           lastEventAt: slot?.lastEventAt ?? null,
           claimedAt: lease.claimedAt || slot?.claimedAt || null,
           seq: lease.seq,
+          pmStateObserved: lease.pmStateObserved,
         };
 
         result.found++;
@@ -158,8 +159,12 @@ export class Recovery {
         const ctx = this.buildPostActionContext(project, slotName || 'worker-1', seq, workerRef);
 
         if (completion.status === 'completed') {
-          await postActions.executeCompletion(ctx, completion, workerRef.sessionId);
-          result.completed++;
+          if (lease.pmStateObserved === 'QA' && completion.reason !== 'already_merged') {
+            result.completed++;
+          } else {
+            await postActions.executeCompletion(ctx, completion, workerRef.sessionId);
+            result.completed++;
+          }
         } else {
           await postActions.executeFailure(
             ctx,
@@ -196,6 +201,7 @@ export class Recovery {
       transport?: 'proc' | 'acp' | 'pty' | null;
       mode?: string | null;
       agent?: 'claude' | 'codex' | null;
+      pmStateObserved?: 'Planning' | 'Backlog' | 'Todo' | 'Inprogress' | 'QA' | 'Done' | null;
     },
   ): PostActionContext {
     const raw = project.config.raw;
@@ -215,17 +221,26 @@ export class Recovery {
       gitlabProjectId: resolveGitlabProjectId(project.config),
       gitlabUrl: raw.GITLAB_URL || process.env.GITLAB_URL || '',
       gitlabToken: raw.GITLAB_TOKEN || process.env.GITLAB_TOKEN || '',
+      qaStateId: raw.PLANE_STATE_QA || raw.TRELLO_QA_LIST_ID || 'QA',
       doneStateId: raw.PLANE_STATE_DONE || raw.TRELLO_DONE_LIST_ID || '',
       maxRetries: project.config.WORKER_RESTART_LIMIT,
       logsDir: project.logsDir,
       tool: slot.agent || (project.config.ACP_AGENT || project.config.WORKER_TOOL) as 'claude' | 'codex',
+      pmStateObserved: slot.pmStateObserved ?? null,
     };
   }
 
   private buildOnExitCallback(
     project: ProjectInfo,
     slotName: string,
-    slot: { branch?: string | null; worktree?: string | null; outputFile?: string | null; sessionId?: string | null; seq?: number | null },
+    slot: {
+      branch?: string | null;
+      worktree?: string | null;
+      outputFile?: string | null;
+      sessionId?: string | null;
+      seq?: number | null;
+      pmStateObserved?: 'Planning' | 'Backlog' | 'Todo' | 'Inprogress' | 'QA' | 'Done' | null;
+    },
     seq: string,
     postActions: PostActions,
   ): (exitCode: number) => Promise<void> {
@@ -245,6 +260,9 @@ export class Recovery {
       const retryCount = this.getRetryCount(state, seq);
 
       if (completion.status === 'completed') {
+        if (slot.pmStateObserved === 'QA' && completion.reason !== 'already_merged') {
+          return;
+        }
         await postActions.executeCompletion(ctx, completion, slot.sessionId || null);
       } else {
         await postActions.executeFailure(
@@ -349,6 +367,9 @@ export class Recovery {
     const completion = this.judge.judge(judgeInput);
     const postActionCtx = this.buildPostActionContext(project, slotName, seq, slot);
     if (completion.status === 'completed') {
+      if (lease.pmStateObserved === 'QA' && completion.reason !== 'already_merged') {
+        return 'completed';
+      }
       await postActions.executeCompletion(postActionCtx, completion, session?.sessionId || null);
       return 'completed';
     }
@@ -396,6 +417,9 @@ export class Recovery {
     const postActionCtx = this.buildPostActionContext(project, slotName, seq, slot);
 
     if (completion.status === 'completed') {
+      if (lease.pmStateObserved === 'QA' && completion.reason !== 'already_merged') {
+        return 'completed';
+      }
       await postActions.executeCompletion(postActionCtx, completion, null);
       return 'completed';
     }

@@ -101,13 +101,14 @@ Rules:
 2. Integrate branch ${ctx.branchName} back into target branch ${ctx.targetBranch}
 3. If there are conflicts, resolve them carefully based on the task intent and current codebase
 4. Complete any required git add / rebase --continue / merge follow-up steps
-5. Validate the repository state before finishing
-6. Do not restart development from scratch unless the repository state clearly requires code changes to complete integration
-7. If you are blocked by permissions, confirmations, or external policy, report the exact blocker instead of looping forever
-8. Say "done" only after integration work is complete or you have identified a concrete external blocker
+5. If the integration requires pushing the target branch or the task branch, do it as part of this phase
+6. Validate the repository state before finishing
+7. Do not restart development from scratch unless the repository state clearly requires code changes to complete integration
+8. If you are blocked by permissions, confirmations, or external policy, report the exact blocker instead of looping forever
+9. Say "done" only after integration work is complete or you have identified a concrete external blocker
 
 Completion rule:
-- The preferred outcome of this phase is: the integration work is finished successfully for branch ${ctx.branchName} against target ${ctx.targetBranch}.
+- The preferred outcome of this phase is: branch ${ctx.branchName} has been successfully merged back into ${ctx.targetBranch}, and any required pushes have completed.
 - Do not treat this phase as a fresh development task.`;
   }
 
@@ -130,12 +131,12 @@ Rules:
 4. Commit the finished work to the current task branch ${ctx.branchName}
 5. Do not merge into the target branch ${ctx.targetBranch} in this phase
 6. Do not run merge scripts or perform integration work in this phase
-7. Current pipeline handoff still requires the feature branch to be pushed after implementation is complete; push ${ctx.branchName} only after the development work is committed and ready for handoff
+7. Do not push or update the target branch in this phase
 8. If you are blocked by permissions, confirmations, or missing environment requirements, report the exact blocker
-9. Say "done" only after the implementation work is complete and the branch is in a ready-for-integration state
+9. Say "done" only after the implementation work is complete and committed on ${ctx.branchName}
 
 Completion rule:
-- The intended end of this phase is: the implementation is complete on branch ${ctx.branchName} and ready to enter integration.
+- The intended end of this phase is: the implementation is complete and committed on branch ${ctx.branchName}.
 - Do not merge into ${ctx.targetBranch} in this phase.`;
 }
 
