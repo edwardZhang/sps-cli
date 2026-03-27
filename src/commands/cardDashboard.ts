@@ -1,12 +1,11 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ProjectContext } from '../core/context.js';
-import { readState } from '../core/state.js';
-import { readACPState } from '../core/acpState.js';
 import { isPersistedSessionAlive } from '../core/sessionLiveness.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
-import { createTaskBackend } from '../providers/registry.js';
 import type { Card, CardState } from '../models/types.js';
+import type { TaskLease, WorktreeEvidence } from '../core/state.js';
+import { loadRuntimeSnapshot } from '../core/runtimeSnapshot.js';
+import { createTaskBackend } from '../providers/registry.js';
 
 const HOME = process.env.HOME || '/home/coral';
 
@@ -174,9 +173,15 @@ function labelSummary(labels: string[]): string {
   return filtered.slice(0, 2).join(', ');
 }
 
-function deriveBlockedReason(labels: string[], runtimeStatus: string | null): string | null {
+function deriveBlockedReason(
+  labels: string[],
+  runtimeStatus: string | null,
+  lease: TaskLease | null,
+  evidence: WorktreeEvidence | null,
+): string | null {
   if (labels.includes('CONFLICT')) return 'CONFLICT';
   if (labels.includes('WAITING-CONFIRMATION') || runtimeStatus === 'waiting_input') return 'WAITING';
+  if (lease?.phase === 'suspended' && (evidence?.worktreeExists || evidence?.branchExists)) return 'RESUMABLE';
   if (runtimeStatus === 'stale') return 'STALE';
   if (labels.includes('NEEDS-FIX')) return 'NEEDS-FIX';
   if (labels.includes('STALE-RUNTIME')) return 'STALE';
@@ -185,15 +190,14 @@ function deriveBlockedReason(labels: string[], runtimeStatus: string | null): st
 
 async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnapshot> {
   try {
-    const ctx = ProjectContext.load(projectName);
+    const snapshot = await loadRuntimeSnapshot(projectName);
+    const { ctx, state, acpState } = snapshot;
     const taskBackend = createTaskBackend(ctx.config);
-    const [state, acpState, cards] = await Promise.all([
-      Promise.resolve(readState(ctx.paths.stateFile, ctx.maxWorkers)),
-      Promise.resolve(readACPState(ctx.paths.acpStateFile)),
-      taskBackend.listAll(),
-    ]);
+    const cards = await taskBackend.listAll();
     const snapshots: CardSnapshot[] = cards.map(card => {
       const active = state.activeCards[card.seq];
+      const lease = state.leases[card.seq] || null;
+      const evidence = state.worktreeEvidence[card.seq] || null;
       const workerSlot = active?.worker ?? null;
       const worker = workerSlot ? state.workers[workerSlot] : null;
       const session = workerSlot ? acpState.sessions[workerSlot] : null;
@@ -207,7 +211,7 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
         : session?.pendingInput
           ? 'waiting_input'
           : session?.currentRun?.status || worker?.remoteStatus || (worker?.status === 'active' ? 'running' : null);
-      const blockedReason = deriveBlockedReason(card.labels, runtimeStatus);
+      const blockedReason = deriveBlockedReason(card.labels, runtimeStatus, lease, evidence);
       return {
         seq: card.seq,
         title: card.name,

@@ -14,6 +14,7 @@ import { MergeMutex } from '../manager/merge-mutex.js';
 import { ResourceLimiter } from '../manager/resource-limiter.js';
 import { Recovery } from '../manager/recovery.js';
 import { createPMClient } from '../manager/pm-client.js';
+import { RuntimeCoordinator } from '../manager/runtime-coordinator.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { TickResult, StepResult, CommandResult } from '../models/types.js';
@@ -177,6 +178,20 @@ export async function executeTick(
   if (runners.length === 0) {
     globalLog.error('No projects could be initialized');
     process.exit(3);
+  }
+
+  // ─── Rebuild runtime projection before recovery ───────────────
+  for (const runner of runners) {
+    try {
+      const coordinator = new RuntimeCoordinator(runner.ctx, runner.taskBackend);
+      const rebuilt = await coordinator.rebuildRuntimeProjection('tick-rebuild');
+      if (rebuilt.updated) {
+        runner.log.info('Rebuilt runtime projection from PM + worktree + session evidence');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      runner.log.warn(`Runtime projection rebuild failed (non-fatal): ${msg}`);
+    }
   }
 
   if (runners.length > 1) {

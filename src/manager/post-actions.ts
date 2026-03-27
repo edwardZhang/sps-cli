@@ -531,6 +531,10 @@ export class PostActions {
           state.workers[ctx.slot].completedAt = new Date().toISOString();
         }
       }
+      if (state.leases[ctx.seq]) {
+        state.leases[ctx.seq].phase = status === 'merging' ? 'merging' : 'resolving_conflict';
+        state.leases[ctx.seq].lastTransitionAt = new Date().toISOString();
+      }
       writeState(ctx.stateFile, state, `post-actions-${status}`);
     } catch { /* best effort */ }
   }
@@ -589,6 +593,7 @@ export class PostActions {
         };
       }
       delete state.activeCards[ctx.seq];
+      delete state.leases[ctx.seq];
       writeState(ctx.stateFile, state, 'post-actions-release');
       return { step: 'release-slot', ok: true };
     } catch (err) {
@@ -910,6 +915,22 @@ export class PostActions {
     const card = state.activeCards[ctx.seq];
     if (card && options?.retryCount != null) {
       card.retryCount = options.retryCount;
+    }
+
+    if (state.leases[ctx.seq]) {
+      state.leases[ctx.seq].slot = ctx.slot;
+      state.leases[ctx.seq].branch = ctx.branch;
+      state.leases[ctx.seq].worktree = ctx.worktree;
+      state.leases[ctx.seq].sessionId = session.sessionId;
+      state.leases[ctx.seq].runId = session.currentRun?.runId || null;
+      state.leases[ctx.seq].phase = slotStatus === 'merging'
+        ? 'merging'
+        : session.pendingInput || session.currentRun?.status === 'waiting_input'
+          ? 'waiting_confirmation'
+          : slotStatus === 'resolving'
+            ? 'resolving_conflict'
+            : 'coding';
+      state.leases[ctx.seq].lastTransitionAt = nowIso;
     }
 
     writeState(ctx.stateFile, state, updatedBy);

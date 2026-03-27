@@ -34,7 +34,7 @@ export function writeACPState(stateFile: string, state: ACPState, updatedBy: str
   state.updatedAt = new Date().toISOString();
   state.updatedBy = updatedBy;
 
-  const tmpFile = stateFile + '.tmp';
+  const tmpFile = `${stateFile}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmpFile, JSON.stringify(state, null, 2) + '\n');
   renameSync(tmpFile, stateFile);
 }

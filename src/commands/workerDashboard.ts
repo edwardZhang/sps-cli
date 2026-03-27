@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
-import { readState, type WorkerSlotState } from '../core/state.js';
+import { type WorkerSlotState } from '../core/state.js';
 import { readACPState, writeACPState } from '../core/acpState.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import {
@@ -11,6 +11,7 @@ import {
   isProcessAlive,
   isPersistedSessionAlive,
 } from '../core/sessionLiveness.js';
+import { loadRuntimeSnapshot, type ProjectRuntimeSnapshot } from '../core/runtimeSnapshot.js';
 import type { ACPSessionRecord } from '../models/acp.js';
 import { tailFile } from '../providers/outputParser.js';
 import { renderClaudeStreamLines, renderCodexStreamLines } from '../providers/streamRenderer.js';
@@ -135,6 +136,20 @@ function discoverProjects(): string[] {
   } catch {
     return [];
   }
+}
+
+type SnapshotMap = Map<string, ProjectRuntimeSnapshot>;
+
+async function loadSnapshots(projects: string[]): Promise<SnapshotMap> {
+  const snapshots: SnapshotMap = new Map();
+  for (const projectName of projects) {
+    try {
+      snapshots.set(projectName, await loadRuntimeSnapshot(projectName, { projectWhenTickStopped: false }));
+    } catch {
+      // Read-only dashboard snapshots are best effort.
+    }
+  }
+  return snapshots;
 }
 
 // ── Panel data ───────────────────────────────────────────────────────
@@ -281,20 +296,14 @@ function buildInteractivePanelLines(slot: WorkerSlotState, paneText: string): st
   return summary;
 }
 
-function collectPanels(projects: string[]): WorkerPanel[] {
+function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[] {
   const panels: WorkerPanel[] = [];
   const allSessions = new Set(listTmuxSessions());
 
   for (const projectName of projects) {
-    let ctx: ProjectContext;
-    try {
-      ctx = ProjectContext.load(projectName);
-    } catch {
-      continue;
-    }
-
-    const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
-    const acpState = readACPState(ctx.paths.acpStateFile);
+    const snapshot = snapshots.get(projectName);
+    if (!snapshot) continue;
+    const { ctx, state, acpState } = snapshot;
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
       const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
@@ -426,16 +435,13 @@ function renderPanel(panel: WorkerPanel, panelWidth: number, panelHeight: number
   return lines;
 }
 
-function renderIdleSummary(projects: string[], termWidth: number): string[] {
+function renderIdleSummary(projects: string[], termWidth: number, snapshots: SnapshotMap): string[] {
   const lines: string[] = [];
   for (const projectName of projects) {
-    let ctx: ProjectContext;
-    try {
-      ctx = ProjectContext.load(projectName);
-    } catch { continue; }
-
-    const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
-    const acpState = readACPState(ctx.paths.acpStateFile);
+    void termWidth;
+    const snapshot = snapshots.get(projectName);
+    if (!snapshot) continue;
+    const { state, acpState } = snapshot;
     const summary = summarizeWorkerRuntime(state, acpState);
     const activeCards = Object.keys(state.activeCards).length;
     const extraParts: string[] = [];
@@ -479,7 +485,7 @@ function getTerminalSize(): { cols: number; rows: number } {
   };
 }
 
-function renderDashboard(projects: string[]): string {
+function renderDashboard(projects: string[], snapshots: SnapshotMap): string {
   const { cols: termWidth, rows: termHeight } = getTerminalSize();
   const output: string[] = [];
 
@@ -488,11 +494,11 @@ function renderDashboard(projects: string[]): string {
 
   // Summary line
   output.push('');
-  output.push(...renderIdleSummary(projects, termWidth));
+  output.push(...renderIdleSummary(projects, termWidth, snapshots));
   output.push('');
 
   // Collect active panels
-  const panels = collectPanels(projects);
+  const panels = collectPanels(projects, snapshots);
 
   if (panels.length === 0) {
     output.push(...renderEmptyState(termWidth));
@@ -560,7 +566,7 @@ interface DashboardJson {
   tmuxSessions: string[];
 }
 
-function buildJsonOutput(projects: string[]): DashboardJson {
+function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJson {
   const allSessions = new Set(listTmuxSessions());
   const result: DashboardJson = {
     timestamp: new Date().toISOString(),
@@ -569,13 +575,9 @@ function buildJsonOutput(projects: string[]): DashboardJson {
   };
 
   for (const projectName of projects) {
-    let ctx: ProjectContext;
-    try {
-      ctx = ProjectContext.load(projectName);
-    } catch { continue; }
-
-    const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
-    const acpState = readACPState(ctx.paths.acpStateFile);
+    const snapshot = snapshots.get(projectName);
+    if (!snapshot) continue;
+    const { state, acpState } = snapshot;
     const workers: DashboardJson['projects'][0]['workers'] = [];
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
@@ -723,9 +725,10 @@ async function runLive(projects: string[], intervalMs: number): Promise<never> {
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
 
-  const draw = () => {
+  const draw = async () => {
+    const snapshots = await loadSnapshots(projects);
     const { cols: termWidth } = getTerminalSize();
-    const screen = renderDashboard(projects);
+    const screen = renderDashboard(projects, snapshots);
     process.stdout.write('\x1b[H\x1b[J');
     process.stdout.write(screen);
 
@@ -763,7 +766,7 @@ async function runLive(projects: string[], intervalMs: number): Promise<never> {
           inputMode = false;
           inputBuffer = '';
           process.stdout.write('\x1b[?25l'); // hide cursor
-          draw();
+          void draw();
           return;
         }
         if (key === '\r') {
@@ -796,28 +799,28 @@ async function runLive(projects: string[], intervalMs: number): Promise<never> {
                 ? `${FG.green}  Sent "${response}" to ${item.project}/${item.slot}${RESET}`
                 : `${FG.red}  Failed to send to ${item.project}/${item.slot}${RESET}`;
               // Clear status after 3s
-              setTimeout(() => { statusMessage = ''; draw(); }, 3000);
+              setTimeout(() => { statusMessage = ''; void draw(); }, 3000);
             } else {
               statusMessage = `${FG.red}  Target not found: ${target}${RESET}`;
-              setTimeout(() => { statusMessage = ''; draw(); }, 3000);
+              setTimeout(() => { statusMessage = ''; void draw(); }, 3000);
             }
           } else {
             statusMessage = `${FG.red}  Usage: <slot-or-number> <response>${RESET}`;
-            setTimeout(() => { statusMessage = ''; draw(); }, 3000);
+            setTimeout(() => { statusMessage = ''; void draw(); }, 3000);
           }
-          draw();
+          void draw();
           return;
         }
         if (key === '\x7f') {
           // Backspace
           inputBuffer = inputBuffer.slice(0, -1);
-          draw();
+          void draw();
           return;
         }
         // Regular character
         if (key.length === 1 && key.charCodeAt(0) >= 32) {
           inputBuffer += key;
-          draw();
+          void draw();
           return;
         }
         return;
@@ -828,21 +831,21 @@ async function runLive(projects: string[], intervalMs: number): Promise<never> {
         cleanup();
       }
       if (key === 'r') {
-        draw();
+        void draw();
       }
       if (key === ':') {
         const pending = collectPendingInputs(projects);
         if (pending.length > 0) {
           inputMode = true;
           inputBuffer = '';
-          draw();
+          void draw();
         }
       }
     });
   }
 
-  draw();
-  setInterval(draw, intervalMs);
+  await draw();
+  setInterval(() => { void draw(); }, intervalMs);
 
   return new Promise(() => {});
 }
@@ -870,8 +873,10 @@ export async function executeWorkerDashboard(
     process.exit(1);
   }
 
+  const snapshots = await loadSnapshots(projects);
+
   if (jsonOutput) {
-    console.log(JSON.stringify(buildJsonOutput(projects), null, 2));
+    console.log(JSON.stringify(buildJsonOutput(projects, snapshots), null, 2));
     return;
   }
 
@@ -879,6 +884,6 @@ export async function executeWorkerDashboard(
     const intervalMs = parseInt(process.env.SPS_DASHBOARD_INTERVAL || '3000', 10);
     await runLive(projects, intervalMs);
   } else {
-    console.log(renderDashboard(projects));
+    console.log(renderDashboard(projects, snapshots));
   }
 }

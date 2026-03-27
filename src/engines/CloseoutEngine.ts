@@ -529,6 +529,7 @@ export class CloseoutEngine {
           exitCode: null,
         };
         delete state.activeCards[seq];
+        delete state.leases[seq];
         writeState(this.ctx.paths.stateFile, state, 'closeout-release');
         this.log.ok(`seq ${seq}: Worker slot ${slotName} released`);
       } catch (err) {
@@ -541,6 +542,7 @@ export class CloseoutEngine {
       // Still clean up activeCards entry if present
       if (state.activeCards[seq]) {
         delete state.activeCards[seq];
+        delete state.leases[seq];
         try {
           writeState(this.ctx.paths.stateFile, state, 'closeout-release');
         } catch {

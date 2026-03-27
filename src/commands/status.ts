@@ -7,11 +7,12 @@
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { readState } from '../core/state.js';
-import { readACPState } from '../core/acpState.js';
 import { loadProjectConf } from '../core/config.js';
+import { readACPState } from '../core/acpState.js';
+import { readState } from '../core/state.js';
 import { isProcessAlive } from '../core/sessionLiveness.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
+import { loadRuntimeSnapshot } from '../core/runtimeSnapshot.js';
 
 const HOME = process.env.HOME || '/home/coral';
 const PROJECTS_DIR = resolve(HOME, '.coral', 'projects');
@@ -31,7 +32,7 @@ interface ProjectStatus {
   pipelineQueue: number;
 }
 
-function getProjectStatus(project: string): ProjectStatus {
+async function getProjectStatus(project: string): Promise<ProjectStatus> {
   const projectDir = resolve(PROJECTS_DIR, project);
   const lockFile = resolve(projectDir, 'runtime', 'tick.lock');
   const stateFile = resolve(projectDir, 'runtime', 'state.json');
@@ -57,14 +58,20 @@ function getProjectStatus(project: string): ProjectStatus {
   // Worker status — verify PIDs are actually alive
   let workers = { total: 0, active: 0, idle: 0, stale: 0, merging: 0, working: 0 };
   let activeCards = 0;
-  if (existsSync(stateFile)) {
-    try {
-      const maxWorkers = loadProjectConf(project).MAX_CONCURRENT_WORKERS;
-      const state = readState(stateFile, maxWorkers);
-      const acpState = readACPState(acpStateFile);
-      workers = summarizeWorkerRuntime(state, acpState);
-      activeCards = Object.keys(state.activeCards).length;
-    } catch { /* corrupt state */ }
+  try {
+    const snapshot = await loadRuntimeSnapshot(project);
+    workers = summarizeWorkerRuntime(snapshot.state, snapshot.acpState);
+    activeCards = Object.keys(snapshot.state.activeCards).length;
+  } catch {
+    if (existsSync(stateFile)) {
+      try {
+        const maxWorkers = loadProjectConf(project).MAX_CONCURRENT_WORKERS;
+        const state = readState(stateFile, maxWorkers);
+        const acpState = readACPState(acpStateFile);
+        workers = summarizeWorkerRuntime(state, acpState);
+        activeCards = Object.keys(state.activeCards).length;
+      } catch { /* corrupt state */ }
+    }
   }
 
   // Pipeline queue
@@ -95,7 +102,7 @@ export async function executeStatus(flags: Record<string, boolean>): Promise<voi
     process.exit(1);
   }
 
-  const statuses = projects.map(getProjectStatus);
+  const statuses = await Promise.all(projects.map(getProjectStatus));
 
   if (flags.json) {
     console.log(JSON.stringify(statuses, null, 2));

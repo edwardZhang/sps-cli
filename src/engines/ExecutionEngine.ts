@@ -504,6 +504,19 @@ export class ExecutionEngine {
       startedAt: new Date().toISOString(),
     };
 
+    state.leases[seq] = {
+      seq: parseInt(seq, 10),
+      pmStateObserved: card.state,
+      phase: 'preparing',
+      slot: slotName,
+      branch: branchName,
+      worktree: worktreePath,
+      sessionId: null,
+      runId: null,
+      claimedAt: state.workers[slotName].claimedAt,
+      lastTransitionAt: new Date().toISOString(),
+    };
+
     try {
       writeState(this.ctx.paths.stateFile, state, 'pipeline-launch');
       this.log.ok(`Step 4: Claimed slot ${slotName} for seq ${seq}`);
@@ -569,6 +582,12 @@ export class ExecutionEngine {
         const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
         if (freshState.workers[slotName]) {
           this.applyAcpSessionToSlot(freshState.workers[slotName], session);
+          if (freshState.leases[seq]) {
+            freshState.leases[seq].sessionId = session.sessionId;
+            freshState.leases[seq].runId = session.currentRun?.runId || null;
+            freshState.leases[seq].phase = session.pendingInput ? 'waiting_confirmation' : 'coding';
+            freshState.leases[seq].lastTransitionAt = new Date().toISOString();
+          }
           writeState(this.ctx.paths.stateFile, freshState, 'pipeline-launch-acp');
         }
 
@@ -630,6 +649,10 @@ export class ExecutionEngine {
           freshState.workers[slotName].remoteStatus = null;
           freshState.workers[slotName].lastEventAt = null;
           freshState.workers[slotName].exitCode = null;
+          if (freshState.leases[seq]) {
+            freshState.leases[seq].phase = 'coding';
+            freshState.leases[seq].lastTransitionAt = new Date().toISOString();
+          }
           writeState(this.ctx.paths.stateFile, freshState, 'pipeline-launch-print');
         }
 
@@ -656,6 +679,13 @@ export class ExecutionEngine {
       const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
       if (freshState.activeCards[seq]) {
         freshState.activeCards[seq].state = 'Inprogress';
+        if (freshState.leases[seq]) {
+          freshState.leases[seq].pmStateObserved = 'Inprogress';
+          if (freshState.leases[seq].phase === 'preparing' || freshState.leases[seq].phase === 'queued') {
+            freshState.leases[seq].phase = 'coding';
+          }
+          freshState.leases[seq].lastTransitionAt = new Date().toISOString();
+        }
         writeState(this.ctx.paths.stateFile, freshState, 'pipeline-launch');
       }
       this.log.ok(`Step 7: Moved seq ${seq} Todo → Inprogress`);
@@ -1152,6 +1182,7 @@ ${requirements.join('\n')}`);
         };
       }
       delete state.activeCards[seq];
+      delete state.leases[seq];
       writeState(this.ctx.paths.stateFile, state, 'pipeline-release');
       this.taskBackend.releaseClaim(seq).catch(() => {});
     } catch {

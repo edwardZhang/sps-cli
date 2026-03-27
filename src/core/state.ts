@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { dirname } from 'node:path';
+import type { CardState } from '../models/types.js';
 
 export interface WorkerSlotState {
   status: 'idle' | 'active' | 'merging' | 'resolving' | 'releasing';
@@ -54,6 +55,52 @@ export interface WorktreeCleanupEntry {
   markedAt: string;
 }
 
+export type TaskLeasePhase =
+  | 'queued'
+  | 'preparing'
+  | 'coding'
+  | 'merging'
+  | 'resolving_conflict'
+  | 'waiting_confirmation'
+  | 'suspended'
+  | 'closing'
+  | 'released';
+
+export interface TaskLease {
+  seq: number;
+  pmStateObserved: CardState | null;
+  phase: TaskLeasePhase;
+  slot: string | null;
+  branch: string | null;
+  worktree: string | null;
+  sessionId: string | null;
+  runId: string | null;
+  claimedAt: string | null;
+  lastTransitionAt: string;
+}
+
+export type WorktreeEvidenceStatus =
+  | 'missing'
+  | 'clean'
+  | 'dirty'
+  | 'rebase'
+  | 'merge'
+  | 'conflict';
+
+export interface WorktreeEvidence {
+  seq: number;
+  branch: string | null;
+  worktree: string | null;
+  worktreeExists: boolean;
+  branchExists: boolean;
+  gitStatus: WorktreeEvidenceStatus;
+  pushed: boolean;
+  mergedToBase: boolean;
+  aheadOfBase: number;
+  behindBase: number;
+  lastCheckedAt: string;
+}
+
 export interface RuntimeState {
   version: number;
   generation: number;
@@ -61,10 +108,12 @@ export interface RuntimeState {
   updatedBy: string;
   workers: Record<string, WorkerSlotState>;
   activeCards: Record<string, ActiveCardState>;
+  leases: Record<string, TaskLease>;
+  worktreeEvidence: Record<string, WorktreeEvidence>;
   worktreeCleanup: WorktreeCleanupEntry[];
 }
 
-function idleWorkerSlot(): WorkerSlotState {
+export function createIdleWorkerSlot(): WorkerSlotState {
   return {
     status: 'idle',
     seq: null,
@@ -92,7 +141,7 @@ function idleWorkerSlot(): WorkerSlotState {
 function defaultState(maxWorkers: number): RuntimeState {
   const workers: Record<string, WorkerSlotState> = {};
   for (let i = 1; i <= maxWorkers; i++) {
-    workers[`worker-${i}`] = idleWorkerSlot();
+    workers[`worker-${i}`] = createIdleWorkerSlot();
   }
   return {
     version: 1,
@@ -101,6 +150,8 @@ function defaultState(maxWorkers: number): RuntimeState {
     updatedBy: 'init',
     workers,
     activeCards: {},
+    leases: {},
+    worktreeEvidence: {},
     worktreeCleanup: [],
   };
 }
@@ -113,12 +164,12 @@ function reconcileState(raw: RuntimeState, maxWorkers: number): RuntimeState {
   for (let i = 1; i <= maxWorkers; i++) {
     const slotName = `worker-${i}`;
     if (!workers[slotName]) {
-      workers[slotName] = idleWorkerSlot();
+      workers[slotName] = createIdleWorkerSlot();
       continue;
     }
 
     workers[slotName] = {
-      ...idleWorkerSlot(),
+      ...createIdleWorkerSlot(),
       ...workers[slotName],
     };
   }
@@ -130,6 +181,8 @@ function reconcileState(raw: RuntimeState, maxWorkers: number): RuntimeState {
     updatedBy: raw.updatedBy || 'migrate',
     workers,
     activeCards: raw.activeCards || {},
+    leases: raw.leases || {},
+    worktreeEvidence: raw.worktreeEvidence || {},
     worktreeCleanup: raw.worktreeCleanup || [],
   };
 }
@@ -158,7 +211,7 @@ export function writeState(stateFile: string, state: RuntimeState, updatedBy: st
   state.updatedAt = new Date().toISOString();
   state.updatedBy = updatedBy;
 
-  const tmpFile = stateFile + '.tmp';
+  const tmpFile = `${stateFile}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmpFile, JSON.stringify(state, null, 2) + '\n');
   renameSync(tmpFile, stateFile);
 }
