@@ -6,7 +6,7 @@ import type { Notifier } from '../interfaces/Notifier.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type { ACPSessionRecord } from '../models/acp.js';
 import type { CommandResult, ActionRecord, Card, RecommendedAction } from '../models/types.js';
-import { readState, writeState } from '../core/state.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { Logger } from '../core/logger.js';
 
@@ -26,6 +26,7 @@ import { Logger } from '../core/logger.js';
  */
 export class CloseoutEngine {
   private log: Logger;
+  private runtimeStore: RuntimeStore;
 
   constructor(
     private ctx: ProjectContext,
@@ -36,6 +37,7 @@ export class CloseoutEngine {
     private agentRuntime: AgentRuntime | null = null,
   ) {
     this.log = new Logger('qa', ctx.projectName, ctx.paths.logsDir);
+    this.runtimeStore = new RuntimeStore(ctx);
   }
 
   async tick(): Promise<CommandResult> {
@@ -315,22 +317,26 @@ export class CloseoutEngine {
     const autofixAttempts = typeof meta.autofixAttempts === 'number' ? meta.autofixAttempts : 0;
 
     if (autofixAttempts < maxAttempts) {
-      // Try self-repair: find the worker session for this card
-      const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-      const slotEntry = Object.entries(state.workers).find(
-        ([, w]) => w.seq === parseInt(seq, 10) && w.tmuxSession,
-      );
-
-      if (slotEntry) {
-        const [slotName, slotState] = slotEntry;
-        const session = slotState.tmuxSession!;
-        const isPrintMode = slotState.mode === 'print';
-        const isAcpMode =
+      // Try self-repair: prefer lease/worktree evidence, then reuse or rebuild a worker slot.
+      const state = this.runtimeStore.readState();
+      const runtime = this.runtimeStore.getTask(seq, state);
+      const slotName =
+        runtime.slotName ||
+        this.runtimeStore.findAvailableSlot(state);
+      const slotState = slotName ? state.workers[slotName] || null : null;
+      const session = slotState?.tmuxSession || null;
+      const worktree = runtime.lease?.worktree || runtime.evidence?.worktree || slotState?.worktree || '';
+      const isPrintMode = slotState?.mode === 'print';
+      const isAcpMode =
+        !!slotState &&
+        (
           slotState.transport === 'acp' ||
           slotState.transport === 'pty' ||
           slotState.mode === 'acp' ||
-          slotState.mode === 'pty';
+          slotState.mode === 'pty'
+        );
 
+      if (slotName && (session || (isAcpMode && this.agentRuntime && worktree))) {
         try {
           const fixPrompt = `CI pipeline has failed. Please review the CI logs, fix the issues, commit, and push. This is autofix attempt ${autofixAttempts + 1} of ${maxAttempts}.`;
 
@@ -338,7 +344,7 @@ export class CloseoutEngine {
             await this.resumeAcpWorker(
               slotName,
               seq,
-              slotState.worktree || '',
+              worktree,
               branchName,
               fixPrompt,
               'active',
@@ -347,31 +353,31 @@ export class CloseoutEngine {
           } else if (isPrintMode) {
             // Print mode: spawn new process with --resume (process already exited)
             const resumeResult = await this.workerProvider.sendFix(
-              session, fixPrompt, slotState.sessionId || undefined,
+              session!, fixPrompt, slotState?.sessionId || undefined,
             );
 
             // Update state with new process info
             if (resumeResult && typeof resumeResult === 'object' && 'pid' in resumeResult) {
-              const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-              if (freshState.workers[slotName]) {
-                freshState.workers[slotName].pid = resumeResult.pid;
-                freshState.workers[slotName].outputFile = resumeResult.outputFile;
-                if (resumeResult.sessionId) {
-                  freshState.workers[slotName].sessionId = resumeResult.sessionId;
+              this.runtimeStore.updateState('closeout-autofix-resume', (freshState) => {
+                if (freshState.workers[slotName]) {
+                  freshState.workers[slotName].pid = resumeResult.pid;
+                  freshState.workers[slotName].outputFile = resumeResult.outputFile;
+                  if (resumeResult.sessionId) {
+                    freshState.workers[slotName].sessionId = resumeResult.sessionId;
+                  }
+                  freshState.workers[slotName].exitCode = null;
                 }
-                freshState.workers[slotName].exitCode = null;
-                writeState(this.ctx.paths.stateFile, freshState, 'closeout-autofix-resume');
-              }
+              });
             }
           } else {
             // Interactive mode: send text to live tmux session
-            const inspection = await this.workerProvider.inspect(session);
+            const inspection = await this.workerProvider.inspect(session!);
             if (!inspection.alive) {
               this.log.warn(`seq ${seq}: Worker session dead, cannot autofix`);
               // Fall through to NEEDS-FIX below
               throw new Error('Worker session dead');
             }
-            await this.workerProvider.sendFix(session, fixPrompt);
+            await this.workerProvider.sendFix(session!, fixPrompt);
           }
 
           // Increment counter
@@ -498,39 +504,18 @@ export class CloseoutEngine {
     }
 
     // Step 3: Release worker slot in state.json
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-    const slotEntry = Object.entries(state.workers).find(
-      ([, w]) => w.seq === parseInt(seq, 10),
-    );
+    const state = this.runtimeStore.readState();
+    const runtime = this.runtimeStore.getTask(seq, state);
+    const slotEntry = runtime.slotName && runtime.slot ? [runtime.slotName, runtime.slot] as const : null;
     let sessionName: string | null = null;
 
     if (slotEntry) {
       const [slotName, slotState] = slotEntry;
       sessionName = slotState.tmuxSession;
       try {
-        state.workers[slotName] = {
-          status: 'idle',
-          seq: null,
-          branch: null,
-          worktree: null,
-          tmuxSession: null,
-          claimedAt: null,
-          lastHeartbeat: null,
-          mode: null,
-          transport: null,
-          agent: null,
-          sessionId: null,
-          runId: null,
-          sessionState: null,
-          remoteStatus: null,
-          lastEventAt: null,
-          pid: null,
-          outputFile: null,
-          exitCode: null,
-        };
-        delete state.activeCards[seq];
-        delete state.leases[seq];
-        writeState(this.ctx.paths.stateFile, state, 'closeout-release');
+        this.runtimeStore.updateState('closeout-release', (draft) => {
+          this.runtimeStore.releaseTaskProjection(draft, seq, { dropLease: true });
+        });
         this.log.ok(`seq ${seq}: Worker slot ${slotName} released`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -540,11 +525,11 @@ export class CloseoutEngine {
     } else {
       // No active slot found — already released (idempotency)
       // Still clean up activeCards entry if present
-      if (state.activeCards[seq]) {
-        delete state.activeCards[seq];
-        delete state.leases[seq];
+      if (state.activeCards[seq] || state.leases[seq]) {
         try {
-          writeState(this.ctx.paths.stateFile, state, 'closeout-release');
+          this.runtimeStore.updateState('closeout-release', (draft) => {
+            this.runtimeStore.releaseTaskProjection(draft, seq, { dropLease: true });
+          });
         } catch {
           // non-fatal
         }
@@ -566,15 +551,19 @@ export class CloseoutEngine {
 
     // Step 5: Mark worktree for cleanup (actual removal runs at end of tick)
     try {
-      const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+      const freshState = this.runtimeStore.readState();
       const branchName = this.buildBranchName(card);
-      const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
+      const worktreePath =
+        runtime.lease?.worktree ||
+        runtime.evidence?.worktree ||
+        resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
       const cleanup = freshState.worktreeCleanup ?? [];
       const alreadyMarked = cleanup.some((e) => e.branch === branchName);
       if (!alreadyMarked) {
         cleanup.push({ branch: branchName, worktreePath, markedAt: new Date().toISOString() });
-        freshState.worktreeCleanup = cleanup;
-        writeState(this.ctx.paths.stateFile, freshState, 'closeout-worktree-mark');
+        this.runtimeStore.updateState('closeout-worktree-mark', (draft) => {
+          draft.worktreeCleanup = cleanup;
+        });
       }
       this.log.ok(`seq ${seq}: Worktree marked for cleanup`);
     } catch (err) {
@@ -617,14 +606,12 @@ export class CloseoutEngine {
   private async resolveConflict(card: Card, actions: ActionRecord[]): Promise<boolean> {
     const seq = card.seq;
     const branchName = this.buildBranchName(card);
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
+    const runtime = this.runtimeStore.getTask(seq, state);
     const baseBranch = this.ctx.mergeBranch;
 
     // Find worktree for this card
-    const slotEntry = Object.entries(state.workers).find(
-      ([, w]) => w.seq === parseInt(seq, 10),
-    );
-    const worktree = slotEntry?.[1]?.worktree;
+    const worktree = runtime.lease?.worktree || runtime.evidence?.worktree || runtime.slot?.worktree;
     if (!worktree) {
       this.log.warn(`seq ${seq}: No worktree found for conflict resolution`);
       return false;
@@ -663,20 +650,20 @@ export class CloseoutEngine {
     }
 
     // ── L2: Send to original worker ──────────────────────────────
-    if (!slotEntry) return false;
-    const [slotName, slotState] = slotEntry;
-    const session = slotState.tmuxSession;
-    if (!session) {
-      this.log.warn(`seq ${seq}: No worker session for L2 conflict resolution`);
-      return false;
-    }
+    const slotName = runtime.slotName || this.runtimeStore.findAvailableSlot(state);
+    if (!slotName) return false;
+    const slotState = state.workers[slotName];
+    const session = slotState?.tmuxSession || null;
 
-    const isPrintMode = slotState.mode === 'print';
+    const isPrintMode = slotState?.mode === 'print';
     const isAcpMode =
-      slotState.transport === 'acp' ||
-      slotState.transport === 'pty' ||
-      slotState.mode === 'acp' ||
-      slotState.mode === 'pty';
+      !!slotState &&
+      (
+        slotState.transport === 'acp' ||
+        slotState.transport === 'pty' ||
+        slotState.mode === 'acp' ||
+        slotState.mode === 'pty'
+      );
 
     try {
       if (isAcpMode && this.agentRuntime) {
@@ -694,26 +681,34 @@ export class CloseoutEngine {
           'closeout-conflict-resume',
         );
       } else if (isPrintMode) {
+        if (!session) {
+          this.log.warn(`seq ${seq}: No worker session for L2 conflict resolution`);
+          return false;
+        }
         // Print mode: spawn new process with --resume
         this.log.info(`seq ${seq}: L2 — spawning conflict resolution via --resume`);
         const resumeResult = await this.workerProvider.resolveConflict(
-          session, worktree, branchName, slotState.sessionId || undefined,
+          session, worktree, branchName, slotState?.sessionId || undefined,
         );
 
         // Update state with new process info
         if (resumeResult && typeof resumeResult === 'object' && 'pid' in resumeResult) {
-          const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-          if (freshState.workers[slotName]) {
-            freshState.workers[slotName].pid = resumeResult.pid;
-            freshState.workers[slotName].outputFile = resumeResult.outputFile;
-            if (resumeResult.sessionId) {
-              freshState.workers[slotName].sessionId = resumeResult.sessionId;
+          this.runtimeStore.updateState('closeout-conflict-resume', (freshState) => {
+            if (freshState.workers[slotName]) {
+              freshState.workers[slotName].pid = resumeResult.pid;
+              freshState.workers[slotName].outputFile = resumeResult.outputFile;
+              if (resumeResult.sessionId) {
+                freshState.workers[slotName].sessionId = resumeResult.sessionId;
+              }
+              freshState.workers[slotName].exitCode = null;
             }
-            freshState.workers[slotName].exitCode = null;
-            writeState(this.ctx.paths.stateFile, freshState, 'closeout-conflict-resume');
-          }
+          });
         }
       } else {
+        if (!session) {
+          this.log.warn(`seq ${seq}: No live worker session for interactive L2 conflict resolution`);
+          return false;
+        }
         // Interactive mode: send to live tmux session
         const inspection = await this.workerProvider.inspect(session);
         if (!inspection.alive) {
@@ -753,7 +748,7 @@ export class CloseoutEngine {
    * Each entry is processed independently — one failure does not block others.
    */
   private async cleanupWorktrees(actions: ActionRecord[]): Promise<void> {
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
     const queue = state.worktreeCleanup ?? [];
     if (queue.length === 0) return;
 
@@ -789,9 +784,9 @@ export class CloseoutEngine {
     }
 
     // Update state with remaining entries
-    const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-    freshState.worktreeCleanup = remaining;
-    writeState(this.ctx.paths.stateFile, freshState, 'closeout-worktree-cleanup');
+    this.runtimeStore.updateState('closeout-worktree-cleanup', (freshState) => {
+      freshState.worktreeCleanup = remaining;
+    });
   }
 
   // ─── Helpers ───────────────────────────────────────────────────
@@ -865,27 +860,37 @@ export class CloseoutEngine {
       await this.agentRuntime.ensureSession(slotName, undefined, worktree);
       session = await this.agentRuntime.startRun(slotName, prompt, undefined, worktree);
     }
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-    const slot = state.workers[slotName];
-    if (slot) {
-      slot.status = slotStatus;
-      slot.mode = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
-      slot.transport = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
-      slot.agent = session.tool;
-      slot.tmuxSession = session.sessionName;
-      slot.sessionId = session.sessionId;
-      slot.runId = session.currentRun?.runId || null;
-      slot.sessionState = session.sessionState;
-      slot.remoteStatus = session.currentRun?.status || null;
-      slot.lastEventAt = session.lastSeenAt;
-      slot.lastHeartbeat = new Date().toISOString();
-      slot.branch = slot.branch || branchName;
-      slot.worktree = slot.worktree || worktree;
-      slot.pid = null;
-      slot.outputFile = null;
-      slot.exitCode = null;
-    }
-    writeState(this.ctx.paths.stateFile, state, updatedBy);
+    this.runtimeStore.updateState(updatedBy, (state) => {
+      const slot = state.workers[slotName];
+      if (slot) {
+        slot.status = slotStatus;
+        slot.mode = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+        slot.transport = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+        slot.agent = session.tool;
+        slot.tmuxSession = session.sessionName;
+        slot.sessionId = session.sessionId;
+        slot.runId = session.currentRun?.runId || null;
+        slot.sessionState = session.sessionState;
+        slot.remoteStatus = session.currentRun?.status || null;
+        slot.lastEventAt = session.lastSeenAt;
+        slot.lastHeartbeat = new Date().toISOString();
+        slot.branch = slot.branch || branchName;
+        slot.worktree = slot.worktree || worktree;
+        slot.seq = parseInt(seq, 10);
+        slot.pid = null;
+        slot.outputFile = null;
+        slot.exitCode = null;
+      }
+      if (state.leases[seq]) {
+        state.leases[seq].slot = slotName;
+        state.leases[seq].branch = branchName;
+        state.leases[seq].worktree = worktree;
+        state.leases[seq].sessionId = session.sessionId;
+        state.leases[seq].runId = session.currentRun?.runId || null;
+        state.leases[seq].phase = slotStatus === 'resolving' ? 'resolving_conflict' : 'coding';
+        state.leases[seq].lastTransitionAt = new Date().toISOString();
+      }
+    });
   }
 
   private logEvent(

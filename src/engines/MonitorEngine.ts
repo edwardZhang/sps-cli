@@ -6,8 +6,7 @@ import type { Notifier } from '../interfaces/Notifier.js';
 import type { CommandResult, ActionRecord, CheckResult, RecommendedAction } from '../models/types.js';
 import type { ProcessSupervisor } from '../manager/supervisor.js';
 import { existsSync, statSync } from 'node:fs';
-import { readState, writeState } from '../core/state.js';
-import { readACPState } from '../core/acpState.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import { Logger } from '../core/logger.js';
 
 /**
@@ -25,6 +24,7 @@ import { Logger } from '../core/logger.js';
  */
 export class MonitorEngine {
   private log: Logger;
+  private runtimeStore: RuntimeStore;
 
   constructor(
     private ctx: ProjectContext,
@@ -35,6 +35,7 @@ export class MonitorEngine {
     private supervisor: ProcessSupervisor,
   ) {
     this.log = new Logger('monitor', ctx.projectName, ctx.paths.logsDir);
+    this.runtimeStore = new RuntimeStore(ctx);
   }
 
   async tick(): Promise<CommandResult> {
@@ -80,8 +81,9 @@ export class MonitorEngine {
     checks: CheckResult[],
     actions: ActionRecord[],
   ): Promise<void> {
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-    const acpState = readACPState(this.ctx.paths.acpStateFile);
+    const { state, acpState } = this.runtimeStore.read();
+    const orphanedTasks: Array<{ seq: string; slotName: string }> = [];
+    const orphanedSlots: string[] = [];
     let orphansFound = 0;
 
     for (const [slotName, slotState] of Object.entries(state.workers)) {
@@ -104,7 +106,7 @@ export class MonitorEngine {
       // Supervisor doesn't know about this worker.
       // PostActions exit callback may have already cleaned up state.
       // Re-read state to check for race with exit callback.
-      const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+      const freshState = this.runtimeStore.readState();
       const freshSlot = freshState.workers[slotName];
       if (!freshSlot || !['active', 'resolving', 'merging'].includes(freshSlot.status)) continue;
 
@@ -117,29 +119,10 @@ export class MonitorEngine {
         await this.addLabelSafe(String(slotState.seq), 'STALE-RUNTIME');
       }
 
-      state.workers[slotName] = {
-        status: 'idle',
-        seq: null,
-        branch: null,
-        worktree: null,
-        tmuxSession: null,
-        claimedAt: null,
-        lastHeartbeat: null,
-        mode: null,
-        transport: null,
-        agent: null,
-        sessionId: null,
-        runId: null,
-        sessionState: null,
-        remoteStatus: null,
-        lastEventAt: null,
-        pid: null,
-        outputFile: null,
-        exitCode: null,
-      };
-
       if (slotState.seq != null) {
-        delete state.activeCards[String(slotState.seq)];
+        orphanedTasks.push({ seq: String(slotState.seq), slotName });
+      } else {
+        orphanedSlots.push(slotName);
       }
 
       orphansFound++;
@@ -156,7 +139,17 @@ export class MonitorEngine {
 
     if (orphansFound > 0) {
       try {
-        writeState(this.ctx.paths.stateFile, state, 'monitor-orphan-cleanup');
+        this.runtimeStore.updateState('monitor-orphan-cleanup', (draft) => {
+          for (const slotName of orphanedSlots) {
+            this.runtimeStore.clearWorkerSlot(draft, slotName);
+          }
+          for (const { seq } of orphanedTasks) {
+            this.runtimeStore.releaseTaskProjection(draft, seq, {
+              phase: 'suspended',
+              keepWorktree: true,
+            });
+          }
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.log.error(`Failed to write state after orphan cleanup: ${msg}`);
@@ -180,38 +173,34 @@ export class MonitorEngine {
     recommendedActions: RecommendedAction[],
   ): Promise<void> {
     const inprogressCards = await this.listRuntimeAwareInprogressCards();
-    const acpState = readACPState(this.ctx.paths.acpStateFile);
+    const acpState = this.runtimeStore.readACPState();
     let staleCount = 0;
 
     for (const card of inprogressCards) {
       if (card.labels.includes('STALE-RUNTIME') || card.labels.includes('CONFLICT') || card.labels.includes('NEEDS-FIX')) continue;
 
-      const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-      const slotEntry = Object.entries(state.workers).find(
-        ([, w]) => w.seq === parseInt(card.seq, 10),
-      );
-      const trackedCard = state.activeCards[card.seq];
+      const state = this.runtimeStore.readState();
+      const runtime = this.runtimeStore.getTask(card.seq, state, acpState);
       const branchName = this.buildBranchName(card);
 
-      if (!slotEntry) {
-        if (!trackedCard) {
+      if (!runtime.slotName || !runtime.slot) {
+        if (!runtime.lease) {
           const mrStatus = await this.repoBackend.getMrStatus(branchName);
           if (mrStatus.state === 'merged') {
             this.log.info(`seq ${card.seq}: Card already merged while closeout was releasing resources, skipping stale check`);
             continue;
           }
         }
-        // No worker slot for this card — it's stale
-        this.log.warn(`seq ${card.seq}: Inprogress but no worker slot assigned`);
+        this.log.warn(`seq ${card.seq}: Inprogress but no live lease-owned slot assigned`);
         await this.handleStaleRuntime(card, actions, recommendedActions);
         staleCount++;
         continue;
       }
 
-      const [, slotState] = slotEntry;
+      const slotState = runtime.slot;
 
       if (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') {
-        const session = acpState.sessions[slotEntry[0]];
+        const session = runtime.slotName ? acpState.sessions[runtime.slotName] : undefined;
         if (this.isAcpSessionAlive(session)) {
           continue;
         }
@@ -219,7 +208,7 @@ export class MonitorEngine {
 
       // Check if Supervisor is tracking this worker
       const seq = slotState.seq != null ? String(slotState.seq) : '';
-      const workerId = `${this.ctx.projectName}:${slotEntry[0]}:${seq}`;
+      const workerId = `${this.ctx.projectName}:${runtime.slotName}:${seq}`;
       const handle = this.supervisor.get(workerId);
 
       if (handle && handle.exitCode === null) {
@@ -230,7 +219,7 @@ export class MonitorEngine {
       if (!handle) {
         // Not tracked by Supervisor and no slot → stale
         // Check for MR as a last resort
-        const mrStatus = await this.repoBackend.getMrStatus(slotState.branch || branchName);
+        const mrStatus = await this.repoBackend.getMrStatus(slotState.branch || runtime.lease?.branch || branchName);
 
         if (mrStatus.exists) {
           this.log.warn(`seq ${card.seq}: Worker not tracked, but MR exists — stale runtime`);
@@ -269,11 +258,11 @@ export class MonitorEngine {
   private async listRuntimeAwareInprogressCards(): Promise<{ seq: string; name: string; labels: string[] }[]> {
     const cards = await this.taskBackend.listByState('Inprogress');
     const bySeq = new Map(cards.map(card => [card.seq, card]));
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
 
-    for (const [seq, activeCard] of Object.entries(state.activeCards)) {
-      const slot = activeCard.worker ? state.workers[activeCard.worker] : null;
-      if (activeCard.state !== 'Inprogress' || bySeq.has(seq) || !slot || slot.status === 'idle') continue;
+    for (const [seq, lease] of Object.entries(state.leases)) {
+      if (bySeq.has(seq)) continue;
+      if (!['coding', 'merging', 'resolving_conflict', 'waiting_confirmation', 'closing'].includes(lease.phase)) continue;
       const card = await this.taskBackend.getBySeq(seq);
       if (card) bySeq.set(seq, card);
     }
@@ -342,25 +331,22 @@ export class MonitorEngine {
     actions: ActionRecord[],
     recommendedActions: RecommendedAction[],
   ): Promise<void> {
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
     const timeoutHours = this.ctx.config.INPROGRESS_TIMEOUT_HOURS;
     const now = Date.now();
     let timeoutCount = 0;
 
-    for (const [seq, activeCard] of Object.entries(state.activeCards)) {
-      if (activeCard.state !== 'Inprogress') continue;
+    for (const [seq, lease] of Object.entries(state.leases)) {
+      if (!['coding', 'merging', 'resolving_conflict', 'waiting_confirmation', 'closing'].includes(lease.phase)) continue;
 
-      const startTime = new Date(activeCard.startedAt).getTime();
+      const startTime = new Date(lease.claimedAt || lease.lastTransitionAt).getTime();
       const elapsedHours = (now - startTime) / (1000 * 60 * 60);
 
       if (elapsedHours <= timeoutHours) continue;
 
       // Check for recent heartbeat
-      const slotEntry = Object.entries(state.workers).find(
-        ([, w]) => w.seq === parseInt(seq, 10),
-      );
-      if (slotEntry) {
-        const [, slotState] = slotEntry;
+      const slotState = lease.slot ? state.workers[lease.slot] || null : null;
+      if (slotState) {
         if (slotState.lastHeartbeat) {
           const hbTime = new Date(slotState.lastHeartbeat).getTime();
           const hbAge = (now - hbTime) / (1000 * 60 * 60);
@@ -413,12 +399,14 @@ export class MonitorEngine {
     checks: CheckResult[],
     actions: ActionRecord[],
   ): Promise<void> {
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-    const acpState = readACPState(this.ctx.paths.acpStateFile);
+    const { state, acpState } = this.runtimeStore.read();
     let waitingCount = 0;
 
-    for (const [slotName, slotState] of Object.entries(state.workers)) {
-      if (!['active', 'resolving', 'merging'].includes(slotState.status)) continue;
+    for (const [seq, lease] of Object.entries(state.leases)) {
+      if (lease.phase !== 'waiting_confirmation' || !lease.slot) continue;
+      const slotName = lease.slot;
+      const slotState = state.workers[slotName];
+      if (!slotState) continue;
       const isAgentTransport =
         slotState.transport === 'acp' ||
         slotState.transport === 'pty' ||
@@ -430,7 +418,6 @@ export class MonitorEngine {
         const pending = session?.pendingInput;
         if (!session || session.currentRun?.status !== 'waiting_input' || !pending) continue;
 
-        const seq = slotState.seq != null ? String(slotState.seq) : slotName;
         await this.addLabelSafe(seq, 'WAITING-CONFIRMATION');
         await this.notifySafe(
           `seq:${seq} waiting for confirmation (${pending.type}): ${pending.prompt}`,
@@ -557,28 +544,38 @@ export class MonitorEngine {
     checks: CheckResult[],
     recommendedActions: RecommendedAction[],
   ): Promise<void> {
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const { state, acpState } = this.runtimeStore.read();
     const discrepancies: string[] = [];
 
-    for (const [slotName, slotState] of Object.entries(state.workers)) {
-      if (slotState.status !== 'active') continue;
+    for (const [seq, lease] of Object.entries(state.leases)) {
+      if (!['coding', 'merging', 'resolving_conflict', 'waiting_confirmation', 'closing'].includes(lease.phase)) continue;
+      if (!lease.slot) {
+        discrepancies.push(`seq:${seq}: lease phase=${lease.phase} but no slot is assigned`);
+        continue;
+      }
+      const slotName = lease.slot;
+      const slotState = state.workers[slotName];
+      if (!slotState) {
+        discrepancies.push(`seq:${seq}: lease references missing slot ${slotName}`);
+        continue;
+      }
 
       if (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') {
-        const session = readACPState(this.ctx.paths.acpStateFile).sessions[slotName];
+        const session = acpState.sessions[slotName];
         if (this.isAcpSessionAlive(session)) continue;
       }
 
-      const seq = slotState.seq != null ? String(slotState.seq) : '';
-      const workerId = `${this.ctx.projectName}:${slotName}:${seq}`;
+      const slotSeq = slotState.seq != null ? String(slotState.seq) : '';
+      const workerId = `${this.ctx.projectName}:${slotName}:${slotSeq}`;
       const handle = this.supervisor.get(workerId);
 
       if (!handle) {
         discrepancies.push(
-          `${slotName}: state says active but Supervisor has no handle`,
+          `seq:${seq}: lease says active via ${slotName} but Supervisor has no handle`,
         );
       } else if (handle.exitCode !== null) {
         discrepancies.push(
-          `${slotName}: state says active but Supervisor reports exited (code=${handle.exitCode})`,
+          `seq:${seq}: lease says active via ${slotName} but Supervisor reports exited (code=${handle.exitCode})`,
         );
       }
     }
@@ -612,14 +609,17 @@ export class MonitorEngine {
     checks: CheckResult[],
     actions: ActionRecord[],
   ): Promise<void> {
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
     let issues = 0;
 
-    for (const [slotName, slotState] of Object.entries(state.workers)) {
-      if (slotState.status !== 'active' || slotState.mode !== 'print') continue;
+    for (const [seq, lease] of Object.entries(state.leases)) {
+      if (!['coding', 'merging', 'resolving_conflict', 'waiting_confirmation', 'closing'].includes(lease.phase)) continue;
+      if (!lease.slot) continue;
+      const slotName = lease.slot;
+      const slotState = state.workers[slotName];
+      if (!slotState || slotState.status !== 'active' || slotState.mode !== 'print') continue;
       if (!slotState.outputFile || !slotState.claimedAt) continue;
 
-      const seq = slotState.seq != null ? String(slotState.seq) : '';
       const workerId = `${this.ctx.projectName}:${slotName}:${seq}`;
       const handle = this.supervisor.get(workerId);
 
@@ -653,7 +653,7 @@ export class MonitorEngine {
           `Worker health: ${slotName} has no output after ${Math.round(elapsedS)}s, killing and retrying seq ${seq}`,
         );
         await this.supervisor.kill(workerId);
-        await this.autoRetry(seq, slotName, state, actions, `No output after ${Math.round(elapsedS)}s`);
+        await this.autoRetry(seq, slotName, actions, `No output after ${Math.round(elapsedS)}s`);
         issues++;
         continue;
       }
@@ -667,7 +667,7 @@ export class MonitorEngine {
             `Worker health: ${slotName} no output for ${idleMin}min, killing and retrying seq ${seq}`,
           );
           await this.supervisor.kill(workerId);
-          await this.autoRetry(seq, slotName, state, actions, `No output for ${idleMin}min`);
+          await this.autoRetry(seq, slotName, actions, `No output for ${idleMin}min`);
           issues++;
         }
       }
@@ -687,63 +687,32 @@ export class MonitorEngine {
   private async autoRetry(
     seq: string,
     slotName: string,
-    state: import('../core/state.js').RuntimeState,
     actions: ActionRecord[],
     reason: string,
   ): Promise<void> {
+    const state = this.runtimeStore.readState();
     const restartLimit = this.ctx.config.WORKER_RESTART_LIMIT;
-    const activeCard = state.activeCards[seq];
-    const retryCount = state.leases[seq]?.retryCount ?? activeCard?.retryCount ?? 0;
-
-    // Release the slot
-    state.workers[slotName] = {
-      status: 'idle',
-      seq: null,
-      branch: null,
-      worktree: null,
-      tmuxSession: null,
-      claimedAt: null,
-      lastHeartbeat: null,
-      mode: null,
-      transport: null,
-      agent: null,
-      sessionId: null,
-      runId: null,
-      sessionState: null,
-      remoteStatus: null,
-      lastEventAt: null,
-      pid: null,
-      outputFile: null,
-      exitCode: null,
-    };
-    delete state.activeCards[seq];
+    const runtime = this.runtimeStore.getTask(seq, state);
+    const retryCount = runtime.lease?.retryCount ?? runtime.activeCard?.retryCount ?? 0;
 
     if (retryCount < restartLimit) {
       try {
         await this.taskBackend.move(seq, 'Todo');
         await this.removeLabelSafe(seq, 'CLAIMED');
         await this.removeLabelSafe(seq, 'STALE-RUNTIME');
-
-        state.activeCards[seq] = {
-          seq: parseInt(seq, 10),
-          state: 'Todo',
-          worker: null,
-          mrUrl: null,
-          conflictDomains: activeCard?.conflictDomains ?? [],
-          startedAt: activeCard?.startedAt ?? new Date().toISOString(),
-          retryCount: retryCount + 1,
-        };
-        if (state.leases[seq]) {
-          state.leases[seq].retryCount = retryCount + 1;
-          state.leases[seq].phase = 'queued';
-          state.leases[seq].slot = null;
-          state.leases[seq].sessionId = null;
-          state.leases[seq].runId = null;
-          state.leases[seq].pmStateObserved = 'Todo';
-          state.leases[seq].lastTransitionAt = new Date().toISOString();
-        }
-
-        writeState(this.ctx.paths.stateFile, state, 'monitor-auto-retry');
+        this.runtimeStore.updateState('monitor-auto-retry', (draft) => {
+          this.runtimeStore.clearWorkerSlot(draft, slotName);
+          delete draft.activeCards[seq];
+          if (draft.leases[seq]) {
+            draft.leases[seq].retryCount = retryCount + 1;
+            draft.leases[seq].phase = 'queued';
+            draft.leases[seq].slot = null;
+            draft.leases[seq].sessionId = null;
+            draft.leases[seq].runId = null;
+            draft.leases[seq].pmStateObserved = 'Todo';
+            draft.leases[seq].lastTransitionAt = new Date().toISOString();
+          }
+        });
 
         const attempt = retryCount + 1;
         this.log.ok(`seq ${seq}: Auto-retry ${attempt}/${restartLimit} — moved back to Todo (${reason})`);
@@ -761,7 +730,16 @@ export class MonitorEngine {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.log.error(`seq ${seq}: Auto-retry failed: ${msg}`);
-        writeState(this.ctx.paths.stateFile, state, 'monitor-auto-retry-fail');
+        this.runtimeStore.updateState('monitor-auto-retry-fail', (draft) => {
+          this.runtimeStore.clearWorkerSlot(draft, slotName);
+          delete draft.activeCards[seq];
+          if (draft.leases[seq]) {
+            draft.leases[seq].slot = null;
+            draft.leases[seq].sessionId = null;
+            draft.leases[seq].runId = null;
+            draft.leases[seq].lastTransitionAt = new Date().toISOString();
+          }
+        });
         actions.push({
           action: 'auto-retry',
           entity: `seq:${seq}`,
@@ -771,15 +749,18 @@ export class MonitorEngine {
       }
     } else {
       // Retry limit reached — mark as BLOCKED
-      if (state.leases[seq]) {
-        state.leases[seq].retryCount = retryCount;
-        state.leases[seq].phase = 'suspended';
-        state.leases[seq].slot = null;
-        state.leases[seq].sessionId = null;
-        state.leases[seq].runId = null;
-        state.leases[seq].lastTransitionAt = new Date().toISOString();
-      }
-      writeState(this.ctx.paths.stateFile, state, 'monitor-retry-exhausted');
+      this.runtimeStore.updateState('monitor-retry-exhausted', (draft) => {
+        this.runtimeStore.clearWorkerSlot(draft, slotName);
+        delete draft.activeCards[seq];
+        if (draft.leases[seq]) {
+          draft.leases[seq].retryCount = retryCount;
+          draft.leases[seq].phase = 'suspended';
+          draft.leases[seq].slot = null;
+          draft.leases[seq].sessionId = null;
+          draft.leases[seq].runId = null;
+          draft.leases[seq].lastTransitionAt = new Date().toISOString();
+        }
+      });
       try {
         await this.addLabelSafe(seq, 'BLOCKED');
         await this.taskBackend.move(seq, 'Todo');
