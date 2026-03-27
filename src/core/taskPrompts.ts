@@ -31,6 +31,7 @@ export function selectWorkerPhase(
   leasePhase?: TaskLeasePhase | null,
 ): WorkerTaskPhase {
   if (pmState === 'QA') return 'integration';
+  if (pmState === 'Inprogress') return 'development';
   if (leasePhase && ['merging', 'resolving_conflict'].includes(leasePhase)) {
     return 'integration';
   }

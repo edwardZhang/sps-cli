@@ -471,7 +471,17 @@ export class RuntimeCoordinator {
   private projectActiveCard(candidate: Candidate, lease: TaskLease, state: RuntimeState) {
     if (lease.phase === 'suspended' || lease.phase === 'released') return null;
 
-    const projectedState = lease.phase === 'queued' || lease.phase === 'preparing' ? 'Todo' : 'Inprogress';
+    const isQaProjection =
+      lease.pmStateObserved === 'QA' ||
+      lease.phase === 'merging' ||
+      lease.phase === 'resolving_conflict' ||
+      lease.phase === 'closing';
+    const projectedState =
+      lease.phase === 'queued' || lease.phase === 'preparing'
+        ? 'Todo'
+        : isQaProjection
+          ? 'QA'
+          : 'Inprogress';
     const prior = state.activeCards[candidate.seq];
     return {
       seq: lease.seq,

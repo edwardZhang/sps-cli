@@ -578,7 +578,7 @@ export class Recovery {
 
       state.activeCards[seq] = {
         seq: parseInt(seq, 10),
-        state: 'Inprogress',
+        state: this.projectedCardStateForLease(lease),
         worker: slotName,
         mrUrl: state.activeCards[seq]?.mrUrl || null,
         conflictDomains: state.activeCards[seq]?.conflictDomains || [],
@@ -592,11 +592,7 @@ export class Recovery {
         state.leases[seq].worktree = slot.worktree || lease.worktree;
         state.leases[seq].sessionId = session.sessionId;
         state.leases[seq].runId = session.currentRun?.runId || null;
-        state.leases[seq].phase = session.pendingInput
-          ? 'waiting_confirmation'
-          : lease.phase === 'resolving_conflict'
-            ? 'resolving_conflict'
-            : 'coding';
+        state.leases[seq].phase = this.recoveredPhaseForLease(lease, !!session.pendingInput);
         state.leases[seq].lastTransitionAt = new Date().toISOString();
       }
     });
@@ -610,6 +606,10 @@ export class Recovery {
     const hasWorktree = !!(slot.worktree || lease.worktree);
     const hasBranch = !!(slot.branch || lease.branch);
     if (!hasWorktree || !hasBranch) return false;
+
+    if (lease.pmStateObserved === 'QA') {
+      return !evidence?.mergedToBase;
+    }
 
     if (lease.phase === 'resolving_conflict') return true;
     if (lease.phase === 'waiting_confirmation') return true;
@@ -658,6 +658,31 @@ export class Recovery {
     if (phase === 'resolving_conflict' || phase === 'waiting_confirmation') return 'resolving';
     if (phase === 'closing') return 'releasing';
     return 'active';
+  }
+
+  private projectedCardStateForLease(
+    lease: TaskLease,
+  ): 'Inprogress' | 'QA' {
+    const isQaPhase =
+      lease.pmStateObserved === 'QA' ||
+      lease.phase === 'merging' ||
+      lease.phase === 'resolving_conflict' ||
+      lease.phase === 'closing';
+    if (isQaPhase) {
+      return 'QA';
+    }
+    return 'Inprogress';
+  }
+
+  private recoveredPhaseForLease(
+    lease: TaskLease,
+    pendingInput: boolean,
+  ): TaskLease['phase'] {
+    if (pendingInput) return 'waiting_confirmation';
+    if (lease.pmStateObserved === 'QA') {
+      return lease.phase === 'resolving_conflict' ? 'resolving_conflict' : 'merging';
+    }
+    return lease.phase === 'resolving_conflict' ? 'resolving_conflict' : 'coding';
   }
 
   private isPtyTask(
