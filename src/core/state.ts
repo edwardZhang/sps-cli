@@ -12,7 +12,7 @@ export interface WorkerSlotState {
   /** Worker execution mode — null for legacy state files */
   mode?: 'print' | 'interactive' | 'acp' | null;
   /** Underlying worker transport */
-  transport?: 'proc' | 'acp' | null;
+  transport?: 'proc' | 'acp' | 'pty' | null;
   /** Worker tool currently bound to the slot */
   agent?: 'claude' | 'codex' | null;
   /** Claude/Codex session ID for resume chains (print mode) */

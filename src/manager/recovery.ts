@@ -182,7 +182,7 @@ export class Recovery {
     slot: {
       branch?: string | null;
       worktree?: string | null;
-      transport?: 'proc' | 'acp' | null;
+      transport?: 'proc' | 'acp' | 'pty' | null;
       mode?: string | null;
       agent?: 'claude' | 'codex' | null;
     },

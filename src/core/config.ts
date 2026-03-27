@@ -111,7 +111,7 @@ export interface ProjectConfig {
   // Worker
   WORKER_TOOL: 'claude' | 'codex';
   WORKER_MODE: 'print' | 'interactive';
-  WORKER_TRANSPORT: 'proc' | 'acp';
+  WORKER_TRANSPORT: 'proc' | 'acp' | 'pty';
   MAX_CONCURRENT_WORKERS: number;
   WORKER_RESTART_LIMIT: number;
   AUTOFIX_ATTEMPTS: number;

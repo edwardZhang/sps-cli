@@ -15,6 +15,7 @@ import { GitLabRepoBackend } from './GitLabRepoBackend.js';
 import { MatrixNotifier } from './MatrixNotifier.js';
 import { ProjectContext } from '../core/context.js';
 import { ACPWorkerRuntime } from './ACPWorkerRuntime.js';
+import { PTYAgentRuntime } from './PTYAgentRuntime.js';
 
 export function createTaskBackend(config: ProjectConfig): TaskBackend {
   switch (config.PM_TOOL) {
@@ -54,5 +55,9 @@ export function createNotifier(config: ProjectConfig): Notifier {
 }
 
 export function createAgentRuntime(ctx: ProjectContext): AgentRuntime {
+  const transport = ctx.config.raw.WORKER_TRANSPORT || 'acp';
+  if (transport === 'pty') {
+    return new PTYAgentRuntime(ctx);
+  }
   return new ACPWorkerRuntime(ctx);
 }
