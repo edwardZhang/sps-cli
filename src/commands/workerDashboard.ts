@@ -3,9 +3,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { readState, type WorkerSlotState } from '../core/state.js';
-import { readACPState } from '../core/acpState.js';
+import { readACPState, writeACPState } from '../core/acpState.js';
 import { isProcessAlive, tailFile } from '../providers/outputParser.js';
 import { renderClaudeStreamLines, renderCodexStreamLines } from '../providers/streamRenderer.js';
+import { getSharedPTYManager } from '../providers/PTYAgentRuntime.js';
 
 const HOME = process.env.HOME || '/home/coral';
 
@@ -227,7 +228,7 @@ function collectPanels(projects: string[]): WorkerPanel[] {
 function renderHeader(termWidth: number): string[] {
   const title = ' SPS Worker Dashboard ';
   const now = new Date().toLocaleTimeString();
-  const rightInfo = `${DIM}${now}  q=quit  r=refresh${RESET}`;
+  const rightInfo = `${DIM}${now}  q=quit  r=refresh  Y/N=respond${RESET}`;
   const rightLen = visibleLength(rightInfo);
   const leftPad = Math.max(0, Math.floor((termWidth - title.length) / 2));
 
@@ -501,6 +502,50 @@ function buildJsonOutput(projects: string[]): DashboardJson {
   return result;
 }
 
+// ── Respond to pending confirmations ─────────────────────────────────
+
+function respondToPending(projects: string[], response: string, redraw: () => void): void {
+  for (const projectName of projects) {
+    let ctx: ProjectContext;
+    try { ctx = ProjectContext.load(projectName); } catch { continue; }
+
+    const acpState = readACPState(ctx.paths.acpStateFile);
+    for (const [slotName, session] of Object.entries(acpState.sessions)) {
+      if (!session.pendingInput) continue;
+
+      // Found a pending input — respond via PTY or tmux
+      const transport = ctx.config.raw.WORKER_TRANSPORT || 'acp';
+      try {
+        if (transport === 'pty') {
+          const manager = getSharedPTYManager();
+          const ptySession = manager.getSession(projectName, slotName);
+          if (ptySession?.isAlive()) {
+            ptySession.write(response + '\r');
+          }
+        } else {
+          // tmux fallback
+          const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
+          const sessionName = session.sessionName || `sps-acp-${projectName}-${slotName}`;
+          execFileSync('tmux', ['send-keys', '-t', sessionName, response, 'Enter'], {
+            timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
+          });
+        }
+
+        // Clear pending input
+        session.pendingInput = null;
+        session.updatedAt = new Date().toISOString();
+        writeACPState(ctx.paths.acpStateFile, acpState, 'dashboard-respond');
+
+        process.stderr.write(`[dashboard] Sent "${response}" to ${projectName}:${slotName}\n`);
+        redraw();
+        return; // Respond to first pending only
+      } catch (err) {
+        process.stderr.write(`[dashboard] Failed to respond: ${err}\n`);
+      }
+    }
+  }
+}
+
 // ── Live mode (watch) ────────────────────────────────────────────────
 
 async function runLive(projects: string[], intervalMs: number): Promise<never> {
@@ -529,6 +574,10 @@ async function runLive(projects: string[], intervalMs: number): Promise<never> {
       if (key === 'r') {
         // Force immediate refresh
         draw();
+      }
+      // Y/N to respond to pending confirmations
+      if (key === 'y' || key === 'Y' || key === 'n' || key === 'N') {
+        respondToPending(projects, key.toUpperCase(), draw);
       }
     });
   }
