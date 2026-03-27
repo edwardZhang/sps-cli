@@ -3,8 +3,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { enqueuePTYResponse } from '../core/ptyControl.js';
-import { type WorkerSlotState } from '../core/state.js';
-import { readACPState } from '../core/acpState.js';
+import { readState, type WorkerSlotState } from '../core/state.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import {
   hasPersistedActiveRun,
@@ -425,7 +424,7 @@ function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[
   for (const projectName of projects) {
     const snapshot = snapshots.get(projectName);
     if (!snapshot) continue;
-    const { ctx, state, acpState } = snapshot;
+    const { ctx, state } = snapshot;
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
       const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
@@ -437,7 +436,7 @@ function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[
       let paneLines: string[];
 
       if (isAcpMode) {
-        const session = acpState.sessions[slotName];
+        const session = state.sessions[slotName];
         const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
         sessionAlive = isPersistedSessionAlive(slot, session);
         paneLines = buildACPPanelLines(ctx, slotName, slot, session, sessionAlive);
@@ -563,8 +562,8 @@ function renderIdleSummary(projects: string[], termWidth: number, snapshots: Sna
     void termWidth;
     const snapshot = snapshots.get(projectName);
     if (!snapshot) continue;
-    const { state, acpState } = snapshot;
-    const summary = summarizeWorkerRuntime(state, acpState);
+    const { state } = snapshot;
+    const summary = summarizeWorkerRuntime(state);
     const activeCards = Object.keys(state.activeCards).length;
     const extraParts: string[] = [];
     if (summary.merging > 0) extraParts.push(`${FG.yellow}${summary.merging} merging${RESET}`);
@@ -711,7 +710,7 @@ function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJ
   for (const projectName of projects) {
     const snapshot = snapshots.get(projectName);
     if (!snapshot) continue;
-    const { state, acpState } = snapshot;
+    const { state } = snapshot;
     const workers: DashboardJson['projects'][0]['workers'] = [];
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
@@ -719,7 +718,7 @@ function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJ
       const isPrintMode = slot.mode === 'print';
       const isPtyMode = slot.transport === 'pty';
       const isAcpMode = isPtyMode || slot.mode === 'acp' || slot.transport === 'acp';
-      const acpSession = acpState.sessions[slotName];
+      const acpSession = state.sessions[slotName];
       const sessionAlive = isAcpMode
         ? isPersistedSessionAlive(slot, acpSession)
         : isPrintMode
@@ -782,9 +781,9 @@ function collectPendingInputs(projects: string[]): PendingItem[] {
   for (const projectName of projects) {
     let ctx: ProjectContext;
     try { ctx = ProjectContext.load(projectName); } catch { continue; }
-    const acpState = readACPState(ctx.paths.acpStateFile);
+    const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
     const transport = ctx.config.raw.WORKER_TRANSPORT || 'acp';
-    for (const [slotName, session] of Object.entries(acpState.sessions)) {
+    for (const [slotName, session] of Object.entries(state.sessions)) {
       if (!session.pendingInput) continue;
       items.push({
         project: projectName,

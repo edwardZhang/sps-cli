@@ -62,6 +62,10 @@ export interface ACPSessionRecord {
   lastPaneText: string;
 }
 
+/**
+ * @deprecated ACPState has been merged into RuntimeState.sessions.
+ * Use RuntimeState directly — this alias exists only for migration.
+ */
 export interface ACPState {
   version: number;
   updatedAt: string;

@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { CardState } from '../models/types.js';
+import type { ACPSessionRecord } from '../models/acp.js';
 
 export interface WorkerSlotState {
   status: 'idle' | 'active' | 'merging' | 'resolving' | 'releasing';
@@ -112,6 +113,8 @@ export interface RuntimeState {
   leases: Record<string, TaskLease>;
   worktreeEvidence: Record<string, WorktreeEvidence>;
   worktreeCleanup: WorktreeCleanupEntry[];
+  /** ACP/PTY session records — merged from former acp-state.json */
+  sessions: Record<string, ACPSessionRecord>;
 }
 
 export function createIdleWorkerSlot(): WorkerSlotState {
@@ -154,6 +157,7 @@ function defaultState(maxWorkers: number): RuntimeState {
     leases: {},
     worktreeEvidence: {},
     worktreeCleanup: [],
+    sessions: {},
   };
 }
 
@@ -203,6 +207,7 @@ function reconcileState(raw: RuntimeState, maxWorkers: number): RuntimeState {
     leases,
     worktreeEvidence: raw.worktreeEvidence || {},
     worktreeCleanup: raw.worktreeCleanup || [],
+    sessions: raw.sessions || {},
   };
 }
 

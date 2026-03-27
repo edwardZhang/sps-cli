@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { ProjectContext } from './context.js';
-import { readACPState } from './acpState.js';
 import { readState, type RuntimeState } from './state.js';
 import { isProcessAlive } from './sessionLiveness.js';
 import type { ACPState } from '../models/acp.js';
@@ -11,6 +10,7 @@ export interface ProjectRuntimeSnapshot {
   ctx: ProjectContext;
   tickRunning: boolean;
   state: RuntimeState;
+  /** @deprecated Use state.sessions instead. Compat view backed by state.sessions. */
   acpState: ACPState;
 }
 
@@ -37,21 +37,22 @@ export async function loadRuntimeSnapshot(
   const projectWhenTickStopped = options.projectWhenTickStopped ?? true;
 
   if (tickRunning || !projectWhenTickStopped) {
+    const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
     return {
       ctx,
       tickRunning,
-      state: readState(ctx.paths.stateFile, ctx.maxWorkers),
-      acpState: readACPState(ctx.paths.acpStateFile),
+      state,
+      acpState: { version: state.version, updatedAt: state.updatedAt, updatedBy: state.updatedBy, sessions: state.sessions },
     };
   }
 
   const taskBackend = createTaskBackend(ctx.config);
   const coordinator = new RuntimeCoordinator(ctx, taskBackend);
-  const projected = await coordinator.buildRuntimeProjection();
+  const { state: projectedState } = await coordinator.buildRuntimeProjection();
   return {
     ctx,
     tickRunning,
-    state: projected.state,
-    acpState: projected.acpState,
+    state: projectedState,
+    acpState: { version: projectedState.version, updatedAt: projectedState.updatedAt, updatedBy: projectedState.updatedBy, sessions: projectedState.sessions },
   };
 }

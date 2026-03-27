@@ -1,4 +1,3 @@
-import type { ACPState } from '../models/acp.js';
 import { hasPersistedActiveRun, isACPBackedSlot, isProcessAlive } from './sessionLiveness.js';
 import type { RuntimeState, WorkerSlotState } from './state.js';
 
@@ -16,7 +15,7 @@ function isLiveProcWorker(slot: WorkerSlotState): boolean {
   return !!(pid && isProcessAlive(pid));
 }
 
-export function summarizeWorkerRuntime(state: RuntimeState, acpState: ACPState): WorkerRuntimeSummary {
+export function summarizeWorkerRuntime(state: RuntimeState): WorkerRuntimeSummary {
   const slots = Object.entries(state.workers);
   let active = 0;
   let merging = 0;
@@ -25,7 +24,7 @@ export function summarizeWorkerRuntime(state: RuntimeState, acpState: ACPState):
   for (const [slotName, slot] of slots) {
     if (slot.status === 'active') {
       if (isACPBackedSlot(slot)) {
-        const session = acpState.sessions[slotName];
+        const session = state.sessions[slotName];
         if (hasPersistedActiveRun(slot, session)) active++;
         else stale++;
       } else if (isLiveProcWorker(slot)) {

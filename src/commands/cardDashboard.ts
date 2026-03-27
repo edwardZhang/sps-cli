@@ -191,7 +191,7 @@ function deriveBlockedReason(
 async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnapshot> {
   try {
     const snapshot = await loadRuntimeSnapshot(projectName);
-    const { ctx, state, acpState } = snapshot;
+    const { ctx, state } = snapshot;
     const taskBackend = createTaskBackend(ctx.config);
     const cards = await taskBackend.listAll();
     const snapshots: CardSnapshot[] = cards.map(card => {
@@ -200,7 +200,7 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
       const evidence = state.worktreeEvidence[card.seq] || null;
       const workerSlot = active?.worker ?? null;
       const worker = workerSlot ? state.workers[workerSlot] : null;
-      const session = workerSlot ? acpState.sessions[workerSlot] : null;
+      const session = workerSlot ? state.sessions[workerSlot] : null;
       const runtimeOwned = !!worker && worker.status !== 'idle';
       const effectiveState = runtimeOwned ? ((active?.state as CardState | undefined) || card.state) : card.state;
       const sessionAlive = worker ? isPersistedSessionAlive(worker, session) : false;
@@ -228,7 +228,7 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
     const counts = Object.fromEntries(STATES.map(stateName => [stateName, 0])) as Record<CardState, number>;
     for (const card of snapshots) counts[card.state] += 1;
 
-    const workerSummary = summarizeWorkerRuntime(state, acpState);
+    const workerSummary = summarizeWorkerRuntime(state);
 
     const waitingCards = snapshots.filter(card => ['waiting_input', 'needs_confirmation'].includes(card.runtimeStatus || '') || card.blockedReason === 'WAITING').length;
     const conflictCards = snapshots.filter(card => card.blockedReason === 'CONFLICT').length;

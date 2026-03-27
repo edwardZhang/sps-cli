@@ -81,7 +81,7 @@ export class MonitorEngine {
     checks: CheckResult[],
     actions: ActionRecord[],
   ): Promise<void> {
-    const { state, acpState } = this.runtimeStore.read();
+    const state = this.runtimeStore.readState();
     const orphanedTasks: Array<{ seq: string; slotName: string }> = [];
     const orphanedSlots: string[] = [];
     let orphansFound = 0;
@@ -98,7 +98,7 @@ export class MonitorEngine {
 
       if (
         (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') &&
-        this.isAcpSessionAlive(acpState.sessions[slotName])
+        this.isAcpSessionAlive(state.sessions[slotName])
       ) {
         continue;
       }
@@ -173,14 +173,13 @@ export class MonitorEngine {
     recommendedActions: RecommendedAction[],
   ): Promise<void> {
     const inprogressCards = await this.listRuntimeAwareInprogressCards();
-    const acpState = this.runtimeStore.readACPState();
     let staleCount = 0;
 
     for (const card of inprogressCards) {
       if (card.labels.includes('STALE-RUNTIME') || card.labels.includes('CONFLICT') || card.labels.includes('NEEDS-FIX')) continue;
 
       const state = this.runtimeStore.readState();
-      const runtime = this.runtimeStore.getTask(card.seq, state, acpState);
+      const runtime = this.runtimeStore.getTask(card.seq, state);
       const branchName = this.buildBranchName(card);
 
       if (!runtime.slotName || !runtime.slot) {
@@ -200,7 +199,7 @@ export class MonitorEngine {
       const slotState = runtime.slot;
 
       if (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') {
-        const session = runtime.slotName ? acpState.sessions[runtime.slotName] : undefined;
+        const session = runtime.slotName ? state.sessions[runtime.slotName] : undefined;
         if (this.isAcpSessionAlive(session)) {
           continue;
         }
@@ -399,7 +398,7 @@ export class MonitorEngine {
     checks: CheckResult[],
     actions: ActionRecord[],
   ): Promise<void> {
-    const { state, acpState } = this.runtimeStore.read();
+    const state = this.runtimeStore.readState();
     let waitingCount = 0;
 
     for (const [seq, lease] of Object.entries(state.leases)) {
@@ -414,7 +413,7 @@ export class MonitorEngine {
         slotState.mode === 'pty';
 
       if (isAgentTransport) {
-        const session = acpState.sessions[slotName];
+        const session = state.sessions[slotName];
         const pending = session?.pendingInput;
         if (!session || !['waiting_input', 'needs_confirmation'].includes(session.currentRun?.status || '') || !pending) continue;
 
@@ -544,7 +543,7 @@ export class MonitorEngine {
     checks: CheckResult[],
     recommendedActions: RecommendedAction[],
   ): Promise<void> {
-    const { state, acpState } = this.runtimeStore.read();
+    const state = this.runtimeStore.readState();
     const discrepancies: string[] = [];
 
     for (const [seq, lease] of Object.entries(state.leases)) {
@@ -561,7 +560,7 @@ export class MonitorEngine {
       }
 
       if (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') {
-        const session = acpState.sessions[slotName];
+        const session = state.sessions[slotName];
         if (this.isAcpSessionAlive(session)) continue;
       }
 

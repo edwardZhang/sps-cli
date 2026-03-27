@@ -22,14 +22,13 @@ import {
   isPersistedSessionAlive,
 } from '../core/sessionLiveness.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
-import type { ACPState, ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
+import type { ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
 import type { Card, CardState } from '../models/types.js';
 
 const TERMINAL_RUN_STATUSES = new Set<ACPRunStatus>(['completed', 'failed', 'cancelled', 'lost']);
 
 export interface RuntimeRebuildResult {
   state: RuntimeState;
-  acpState: ACPState;
   updated: boolean;
 }
 
@@ -59,11 +58,11 @@ export class RuntimeCoordinator {
 
   private async computeRuntimeProjection(persist: boolean, updatedBy: string): Promise<RuntimeRebuildResult> {
     const store = new RuntimeStore(this.ctx);
-    const { state, acpState } = store.read();
+    const state = store.readState();
     const cards = await this.taskBackend.listAll();
     const cardsBySeq = new Map(cards.map((card) => [card.seq, card]));
 
-    const normalizedACPState = this.normalizeACPState(state, acpState);
+    const normalizedSessions = this.normalizeSessions(state);
     const nextState = structuredClone(state) as RuntimeState;
     nextState.leases = {};
     nextState.worktreeEvidence = {};
@@ -81,7 +80,7 @@ export class RuntimeCoordinator {
       const card = cardsBySeq.get(seq) || null;
       const slotName = slotLookup.get(seq) ?? state.leases[seq]?.slot ?? null;
       const slot = slotName ? state.workers[slotName] || null : null;
-      const session = slotName ? normalizedACPState.sessions[slotName] || null : null;
+      const session = slotName ? normalizedSessions[slotName] || null : null;
       const priorLease = state.leases[seq] || null;
       const worktree = priorLease?.worktree || slot?.worktree || resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
       const branch = priorLease?.branch || slot?.branch || this.inspectBranchHint(worktree) || null;
@@ -114,25 +113,26 @@ export class RuntimeCoordinator {
     }
 
     nextState.workers = nextWorkers;
+    nextState.sessions = normalizedSessions;
     const changed =
       JSON.stringify(state.workers) !== JSON.stringify(nextState.workers) ||
       JSON.stringify(state.activeCards) !== JSON.stringify(nextState.activeCards) ||
       JSON.stringify(state.leases) !== JSON.stringify(nextState.leases) ||
       JSON.stringify(state.worktreeEvidence) !== JSON.stringify(nextState.worktreeEvidence) ||
-      JSON.stringify(acpState.sessions) !== JSON.stringify(normalizedACPState.sessions);
+      JSON.stringify(state.sessions) !== JSON.stringify(normalizedSessions);
 
     if (persist && changed) {
-      store.updateRuntime(updatedBy, (runtimeState, runtimeACPState) => {
+      store.updateState(updatedBy, (runtimeState) => {
         runtimeState.workers = nextState.workers;
         runtimeState.activeCards = nextState.activeCards;
         runtimeState.leases = nextState.leases;
         runtimeState.worktreeEvidence = nextState.worktreeEvidence;
         runtimeState.worktreeCleanup = nextState.worktreeCleanup;
-        runtimeACPState.sessions = normalizedACPState.sessions;
+        runtimeState.sessions = normalizedSessions;
       });
     }
 
-    return { state: nextState, acpState: normalizedACPState, updated: changed };
+    return { state: nextState, updated: changed };
   }
 
   private collectCandidateSeqs(state: RuntimeState, cards: Card[]): string[] {
@@ -166,13 +166,10 @@ export class RuntimeCoordinator {
     return lookup;
   }
 
-  private normalizeACPState(state: RuntimeState, acpState: ACPState): ACPState {
-    const nextState: ACPState = {
-      ...acpState,
-      sessions: { ...acpState.sessions },
-    };
+  private normalizeSessions(state: RuntimeState): Record<string, ACPSessionRecord> {
+    const nextSessions: Record<string, ACPSessionRecord> = { ...state.sessions };
 
-    for (const [slotName, session] of Object.entries(acpState.sessions)) {
+    for (const [slotName, session] of Object.entries(state.sessions)) {
       const slot = state.workers[slotName];
       if (!slot) continue;
       if (isPersistedSessionAlive(slot, session)) continue;
@@ -187,7 +184,7 @@ export class RuntimeCoordinator {
             }
           : session.currentRun;
 
-      nextState.sessions[slotName] = {
+      nextSessions[slotName] = {
         ...session,
         status: 'offline',
         sessionState: 'offline',
@@ -197,7 +194,7 @@ export class RuntimeCoordinator {
       };
     }
 
-    return nextState;
+    return nextSessions;
   }
 
   private inspectBranchHint(worktree: string | null): string | null {

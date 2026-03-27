@@ -1,5 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
 import type { ProjectContext } from './context.js';
-import { readACPState, writeACPState } from './acpState.js';
 import {
   createIdleWorkerSlot,
   readState,
@@ -30,30 +30,45 @@ type RuntimePaths = {
   maxWorkers: number;
 };
 
+/**
+ * Create a thin ACPState view backed by the same sessions reference in RuntimeState.
+ * Mutations to the view's sessions propagate to the underlying state.
+ */
+function acpView(state: RuntimeState): ACPState {
+  return {
+    version: state.version,
+    updatedAt: state.updatedAt,
+    updatedBy: state.updatedBy,
+    sessions: state.sessions,
+  };
+}
+
 export class RuntimeStore {
+  private migrated = false;
+
   constructor(private readonly ctx: RuntimePaths) {}
 
   readState(): RuntimeState {
-    return readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    this.migrateACPStateOnce(state);
+    return state;
   }
 
+  /**
+   * @deprecated Use readState().sessions instead.
+   * Compat shim — returns a thin view backed by RuntimeState.sessions.
+   */
   readACPState(): ACPState {
-    if (!this.ctx.paths.acpStateFile) {
-      return {
-        version: 1,
-        updatedAt: new Date(0).toISOString(),
-        updatedBy: 'runtime-store-empty',
-        sessions: {},
-      };
-    }
-    return readACPState(this.ctx.paths.acpStateFile);
+    return acpView(this.readState());
   }
 
+  /**
+   * @deprecated Use readState() instead.
+   * Compat shim — both state and acpState reference the same underlying data.
+   */
   read(): { state: RuntimeState; acpState: ACPState } {
-    return {
-      state: this.readState(),
-      acpState: this.readACPState(),
-    };
+    const state = this.readState();
+    return { state, acpState: acpView(state) };
   }
 
   updateState(updatedBy: string, mutator: (state: RuntimeState) => void): RuntimeState {
@@ -63,34 +78,36 @@ export class RuntimeStore {
     return state;
   }
 
+  /**
+   * @deprecated Use updateState() and mutate state.sessions instead.
+   * Compat shim — mutates state.sessions through a thin ACPState view, then writes state.json.
+   */
   updateACPState(updatedBy: string, mutator: (acpState: ACPState) => void): ACPState {
-    if (!this.ctx.paths.acpStateFile) {
-      throw new Error('acpStateFile is not configured for this RuntimeStore');
-    }
-    const acpState = this.readACPState();
-    mutator(acpState);
-    writeACPState(this.ctx.paths.acpStateFile, acpState, updatedBy);
-    return acpState;
+    const state = this.readState();
+    const view = acpView(state);
+    mutator(view);
+    // Sessions are shared by reference — mutations to view.sessions are already in state.sessions
+    writeState(this.ctx.paths.stateFile, state, updatedBy);
+    return view;
   }
 
+  /**
+   * @deprecated Use updateState() instead.
+   * Compat shim — applies mutator to both state and a thin acpState view, writes single file.
+   */
   updateRuntime(
     updatedBy: string,
     mutator: (state: RuntimeState, acpState: ACPState) => void,
   ): { state: RuntimeState; acpState: ACPState } {
-    if (!this.ctx.paths.acpStateFile) {
-      throw new Error('acpStateFile is not configured for this RuntimeStore');
-    }
     const state = this.readState();
-    const acpState = this.readACPState();
-    mutator(state, acpState);
+    const view = acpView(state);
+    mutator(state, view);
     writeState(this.ctx.paths.stateFile, state, updatedBy);
-    writeACPState(this.ctx.paths.acpStateFile, acpState, updatedBy);
-    return { state, acpState };
+    return { state, acpState: view };
   }
 
-  getTask(seq: string, state?: RuntimeState, acpState?: ACPState): TaskRuntimeView {
+  getTask(seq: string, state?: RuntimeState): TaskRuntimeView {
     const runtimeState = state ?? this.readState();
-    const runtimeACP = acpState ?? this.readACPState();
     const key = String(seq);
     const lease = runtimeState.leases[key] || null;
     const slotName =
@@ -98,7 +115,7 @@ export class RuntimeStore {
       Object.entries(runtimeState.workers).find(([, worker]) => worker.seq === parseInt(key, 10))?.[0] ||
       null;
     const slot = slotName ? runtimeState.workers[slotName] || null : null;
-    const session = slotName ? runtimeACP.sessions[slotName] || null : null;
+    const session = slotName ? runtimeState.sessions[slotName] || null : null;
 
     return {
       seq: key,
@@ -178,5 +195,29 @@ export class RuntimeStore {
       lease.branch = null;
     }
     lease.lastTransitionAt = new Date().toISOString();
+  }
+
+  /**
+   * One-time migration: if state.sessions is empty and the legacy acp-state.json exists,
+   * merge its sessions into state and persist.
+   */
+  private migrateACPStateOnce(state: RuntimeState): void {
+    if (this.migrated) return;
+    this.migrated = true;
+
+    if (Object.keys(state.sessions).length > 0) return;
+
+    const legacyFile = this.ctx.paths.acpStateFile;
+    if (!legacyFile || !existsSync(legacyFile)) return;
+
+    try {
+      const raw = JSON.parse(readFileSync(legacyFile, 'utf-8')) as ACPState;
+      if (raw.sessions && Object.keys(raw.sessions).length > 0) {
+        Object.assign(state.sessions, raw.sessions);
+        writeState(this.ctx.paths.stateFile, state, 'acp-state-migration');
+      }
+    } catch {
+      // Legacy file is corrupt or unreadable — ignore
+    }
   }
 }

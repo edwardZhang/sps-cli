@@ -8,7 +8,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadProjectConf } from '../core/config.js';
-import { readACPState } from '../core/acpState.js';
 import { readState } from '../core/state.js';
 import { isProcessAlive } from '../core/sessionLiveness.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
@@ -36,7 +35,6 @@ async function getProjectStatus(project: string): Promise<ProjectStatus> {
   const projectDir = resolve(PROJECTS_DIR, project);
   const lockFile = resolve(projectDir, 'runtime', 'tick.lock');
   const stateFile = resolve(projectDir, 'runtime', 'state.json');
-  const acpStateFile = resolve(projectDir, 'runtime', 'acp-state.json');
   const pipelineFile = resolve(projectDir, 'pipeline_order.json');
 
   // Tick status
@@ -60,15 +58,14 @@ async function getProjectStatus(project: string): Promise<ProjectStatus> {
   let activeCards = 0;
   try {
     const snapshot = await loadRuntimeSnapshot(project);
-    workers = summarizeWorkerRuntime(snapshot.state, snapshot.acpState);
+    workers = summarizeWorkerRuntime(snapshot.state);
     activeCards = Object.keys(snapshot.state.activeCards).length;
   } catch {
     if (existsSync(stateFile)) {
       try {
         const maxWorkers = loadProjectConf(project).MAX_CONCURRENT_WORKERS;
         const state = readState(stateFile, maxWorkers);
-        const acpState = readACPState(acpStateFile);
-        workers = summarizeWorkerRuntime(state, acpState);
+        workers = summarizeWorkerRuntime(state);
         activeCards = Object.keys(state.activeCards).length;
       } catch { /* corrupt state */ }
     }
