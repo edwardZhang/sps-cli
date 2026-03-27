@@ -699,11 +699,14 @@ export class PostActions {
       });
 
       const state = readState(ctx.stateFile, ctx.maxWorkers);
-      const card = state.activeCards[ctx.seq];
-      if (card) {
-        card.retryCount = retryCount + 1;
-        writeState(ctx.stateFile, state, 'post-actions-retry');
+      if (state.leases[ctx.seq]) {
+        state.leases[ctx.seq].retryCount = retryCount + 1;
+        state.leases[ctx.seq].lastTransitionAt = new Date().toISOString();
       }
+      if (state.activeCards[ctx.seq]) {
+        state.activeCards[ctx.seq].retryCount = retryCount + 1;
+      }
+      writeState(ctx.stateFile, state, 'post-actions-retry');
 
       this.log(`Respawned ${workerId} with --resume (retry #${retryCount + 1})`);
       return { step: 'respawn', ok: true };
@@ -912,17 +915,15 @@ export class PostActions {
       }
     }
 
-    const card = state.activeCards[ctx.seq];
-    if (card && options?.retryCount != null) {
-      card.retryCount = options.retryCount;
-    }
-
     if (state.leases[ctx.seq]) {
       state.leases[ctx.seq].slot = ctx.slot;
       state.leases[ctx.seq].branch = ctx.branch;
       state.leases[ctx.seq].worktree = ctx.worktree;
       state.leases[ctx.seq].sessionId = session.sessionId;
       state.leases[ctx.seq].runId = session.currentRun?.runId || null;
+      if (options?.retryCount != null) {
+        state.leases[ctx.seq].retryCount = options.retryCount;
+      }
       state.leases[ctx.seq].phase = slotStatus === 'merging'
         ? 'merging'
         : session.pendingInput || session.currentRun?.status === 'waiting_input'
@@ -931,6 +932,9 @@ export class PostActions {
             ? 'resolving_conflict'
             : 'coding';
       state.leases[ctx.seq].lastTransitionAt = nowIso;
+    }
+    if (state.activeCards[ctx.seq] && options?.retryCount != null) {
+      state.activeCards[ctx.seq].retryCount = options.retryCount;
     }
 
     writeState(ctx.stateFile, state, updatedBy);

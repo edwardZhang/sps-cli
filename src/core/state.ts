@@ -76,6 +76,7 @@ export interface TaskLease {
   sessionId: string | null;
   runId: string | null;
   claimedAt: string | null;
+  retryCount: number;
   lastTransitionAt: string;
 }
 
@@ -158,6 +159,24 @@ function defaultState(maxWorkers: number): RuntimeState {
 
 function reconcileState(raw: RuntimeState, maxWorkers: number): RuntimeState {
   const workers: Record<string, WorkerSlotState> = { ...(raw.workers || {}) };
+  const activeCards = Object.fromEntries(
+    Object.entries(raw.activeCards || {}).map(([seq, card]) => [
+      seq,
+      {
+        ...card,
+        retryCount: card.retryCount ?? 0,
+      },
+    ]),
+  );
+  const leases = Object.fromEntries(
+    Object.entries(raw.leases || {}).map(([seq, lease]) => [
+      seq,
+      {
+        ...lease,
+        retryCount: lease.retryCount ?? 0,
+      },
+    ]),
+  );
 
   // Grow legacy state files when MAX_CONCURRENT_WORKERS increases.
   // This lets projects scale from 1 -> N workers without deleting state.json.
@@ -180,8 +199,8 @@ function reconcileState(raw: RuntimeState, maxWorkers: number): RuntimeState {
     updatedAt: raw.updatedAt || new Date().toISOString(),
     updatedBy: raw.updatedBy || 'migrate',
     workers,
-    activeCards: raw.activeCards || {},
-    leases: raw.leases || {},
+    activeCards,
+    leases,
     worktreeEvidence: raw.worktreeEvidence || {},
     worktreeCleanup: raw.worktreeCleanup || [],
   };

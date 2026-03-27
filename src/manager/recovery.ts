@@ -19,6 +19,7 @@ import { ResourceLimiter } from './resource-limiter.js';
 import type { ProjectConfig } from '../core/config.js';
 import { ACPWorkerRuntime } from '../providers/ACPWorkerRuntime.js';
 import type { ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
+import type { TaskLease, WorkerSlotState } from '../core/state.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -60,105 +61,101 @@ export class Recovery {
 
     for (const project of projects) {
       const state = readState(project.stateFile, project.config.MAX_CONCURRENT_WORKERS);
-
+      const reservedSlots = new Set<string>();
       // Create per-project PostActions (C3 fix: use correct PM config per project)
       const postActions = this.postActionsFactory(project.config);
+      for (const [seq, lease] of this.listRecoverableLeases(state)) {
+        const slotName = this.resolveRecoverySlotName(state, seq, lease, reservedSlots);
+        const slot = slotName ? state.workers[slotName] || null : null;
+        const workerRef = {
+          branch: lease.branch || slot?.branch || null,
+          worktree: lease.worktree || slot?.worktree || null,
+          outputFile: slot?.outputFile || null,
+          sessionId: lease.sessionId || slot?.sessionId || null,
+          mode: slot?.mode || (project.config.WORKER_TRANSPORT === 'pty' ? 'pty' : project.config.WORKER_TRANSPORT === 'acp' ? 'acp' : project.config.WORKER_MODE) || null,
+          transport: slot?.transport || project.config.WORKER_TRANSPORT || null,
+          agent: slot?.agent || (project.config.ACP_AGENT || project.config.WORKER_TOOL) as 'claude' | 'codex',
+          pid: slot?.pid ?? null,
+          exitCode: slot?.exitCode ?? null,
+          sessionState: slot?.sessionState ?? null,
+          remoteStatus: slot?.remoteStatus ?? null,
+          lastEventAt: slot?.lastEventAt ?? null,
+          claimedAt: lease.claimedAt || slot?.claimedAt || null,
+          seq: lease.seq,
+        };
 
-      for (const [slotName, slot] of Object.entries(state.workers)) {
-        // Recover active, merging, and resolving slots
-        if (!['active', 'merging', 'resolving'].includes(slot.status)) continue;
+        result.found++;
 
-        if (slot.transport === 'acp' || slot.transport === 'pty' || slot.mode === 'acp' || slot.mode === 'pty') {
-          result.found++;
-          const recovered = await this.recoverAcpSlot(project, slotName, seqString(slot.seq), slot, postActions);
+        const isAcpTransport = workerRef.transport === 'acp' || workerRef.transport === 'pty' || workerRef.mode === 'acp' || workerRef.mode === 'pty';
+        if (isAcpTransport && slotName) {
+          const recovered = await this.recoverAcpSlot(project, slotName, seq, workerRef, postActions, lease.retryCount);
           if (recovered === 'alive') result.alive++;
           if (recovered === 'completed') result.completed++;
           if (recovered === 'failed') result.failed++;
           continue;
         }
 
-        // For merging slots without PID: reset to active so completion flow picks it up
-        if ((slot.status === 'merging' || slot.status === 'resolving') && !slot.pid) {
-          process.stderr.write(`[recovery] ${project.name}:${slotName}:${slot.seq}: slot in ${slot.status} state without PID, resetting\n`);
-          // Set back to active so the normal completion flow picks it up
-          const freshState = readState(project.stateFile, project.config.MAX_CONCURRENT_WORKERS);
-          if (freshState.workers[slotName]) {
-            freshState.workers[slotName].status = 'active';
-          }
-          writeState(project.stateFile, freshState, 'recovery-merge-reset');
-          continue;
-        }
-
-        if (!slot.pid) continue;
-
-        result.found++;
-        const workerId = `${project.name}:${slotName}:${slot.seq}`;
-        const seq = String(slot.seq);
-
-        if (isProcessAlive(slot.pid)) {
-          // Worker still running — attach PID monitoring
+        if (workerRef.pid && isProcessAlive(workerRef.pid)) {
           result.alive++;
-          this.resourceLimiter.tryAcquire(); // Count toward global limit
+          this.resourceLimiter.tryAcquire();
 
-          const buildOnExit = this.buildOnExitCallback(project, slotName, slot, seq, postActions);
-
+          const buildOnExit = this.buildOnExitCallback(project, slotName || 'worker-1', workerRef, seq, postActions);
+          const workerId = `${project.name}:${slotName || 'worker-1'}:${seq}`;
           this.supervisor.monitorOrphanPid(
             workerId,
-            slot.pid,
+            workerRef.pid,
             {
               id: workerId,
               transport: 'proc',
-              pid: slot.pid,
-              outputFile: slot.outputFile || '',
+              pid: workerRef.pid,
+              outputFile: workerRef.outputFile || '',
               project: project.name,
               seq,
-              slot: slotName,
-              branch: slot.branch || '',
-              worktree: slot.worktree || '',
-              tool: (project.config.WORKER_TOOL || 'claude') as 'claude' | 'codex',
+              slot: slotName || 'worker-1',
+              branch: workerRef.branch || '',
+              worktree: workerRef.worktree || '',
+              tool: workerRef.agent || (project.config.WORKER_TOOL || 'claude') as 'claude' | 'codex',
               exitCode: null,
-              sessionId: slot.sessionId || null,
-              runId: slot.runId || null,
-              sessionState: slot.sessionState || null,
-              remoteStatus: slot.remoteStatus || null,
-              lastEventAt: slot.lastEventAt || null,
-              startedAt: slot.claimedAt || new Date().toISOString(),
+              sessionId: workerRef.sessionId,
+              runId: null,
+              sessionState: workerRef.sessionState,
+              remoteStatus: workerRef.remoteStatus,
+              lastEventAt: workerRef.lastEventAt,
+              startedAt: workerRef.claimedAt || new Date().toISOString(),
               exitedAt: null,
             },
             buildOnExit,
           );
 
-          this.log(`Recovered active worker ${workerId} (pid ${slot.pid})`);
+          this.log(`Recovered active worker ${workerId} (pid ${workerRef.pid})`);
+          continue;
+        }
+
+        const exitCode = workerRef.exitCode ?? 1;
+        const completion = this.judge.judge({
+          worktree: workerRef.worktree || '',
+          branch: workerRef.branch || '',
+          baseBranch: project.config.GITLAB_MERGE_BRANCH,
+          outputFile: workerRef.outputFile,
+          exitCode,
+          logsDir: project.logsDir,
+        });
+
+        const ctx = this.buildPostActionContext(project, slotName || 'worker-1', seq, workerRef);
+
+        if (completion.status === 'completed') {
+          await postActions.executeCompletion(ctx, completion, workerRef.sessionId);
+          result.completed++;
         } else {
-          // Worker is dead — run completion check
-          this.log(`Found dead worker ${workerId} (pid ${slot.pid}), checking completion`);
-
-          const card = state.activeCards[seq];
-          const retryCount = card?.retryCount ?? 0;
-
-          const judgeInput: JudgeInput = {
-            worktree: slot.worktree || '',
-            branch: slot.branch || '',
-            baseBranch: project.config.GITLAB_MERGE_BRANCH,
-            outputFile: slot.outputFile || null,
-            exitCode: slot.exitCode ?? 1,
-            logsDir: project.logsDir,
-          };
-
-          const completion = this.judge.judge(judgeInput);
-
-          const ctx = this.buildPostActionContext(project, slotName, seq, slot);
-
-          if (completion.status === 'completed') {
-            await postActions.executeCompletion(ctx, completion, slot.sessionId || null);
-            result.completed++;
-          } else {
-            await postActions.executeFailure(
-              ctx, completion, slot.exitCode ?? 1, slot.sessionId || null, retryCount,
-              { onExit: this.buildOnExitCallback(project, slotName, slot, seq, postActions) },
-            );
-            result.failed++;
-          }
+          await postActions.executeFailure(
+            ctx,
+            completion,
+            exitCode,
+            workerRef.sessionId,
+            lease.retryCount,
+            { onExit: this.buildOnExitCallback(project, slotName || 'worker-1', workerRef, seq, postActions) },
+          );
+          result.failed++;
         }
       }
     }
@@ -231,8 +228,7 @@ export class Recovery {
       const ctx = this.buildPostActionContext(project, slotName, seq, slot);
 
       const state = readState(project.stateFile, project.config.MAX_CONCURRENT_WORKERS);
-      const card = state.activeCards[seq];
-      const retryCount = card?.retryCount ?? 0;
+      const retryCount = this.getRetryCount(state, seq);
 
       if (completion.status === 'completed') {
         await postActions.executeCompletion(ctx, completion, slot.sessionId || null);
@@ -261,6 +257,7 @@ export class Recovery {
       seq?: number | null;
     },
     postActions: PostActions,
+    retryCount: number,
   ): Promise<'alive' | 'completed' | 'failed'> {
     const ctx = ProjectContext.load(project.name);
     const runtime = new ACPWorkerRuntime(ctx);
@@ -329,10 +326,6 @@ export class Recovery {
 
     const completion = this.judge.judge(judgeInput);
     const postActionCtx = this.buildPostActionContext(project, slotName, seq, slot);
-    const state = readState(project.stateFile, project.config.MAX_CONCURRENT_WORKERS);
-    const card = state.activeCards[seq];
-    const retryCount = card?.retryCount ?? 0;
-
     if (completion.status === 'completed') {
       await postActions.executeCompletion(postActionCtx, completion, session?.sessionId || null);
       return 'completed';
@@ -347,6 +340,50 @@ export class Recovery {
       { onExit: this.buildOnExitCallback(project, slotName, slot, seq, postActions) },
     );
     return 'failed';
+  }
+
+  private listRecoverableLeases(state: ReturnType<typeof readState>): Array<[string, TaskLease]> {
+    return Object.entries(state.leases)
+      .filter(([, lease]) => !['suspended', 'released'].includes(lease.phase))
+      .sort(([, a], [, b]) => {
+        const aTime = Date.parse(a.lastTransitionAt || a.claimedAt || '') || 0;
+        const bTime = Date.parse(b.lastTransitionAt || b.claimedAt || '') || 0;
+        return aTime - bTime;
+      });
+  }
+
+  private resolveRecoverySlotName(
+    state: ReturnType<typeof readState>,
+    seq: string,
+    lease: TaskLease,
+    reservedSlots: Set<string>,
+  ): string | null {
+    if (lease.slot && state.workers[lease.slot]) {
+      reservedSlots.add(lease.slot);
+      return lease.slot;
+    }
+
+    const existing = Object.entries(state.workers).find(
+      ([name, worker]) => worker.seq === parseInt(seq, 10) && !reservedSlots.has(name),
+    )?.[0];
+    if (existing) {
+      reservedSlots.add(existing);
+      return existing;
+    }
+
+    const idle = Object.entries(state.workers).find(
+      ([name, worker]) => worker.status === 'idle' && !reservedSlots.has(name),
+    )?.[0];
+    if (idle) {
+      reservedSlots.add(idle);
+      return idle;
+    }
+
+    return null;
+  }
+
+  private getRetryCount(state: ReturnType<typeof readState>, seq: string): number {
+    return state.leases[seq]?.retryCount ?? state.activeCards[seq]?.retryCount ?? 0;
   }
 
   private syncAcpSlot(project: ProjectInfo, slotName: string, session: ACPSessionRecord): void {

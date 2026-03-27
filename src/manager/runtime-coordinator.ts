@@ -44,6 +44,7 @@ type Candidate = {
   branch: string | null;
   worktree: string | null;
   priorActiveStartedAt: string | null;
+  priorRetryCount: number;
   priorLease: TaskLease | null;
 };
 
@@ -95,6 +96,7 @@ export class RuntimeCoordinator {
         branch,
         worktree,
         priorActiveStartedAt: state.activeCards[seq]?.startedAt || null,
+        priorRetryCount: state.activeCards[seq]?.retryCount ?? state.leases[seq]?.retryCount ?? 0,
         priorLease,
       };
 
@@ -375,6 +377,7 @@ export class RuntimeCoordinator {
       sessionId: liveWorker ? candidate.session?.sessionId || candidate.slot?.sessionId || null : null,
       runId: liveWorker ? candidate.session?.currentRun?.runId || candidate.slot?.runId || null : null,
       claimedAt: candidate.slot?.claimedAt || candidate.priorLease?.claimedAt || null,
+      retryCount: candidate.priorLease?.retryCount ?? candidate.priorRetryCount,
       lastTransitionAt: new Date().toISOString(),
     };
   }
@@ -473,7 +476,7 @@ export class RuntimeCoordinator {
       mrUrl: prior?.mrUrl || null,
       conflictDomains: prior?.conflictDomains || [],
       startedAt: candidate.priorActiveStartedAt || lease.claimedAt || new Date().toISOString(),
-      retryCount: prior?.retryCount ?? 0,
+      retryCount: lease.retryCount,
     };
   }
 }

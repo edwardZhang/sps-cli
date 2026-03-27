@@ -7,7 +7,7 @@ import type { Notifier } from '../interfaces/Notifier.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type { CommandResult, ActionRecord, Card, CardState, AuxiliaryState } from '../models/types.js';
 import type { ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
-import { readState, writeState } from '../core/state.js';
+import { readState, writeState, type TaskLease, type WorkerSlotState } from '../core/state.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { readQueue } from '../core/queue.js';
@@ -207,9 +207,9 @@ export class ExecutionEngine {
     const bySeq = new Map(cards.map(card => [card.seq, card]));
     const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
 
-    for (const [seq, activeCard] of Object.entries(state.activeCards)) {
-      const slot = activeCard.worker ? state.workers[activeCard.worker] : null;
-      if (activeCard.state !== 'Inprogress' || bySeq.has(seq) || !this.isRuntimeOwnedSlot(slot)) continue;
+    for (const [seq, lease] of Object.entries(state.leases)) {
+      const slot = lease.slot ? state.workers[lease.slot] || null : null;
+      if (this.derivePmStateFromLease(lease, slot) !== 'Inprogress' || bySeq.has(seq)) continue;
       const card = await this.taskBackend.getBySeq(seq);
       if (card) bySeq.set(seq, card);
     }
@@ -221,9 +221,9 @@ export class ExecutionEngine {
     const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
     const actions: ActionRecord[] = [];
 
-    for (const [seq, activeCard] of Object.entries(state.activeCards)) {
-      const slot = activeCard.worker ? state.workers[activeCard.worker] : null;
-      const targetState = this.derivePmStateFromRuntime(activeCard.state, slot);
+    for (const [seq, lease] of Object.entries(state.leases)) {
+      const slot = lease.slot ? state.workers[lease.slot] || null : null;
+      const targetState = this.derivePmStateFromLease(lease, slot);
       if (!targetState) continue;
 
       const card = await this.taskBackend.getBySeq(seq);
@@ -253,22 +253,21 @@ export class ExecutionEngine {
     return actions;
   }
 
-  private derivePmStateFromRuntime(
-    activeState: string,
-    slot: import('../core/state.js').WorkerSlotState | null,
+  private derivePmStateFromLease(
+    lease: TaskLease,
+    slot: WorkerSlotState | null,
   ): CardState | null {
-    if (!this.isRuntimeOwnedSlot(slot)) return null;
-    if (activeState === 'Todo') {
+    if (lease.phase === 'queued' || lease.phase === 'preparing') {
       return 'Todo';
     }
-    if (slot && ['active', 'merging', 'resolving', 'releasing'].includes(slot.status)) {
+    if (['coding', 'merging', 'resolving_conflict', 'waiting_confirmation', 'closing'].includes(lease.phase)) {
       return 'Inprogress';
     }
     return null;
   }
 
   private isRuntimeOwnedSlot(
-    slot: import('../core/state.js').WorkerSlotState | null | undefined,
+    slot: WorkerSlotState | null | undefined,
   ): boolean {
     return !!slot && slot.status !== 'idle';
   }
@@ -308,17 +307,14 @@ export class ExecutionEngine {
   ): Promise<ActionRecord | null> {
     const seq = card.seq;
     const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const lease = state.leases[seq] || null;
+    const slotName = this.findRuntimeSlotName(state, seq, lease);
 
-    const slotEntry = Object.entries(state.workers).find(
-      ([, w]) => w.seq === parseInt(seq, 10) && w.status === 'active',
-    );
-
-    if (!slotEntry) {
+    if (!slotName) {
       // Slot already released (PostActions handled it via exit callback)
       return null;
     }
 
-    const [slotName] = slotEntry;
     if (
       state.workers[slotName]?.transport === 'acp' ||
       state.workers[slotName]?.transport === 'pty' ||
@@ -514,6 +510,7 @@ export class ExecutionEngine {
       sessionId: null,
       runId: null,
       claimedAt: state.workers[slotName].claimedAt,
+      retryCount: 0,
       lastTransitionAt: new Date().toISOString(),
     };
 
@@ -869,8 +866,7 @@ export class ExecutionEngine {
     };
 
     const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-    const activeCard = state.activeCards[card.seq];
-    const retryCount = activeCard?.retryCount ?? 0;
+    const retryCount = this.getRetryCount(state, card.seq);
     const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
 
     try {
@@ -919,6 +915,23 @@ export class ExecutionEngine {
 
   private acpRunExitCode(status: ACPRunStatus): number {
     return status === 'completed' ? 0 : 1;
+  }
+
+  private findRuntimeSlotName(
+    state: ReturnType<typeof readState>,
+    seq: string,
+    lease: TaskLease | null,
+  ): string | null {
+    if (lease?.slot && state.workers[lease.slot]) return lease.slot;
+
+    const slotEntry = Object.entries(state.workers).find(
+      ([, worker]) => worker.seq === parseInt(seq, 10) && worker.status !== 'idle',
+    );
+    return slotEntry?.[0] || null;
+  }
+
+  private getRetryCount(state: ReturnType<typeof readState>, seq: string): number {
+    return state.leases[seq]?.retryCount ?? state.activeCards[seq]?.retryCount ?? 0;
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────

@@ -693,7 +693,7 @@ export class MonitorEngine {
   ): Promise<void> {
     const restartLimit = this.ctx.config.WORKER_RESTART_LIMIT;
     const activeCard = state.activeCards[seq];
-    const retryCount = activeCard?.retryCount ?? 0;
+    const retryCount = state.leases[seq]?.retryCount ?? activeCard?.retryCount ?? 0;
 
     // Release the slot
     state.workers[slotName] = {
@@ -733,6 +733,15 @@ export class MonitorEngine {
           startedAt: activeCard?.startedAt ?? new Date().toISOString(),
           retryCount: retryCount + 1,
         };
+        if (state.leases[seq]) {
+          state.leases[seq].retryCount = retryCount + 1;
+          state.leases[seq].phase = 'queued';
+          state.leases[seq].slot = null;
+          state.leases[seq].sessionId = null;
+          state.leases[seq].runId = null;
+          state.leases[seq].pmStateObserved = 'Todo';
+          state.leases[seq].lastTransitionAt = new Date().toISOString();
+        }
 
         writeState(this.ctx.paths.stateFile, state, 'monitor-auto-retry');
 
@@ -762,6 +771,14 @@ export class MonitorEngine {
       }
     } else {
       // Retry limit reached — mark as BLOCKED
+      if (state.leases[seq]) {
+        state.leases[seq].retryCount = retryCount;
+        state.leases[seq].phase = 'suspended';
+        state.leases[seq].slot = null;
+        state.leases[seq].sessionId = null;
+        state.leases[seq].runId = null;
+        state.leases[seq].lastTransitionAt = new Date().toISOString();
+      }
       writeState(this.ctx.paths.stateFile, state, 'monitor-retry-exhausted');
       try {
         await this.addLabelSafe(seq, 'BLOCKED');
