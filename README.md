@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.22.0**
+**v0.23.4**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -117,9 +117,9 @@ Planning -> Backlog -> Todo -> Inprogress -> Done
 | Todo -> Inprogress | ExecutionEngine | Assign Worker slot, build task context, launch AI Worker |
 | Inprogress -> Done | PostActions + MergeMutex | Detect Worker completion, serialize merge to target branch, release resources, clean up worktree |
 
-The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. Final integration now runs inside a temporary detached merge worktree, which avoids `main already used by worktree` failures and keeps the user's main checkout untouched. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the persistent ACP transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary.
+The Worker no longer executes `.sps/merge.sh` as the normal path. In `MR_MODE=none`, the Worker commits and pushes the feature branch, then SPS closeout performs a serialized merge. Final integration now runs inside a temporary detached merge worktree, which avoids `main already used by worktree` failures and keeps the user's main checkout untouched. `.sps/merge.sh` remains only as a manual fallback. See `docs/design/10-acp-worker-runtime-design.md` for the persistent Agent transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary.
 
-ACP Phase 3 now extends the main pipeline launch path with same-session follow-up runs. When `WORKER_TRANSPORT=acp`, `sps tick` launches work through `sessionId/runId`, persists that state into `runtime/state.json` plus `runtime/acp-state.json`, and lets recovery/status/dashboard inspect the live session/run state. `PostActions` retry/conflict flows and `CloseoutEngine` autofix/conflict flows now resume the same ACP session instead of spawning a new print-mode `--resume` process. Codex has been verified on launch, recovery, direct merge, and same-session resume; Claude still depends on host-side `claude auth login` before reaching `ready`.
+PTY transport now extends the same session/run model into the default CLI-backed worker path. When `WORKER_TRANSPORT=pty` or `WORKER_TRANSPORT=acp`, `sps tick` launches work through `sessionId/runId`, persists that state into `runtime/state.json` plus `runtime/acp-state.json`, and lets recovery/status/dashboard inspect the live session/run state. `PostActions` retry/conflict flows and `CloseoutEngine` autofix/conflict flows now resume the same session when possible and automatically rebuild a fresh persistent session when the original one is gone before a retry or merge-conflict follow-up run. Codex has been verified on launch, recovery, direct merge, same-session resume, and PTY conflict fallback; Claude still depends on host-side `claude auth login` before reaching `ready`.
 
 ### MR_MODE=create (Optional)
 
@@ -431,7 +431,7 @@ sps status [--json]
 
 ### sps acp
 
-Manage persistent ACP-backed worker sessions directly, or inspect the same transport that `sps tick` uses when `WORKER_TRANSPORT=acp`.
+Manage persistent session-backed worker sessions directly, or inspect the same transport that `sps tick` uses when `WORKER_TRANSPORT=pty` or `WORKER_TRANSPORT=acp`.
 
 ```bash
 sps acp ensure <project> <slot> [claude|codex] [--json]
@@ -443,12 +443,12 @@ sps acp stop <project> <slot> [--json]
 
 Current behavior:
 
-- `ensure` starts or reuses a persistent tmux-backed local session and mirrors it into `~/.coral/projects/<project>/runtime/acp-state.json`
+- `ensure` starts or reuses a persistent PTY-backed local session when `WORKER_TRANSPORT=pty`, and falls back to the legacy tmux-backed gateway when the project still uses `WORKER_TRANSPORT=acp`
 - `run` submits a prompt onto the session and records a new run snapshot
 - `status` refreshes session and run state from the local gateway
 - `stop` terminates the persistent session and marks the slot `offline`
-- `sps tick` reuses the same persistent transport when `WORKER_TRANSPORT=acp`
-- retry / conflict follow-up runs reuse the same slot session when ACP transport is active
+- `sps tick` reuses the same persistent transport when `WORKER_TRANSPORT=pty` or `WORKER_TRANSPORT=acp`
+- retry / conflict follow-up runs reuse the same slot session when possible, and now recreate a fresh persistent session automatically if the old one has already disappeared
 
 Observed session states:
 

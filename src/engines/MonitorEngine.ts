@@ -85,7 +85,7 @@ export class MonitorEngine {
     let orphansFound = 0;
 
     for (const [slotName, slotState] of Object.entries(state.workers)) {
-      if (slotState.status !== 'active') continue;
+      if (!['active', 'resolving', 'merging'].includes(slotState.status)) continue;
 
       // Build the workerId that Supervisor would track
       const seq = slotState.seq != null ? String(slotState.seq) : '';
@@ -94,7 +94,10 @@ export class MonitorEngine {
       // If Supervisor is tracking this worker, it handles lifecycle — skip
       if (this.supervisor.get(workerId)) continue;
 
-      if ((slotState.transport === 'acp' || slotState.mode === 'acp') && this.isAcpSessionAlive(acpState.sessions[slotName])) {
+      if (
+        (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') &&
+        this.isAcpSessionAlive(acpState.sessions[slotName])
+      ) {
         continue;
       }
 
@@ -103,7 +106,7 @@ export class MonitorEngine {
       // Re-read state to check for race with exit callback.
       const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
       const freshSlot = freshState.workers[slotName];
-      if (!freshSlot || freshSlot.status !== 'active') continue;
+      if (!freshSlot || !['active', 'resolving', 'merging'].includes(freshSlot.status)) continue;
 
       // Still active with no Supervisor handle — truly orphaned / stale
       this.log.warn(
@@ -181,14 +184,23 @@ export class MonitorEngine {
     let staleCount = 0;
 
     for (const card of inprogressCards) {
-      if (card.labels.includes('STALE-RUNTIME')) continue;
+      if (card.labels.includes('STALE-RUNTIME') || card.labels.includes('CONFLICT') || card.labels.includes('NEEDS-FIX')) continue;
 
       const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
       const slotEntry = Object.entries(state.workers).find(
         ([, w]) => w.seq === parseInt(card.seq, 10),
       );
+      const trackedCard = state.activeCards[card.seq];
+      const branchName = this.buildBranchName(card);
 
       if (!slotEntry) {
+        if (!trackedCard) {
+          const mrStatus = await this.repoBackend.getMrStatus(branchName);
+          if (mrStatus.state === 'merged') {
+            this.log.info(`seq ${card.seq}: Card already merged while closeout was releasing resources, skipping stale check`);
+            continue;
+          }
+        }
         // No worker slot for this card — it's stale
         this.log.warn(`seq ${card.seq}: Inprogress but no worker slot assigned`);
         await this.handleStaleRuntime(card, actions, recommendedActions);
@@ -198,7 +210,7 @@ export class MonitorEngine {
 
       const [, slotState] = slotEntry;
 
-      if ((slotState.transport === 'acp' || slotState.mode === 'acp')) {
+      if (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') {
         const session = acpState.sessions[slotEntry[0]];
         if (this.isAcpSessionAlive(session)) {
           continue;
@@ -218,8 +230,7 @@ export class MonitorEngine {
       if (!handle) {
         // Not tracked by Supervisor and no slot → stale
         // Check for MR as a last resort
-        const branchName = slotState.branch || this.buildBranchName(card);
-        const mrStatus = await this.repoBackend.getMrStatus(branchName);
+        const mrStatus = await this.repoBackend.getMrStatus(slotState.branch || branchName);
 
         if (mrStatus.exists) {
           this.log.warn(`seq ${card.seq}: Worker not tracked, but MR exists — stale runtime`);
@@ -386,10 +397,43 @@ export class MonitorEngine {
     actions: ActionRecord[],
   ): Promise<void> {
     const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const acpState = readACPState(this.ctx.paths.acpStateFile);
     let waitingCount = 0;
 
     for (const [slotName, slotState] of Object.entries(state.workers)) {
-      if (slotState.status !== 'active' || !slotState.tmuxSession) continue;
+      if (!['active', 'resolving', 'merging'].includes(slotState.status)) continue;
+      const isAgentTransport =
+        slotState.transport === 'acp' ||
+        slotState.transport === 'pty' ||
+        slotState.mode === 'acp' ||
+        slotState.mode === 'pty';
+
+      if (isAgentTransport) {
+        const session = acpState.sessions[slotName];
+        const pending = session?.pendingInput;
+        if (!session || session.currentRun?.status !== 'waiting_input' || !pending) continue;
+
+        const seq = slotState.seq != null ? String(slotState.seq) : slotName;
+        await this.addLabelSafe(seq, 'WAITING-CONFIRMATION');
+        await this.notifySafe(
+          `seq:${seq} waiting for confirmation (${pending.type}): ${pending.prompt}`,
+          pending.dangerous ? 'warning' : 'info',
+        );
+        actions.push({
+          action: 'mark-waiting',
+          entity: `seq:${seq}`,
+          result: 'ok',
+          message: `Waiting for ${pending.type}: ${pending.prompt}`,
+        });
+        this.logEvent('waiting-confirmation', seq, 'ok', {
+          destructive: !!pending.dangerous,
+          prompt: pending.prompt,
+        });
+        waitingCount++;
+        continue;
+      }
+
+      if (!slotState.tmuxSession) continue;
       // Print mode workers use --dangerously-skip-permissions, never wait for input
       if (slotState.mode === 'print') continue;
 
@@ -502,7 +546,7 @@ export class MonitorEngine {
     for (const [slotName, slotState] of Object.entries(state.workers)) {
       if (slotState.status !== 'active') continue;
 
-      if ((slotState.transport === 'acp' || slotState.mode === 'acp')) {
+      if (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') {
         const session = readACPState(this.ctx.paths.acpStateFile).sessions[slotName];
         if (this.isAcpSessionAlive(session)) continue;
       }

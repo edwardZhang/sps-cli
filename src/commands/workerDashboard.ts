@@ -261,8 +261,8 @@ function renderPanel(panel: WorkerPanel, panelWidth: number, panelHeight: number
     : '';
   const modeInfo = panel.slot.mode === 'print'
     ? `pid:${panel.slot.pid || '?'}${panel.slot.exitCode != null ? ` exit:${panel.slot.exitCode}` : ''}`
-    : panel.slot.mode === 'acp'
-      ? `acp:${panel.slot.sessionState || 'unknown'}${panel.slot.remoteStatus ? `/${panel.slot.remoteStatus}` : ''}`
+    : (panel.slot.mode === 'acp' || panel.slot.mode === 'pty')
+      ? `${panel.slot.mode}:${panel.slot.sessionState || 'unknown'}${panel.slot.remoteStatus ? `/${panel.slot.remoteStatus}` : ''}`
       : '';
   const timeLine = elapsed || heartbeat || modeInfo
     ? ` ${DIM}${[elapsed, heartbeat, modeInfo].filter(Boolean).join(' │ ')}${RESET}`

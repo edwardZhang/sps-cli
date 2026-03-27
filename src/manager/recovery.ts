@@ -68,7 +68,7 @@ export class Recovery {
         // Recover active, merging, and resolving slots
         if (!['active', 'merging', 'resolving'].includes(slot.status)) continue;
 
-        if (slot.transport === 'acp' || slot.mode === 'acp') {
+        if (slot.transport === 'acp' || slot.transport === 'pty' || slot.mode === 'acp' || slot.mode === 'pty') {
           result.found++;
           const recovered = await this.recoverAcpSlot(project, slotName, seqString(slot.seq), slot, postActions);
           if (recovered === 'alive') result.alive++;
@@ -192,7 +192,9 @@ export class Recovery {
       project: project.name,
       seq,
       slot: slotName,
-      transport: slot.transport === 'acp' || slot.mode === 'acp' ? 'acp' : 'proc',
+      transport: slot.transport === 'pty' || slot.mode === 'pty'
+        ? 'pty'
+        : (slot.transport === 'acp' || slot.mode === 'acp' ? 'acp' : 'proc'),
       branch: slot.branch || '',
       worktree: slot.worktree || '',
       baseBranch: project.config.GITLAB_MERGE_BRANCH,
@@ -351,8 +353,9 @@ export class Recovery {
     const state = readState(project.stateFile, project.config.MAX_CONCURRENT_WORKERS);
     const slot = state.workers[slotName];
     if (!slot) return;
-    slot.mode = 'acp';
-    slot.transport = 'acp';
+    const transport = project.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+    slot.mode = transport;
+    slot.transport = transport;
     slot.agent = session.tool;
     slot.tmuxSession = session.sessionName;
     slot.sessionId = session.sessionId;

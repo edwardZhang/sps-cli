@@ -28,7 +28,7 @@ export interface PostActionContext {
   project: string;
   seq: string;
   slot: string;
-  transport: 'proc' | 'acp';
+  transport: 'proc' | 'acp' | 'pty';
   branch: string;
   worktree: string;
   baseBranch: string;
@@ -146,10 +146,10 @@ export class PostActions {
     const results: StepResult[] = [];
 
     if (retryCount < ctx.maxRetries) {
-      if (ctx.transport === 'acp' && this.agentRuntime) {
+      if (ctx.transport !== 'proc' && this.agentRuntime) {
         results.push(await this.pmComment(
           ctx,
-          `Worker ${completion.reason} (exit ${exitCode}). Retry #${retryCount + 1} on the same ACP session...`,
+          `Worker ${completion.reason} (exit ${exitCode}). Retry #${retryCount + 1} on the same ${ctx.transport.toUpperCase()} session...`,
         ));
 
         const respawnResult = await this.respawnAcp(ctx, retryCount);
@@ -229,7 +229,7 @@ export class PostActions {
     this.abortRebase(ctx.worktree);
 
     // L2: Spawn --resume Worker to resolve conflicts
-    if (ctx.transport !== 'acp' && !sessionId) {
+    if (ctx.transport === 'proc' && !sessionId) {
       this.log(`L2: No sessionId for ${ctx.branch}, cannot spawn resume worker`);
       results.push({ step: 'merge-l0', ok: false, error: l0Result.error });
       await this.markConflict(ctx, results, `Merge conflict, no session to resume`);
@@ -246,9 +246,9 @@ export class PostActions {
       if (this.mergeMutex) this.mergeMutex.release();
 
       // Spawn resume worker and wait for exit
-      const resolveResult = ctx.transport === 'acp'
-        ? await this.spawnAcpConflictResolver(ctx, attempt)
-        : await this.spawnConflictResolver(ctx, sessionId!, attempt);
+      const resolveResult = ctx.transport === 'proc'
+        ? await this.spawnConflictResolver(ctx, sessionId!, attempt)
+        : await this.spawnAcpConflictResolver(ctx, attempt);
 
       // Re-acquire mutex for merge retry
       if (this.mergeMutex) await this.mergeMutex.acquire();
@@ -474,12 +474,15 @@ export class PostActions {
     ].join('\n');
 
     try {
-      const session = await this.agentRuntime.resumeRun(ctx.slot, instruction);
-      this.syncAcpRuntimeState(ctx, session, 'resolving', 'post-actions-conflict-resume', {
-        mergeRetryIncrement: true,
-      });
+      const session = await this.resumeOrStartAgentRun(
+        ctx,
+        instruction,
+        'resolving',
+        'post-actions-conflict-resume',
+        { mergeRetryIncrement: true },
+      );
       this.log(
-        `Spawned ACP conflict resolver for ${ctx.project}:${ctx.slot}:${ctx.seq} ` +
+        `Spawned ${ctx.transport.toUpperCase()} conflict resolver for ${ctx.project}:${ctx.slot}:${ctx.seq} ` +
         `(run=${session.currentRun?.runId || 'unknown'})`,
       );
 
@@ -495,7 +498,7 @@ export class PostActions {
       if (completed.currentRun.status === 'completed') {
         return { ok: true };
       }
-      return { ok: false, error: `ACP conflict resolver ended with ${completed.currentRun.status}` };
+      return { ok: false, error: `${ctx.transport.toUpperCase()} conflict resolver ended with ${completed.currentRun.status}` };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -722,13 +725,18 @@ export class PostActions {
         'Remember to push your changes when done.',
       ].join('\n');
 
-      const session = await this.agentRuntime.resumeRun(ctx.slot, resumePrompt);
-      this.syncAcpRuntimeState(ctx, session, 'active', 'post-actions-retry-acp', {
-        retryCount: retryCount + 1,
-      });
+      const session = await this.resumeOrStartAgentRun(
+        ctx,
+        resumePrompt,
+        'active',
+        'post-actions-retry-acp',
+        {
+          retryCount: retryCount + 1,
+        },
+      );
 
       this.log(
-        `Respawned ${ctx.project}:${ctx.slot}:${ctx.seq} on ACP session ${session.sessionId} ` +
+        `Respawned ${ctx.project}:${ctx.slot}:${ctx.seq} on ${ctx.transport.toUpperCase()} session ${session.sessionId} ` +
         `(retry #${retryCount + 1})`,
       );
       return { step: 'respawn-acp', ok: true };
@@ -736,6 +744,34 @@ export class PostActions {
       const msg = err instanceof Error ? err.message : String(err);
       this.log(`ACP respawn failed: ${msg}`);
       return { step: 'respawn-acp', ok: false, error: msg };
+    }
+  }
+
+  private async resumeOrStartAgentRun(
+    ctx: PostActionContext,
+    prompt: string,
+    slotStatus: 'active' | 'resolving' | 'merging',
+    updatedBy: string,
+    options?: { retryCount?: number; mergeRetryIncrement?: boolean },
+  ): Promise<ACPSessionRecord> {
+    if (!this.agentRuntime) {
+      throw new Error('ACP runtime is not configured');
+    }
+
+    try {
+      const session = await this.agentRuntime.resumeRun(ctx.slot, prompt);
+      this.syncAcpRuntimeState(ctx, session, slotStatus, updatedBy, options);
+      return session;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log(
+        `${ctx.transport.toUpperCase()} resume unavailable for ${ctx.project}:${ctx.slot}:${ctx.seq}: ${msg}; ` +
+        `creating a fresh session`,
+      );
+      await this.agentRuntime.ensureSession(ctx.slot, ctx.tool, ctx.worktree);
+      const session = await this.agentRuntime.startRun(ctx.slot, prompt, ctx.tool, ctx.worktree);
+      this.syncAcpRuntimeState(ctx, session, slotStatus, updatedBy, options);
+      return session;
     }
   }
 
@@ -851,9 +887,10 @@ export class PostActions {
     const slot = state.workers[ctx.slot];
 
     if (slot) {
+      const agentMode = ctx.transport === 'pty' ? 'pty' : 'acp';
       slot.status = slotStatus;
-      slot.mode = 'acp';
-      slot.transport = 'acp';
+      slot.mode = agentMode;
+      slot.transport = ctx.transport;
       slot.agent = session.tool;
       slot.tmuxSession = session.sessionName;
       slot.sessionId = session.sessionId;
@@ -923,7 +960,9 @@ export class PostActions {
         continue;
       }
       if (currentRun && currentRun.status === 'waiting_input') {
-        throw new Error(`ACP run ${currentRun.runId} is waiting for input`);
+        this.log(`${ctx.transport.toUpperCase()} run ${currentRun.runId} is waiting for input`);
+        await this.sleep(PID_POLL_INTERVAL);
+        continue;
       }
       if (currentRun && this.isTerminalAcpStatus(currentRun.status)) {
         const exitCode = currentRun.status === 'completed' ? 0 : 1;

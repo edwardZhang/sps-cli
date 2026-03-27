@@ -10,7 +10,7 @@ export interface WorkerSlotState {
   claimedAt: string | null;
   lastHeartbeat: string | null;
   /** Worker execution mode — null for legacy state files */
-  mode?: 'print' | 'interactive' | 'acp' | null;
+  mode?: 'print' | 'interactive' | 'acp' | 'pty' | null;
   /** Underlying worker transport */
   transport?: 'proc' | 'acp' | 'pty' | null;
   /** Worker tool currently bound to the slot */

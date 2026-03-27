@@ -4,6 +4,7 @@ import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
+import type { ACPSessionRecord } from '../models/acp.js';
 import type { CommandResult, ActionRecord, Card, RecommendedAction } from '../models/types.js';
 import { readState, writeState } from '../core/state.js';
 import { resolveWorktreePath } from '../core/paths.js';
@@ -324,7 +325,11 @@ export class CloseoutEngine {
         const [slotName, slotState] = slotEntry;
         const session = slotState.tmuxSession!;
         const isPrintMode = slotState.mode === 'print';
-        const isAcpMode = slotState.transport === 'acp' || slotState.mode === 'acp';
+        const isAcpMode =
+          slotState.transport === 'acp' ||
+          slotState.transport === 'pty' ||
+          slotState.mode === 'acp' ||
+          slotState.mode === 'pty';
 
         try {
           const fixPrompt = `CI pipeline has failed. Please review the CI logs, fix the issues, commit, and push. This is autofix attempt ${autofixAttempts + 1} of ${maxAttempts}.`;
@@ -665,7 +670,11 @@ export class CloseoutEngine {
     }
 
     const isPrintMode = slotState.mode === 'print';
-    const isAcpMode = slotState.transport === 'acp' || slotState.mode === 'acp';
+    const isAcpMode =
+      slotState.transport === 'acp' ||
+      slotState.transport === 'pty' ||
+      slotState.mode === 'acp' ||
+      slotState.mode === 'pty';
 
     try {
       if (isAcpMode && this.agentRuntime) {
@@ -843,13 +852,23 @@ export class CloseoutEngine {
       throw new Error('ACP runtime is not configured');
     }
 
-    const session = await this.agentRuntime.resumeRun(slotName, prompt);
+    let session: ACPSessionRecord;
+    try {
+      session = await this.agentRuntime.resumeRun(slotName, prompt);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.info(
+        `seq ${seq}: Agent resume unavailable for ${slotName}: ${msg}. Creating a fresh ${this.ctx.config.WORKER_TRANSPORT.toUpperCase()} session.`,
+      );
+      await this.agentRuntime.ensureSession(slotName, undefined, worktree);
+      session = await this.agentRuntime.startRun(slotName, prompt, undefined, worktree);
+    }
     const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
     const slot = state.workers[slotName];
     if (slot) {
       slot.status = slotStatus;
-      slot.mode = 'acp';
-      slot.transport = 'acp';
+      slot.mode = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+      slot.transport = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
       slot.agent = session.tool;
       slot.tmuxSession = session.sessionName;
       slot.sessionId = session.sessionId;

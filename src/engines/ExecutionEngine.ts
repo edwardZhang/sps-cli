@@ -246,7 +246,12 @@ export class ExecutionEngine {
     }
 
     const [slotName] = slotEntry;
-    if (state.workers[slotName]?.transport === 'acp' || state.workers[slotName]?.mode === 'acp') {
+    if (
+      state.workers[slotName]?.transport === 'acp' ||
+      state.workers[slotName]?.transport === 'pty' ||
+      state.workers[slotName]?.mode === 'acp' ||
+      state.workers[slotName]?.mode === 'pty'
+    ) {
       return this.checkAcpInprogressCard(card, slotName);
     }
 
@@ -395,7 +400,9 @@ export class ExecutionEngine {
       tmuxSession: sessionName,
       claimedAt: new Date().toISOString(),
       lastHeartbeat: new Date().toISOString(),
-      mode: this.ctx.config.WORKER_TRANSPORT === 'acp' ? 'acp' : this.ctx.config.WORKER_MODE,
+      mode: this.ctx.config.WORKER_TRANSPORT === 'proc'
+        ? this.ctx.config.WORKER_MODE
+        : this.ctx.config.WORKER_TRANSPORT,
       transport: this.ctx.config.WORKER_TRANSPORT,
       agent: (this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
       sessionId: null,
@@ -477,7 +484,7 @@ export class ExecutionEngine {
       const prompt = readFileSync(promptFile, 'utf-8').trim();
       const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
 
-      if (this.ctx.config.WORKER_TRANSPORT === 'acp') {
+      if (this.ctx.config.WORKER_TRANSPORT !== 'proc') {
         const runtime = this.requireAgentRuntime();
         const session = await runtime.startRun(
           slotName,
@@ -513,7 +520,8 @@ export class ExecutionEngine {
         });
 
         this.log.ok(
-          `Step 6: ACP worker launched for seq ${seq} (session=${session.sessionId}, run=${session.currentRun?.runId || 'none'})`,
+          `Step 6: ${this.ctx.config.WORKER_TRANSPORT.toUpperCase()} worker launched for seq ${seq} ` +
+          `(session=${session.sessionId}, run=${session.currentRun?.runId || 'none'})`,
         );
       } else {
         const outputFile = resolve(
@@ -586,7 +594,7 @@ export class ExecutionEngine {
       // Rollback: kill worker, release slot
       const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
       try {
-        if (this.ctx.config.WORKER_TRANSPORT === 'acp' && this.agentRuntime) {
+        if (this.ctx.config.WORKER_TRANSPORT !== 'proc' && this.agentRuntime) {
           await this.agentRuntime.stopSession(slotName);
         } else {
           await this.supervisor.kill(workerId);
@@ -676,14 +684,14 @@ export class ExecutionEngine {
         slot.branch || this.buildBranchName(card),
         this.acpRunExitCode(session.currentRun.status),
         handle,
-        'acp',
+        this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp',
       );
 
       return {
         action: 'complete',
         entity: `seq:${seq}`,
         result: session.currentRun.status === 'completed' ? 'ok' : 'fail',
-        message: `ACP run ${session.currentRun.status}`,
+        message: `${this.ctx.config.WORKER_TRANSPORT.toUpperCase()} run ${session.currentRun.status}`,
       };
     }
 
@@ -708,7 +716,7 @@ export class ExecutionEngine {
       slot.branch || this.buildBranchName(card),
       1,
       handle,
-      'acp',
+      this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp',
     );
 
     return {
@@ -726,7 +734,7 @@ export class ExecutionEngine {
     branch: string,
     exitCode: number,
     handle: WorkerHandle | null,
-    transport: 'proc' | 'acp',
+    transport: 'proc' | 'acp' | 'pty',
   ): Promise<void> {
     const completion = this.completionJudge.judge({
       worktree,
@@ -787,8 +795,9 @@ export class ExecutionEngine {
   }
 
   private applyAcpSessionToSlot(slot: import('../core/state.js').WorkerSlotState, session: ACPSessionRecord): void {
-    slot.mode = 'acp';
-    slot.transport = 'acp';
+    const transport = this.ctx.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+    slot.mode = transport;
+    slot.transport = transport;
     slot.agent = session.tool;
     slot.tmuxSession = session.sessionName;
     slot.sessionId = session.sessionId;

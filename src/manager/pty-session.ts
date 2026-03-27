@@ -105,7 +105,7 @@ export class PTYSession extends EventEmitter {
       this.parser.feed(clean, this);
     });
 
-    this.terminal.onExit(({ exitCode }) => {
+    this.terminal.onExit(({ exitCode }: { exitCode: number }) => {
       this._alive = false;
       this.setState('offline');
       if (this.outputStream) this.outputStream.end();

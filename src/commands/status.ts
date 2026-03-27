@@ -75,7 +75,12 @@ function getProjectStatus(project: string): ProjectStatus {
       let merging = 0;
       for (const [slotName, slot] of slots) {
         if (slot.status === 'active') {
-          if (slot.transport === 'acp' || slot.mode === 'acp') {
+          if (
+            slot.transport === 'acp' ||
+            slot.transport === 'pty' ||
+            slot.mode === 'acp' ||
+            slot.mode === 'pty'
+          ) {
             const session = acpState.sessions[slotName];
             const runStatus = session?.currentRun?.status || null;
             if (session && session.sessionState !== 'offline' && runStatus && !['completed', 'failed', 'cancelled', 'lost'].includes(runStatus)) {
