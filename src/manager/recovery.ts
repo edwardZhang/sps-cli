@@ -12,6 +12,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import { ProjectContext } from '../core/context.js';
+import {
+  buildResumePrompt,
+  LEGACY_TASK_PROMPT_FILE,
+  promptFileForPhase,
+  selectWorkerPhase,
+} from '../core/taskPrompts.js';
 import { isProcessAlive } from '../providers/outputParser.js';
 import { CompletionJudge, type JudgeInput } from './completion-judge.js';
 import { PostActions, type PostActionContext } from './post-actions.js';
@@ -600,55 +606,27 @@ export class Recovery {
   ): string {
     const worktree = slot.worktree || lease.worktree || '';
     const branch = slot.branch || lease.branch || '';
-    const originalPrompt = this.readTaskPrompt(worktree);
-    const conflictRecovery = lease.phase === 'resolving_conflict' || !!evidence && ['rebase', 'merge', 'conflict'].includes(evidence.gitStatus);
-
-    const header = conflictRecovery
-      ? [
-          'The previous SPS tick process stopped. The old PTY session is gone.',
-          'Recover this task at the task level in the existing worktree.',
-          `Working directory: ${worktree}`,
-          `Branch: ${branch}`,
-          '',
-          'Current goal:',
-          `1. cd ${worktree}`,
-          `2. Inspect the existing git state and continue the in-progress rebase/merge against origin/${project.config.GITLAB_MERGE_BRANCH}`,
-          '3. Resolve every conflict carefully based on the current code and task intent',
-          '4. Run git add on resolved files and continue the rebase/merge',
-          `5. Push the feature branch with git push --force-with-lease origin ${branch}`,
-          '6. Say "done" only after the branch is in a good state',
-        ]
-      : [
-          'The previous SPS tick process stopped. The old PTY session is gone.',
-          'Recover this task at the task level in the existing worktree.',
-          `Working directory: ${worktree}`,
-          `Branch: ${branch}`,
-          '',
-          'Current goal:',
-          `1. cd ${worktree}`,
-          '2. Inspect the current git/worktree state before changing anything',
-          '3. Continue the task from the existing code instead of starting over',
-          '4. Run the necessary tests/checks for the current state',
-          `5. Push the feature branch ${branch} when the task is complete`,
-          '6. Say "done" only after the branch is pushed',
-        ];
-
-    if (!originalPrompt) {
-      return header.join('\n');
-    }
-
-    return `${header.join('\n')}\n\nOriginal task context:\n---\n${originalPrompt}`;
+    const phase = selectWorkerPhase(lease.pmStateObserved, lease.phase);
+    const originalPrompt = this.readTaskPrompt(worktree, phase);
+    return buildResumePrompt(phase, worktree, branch, originalPrompt);
   }
 
-  private readTaskPrompt(worktree: string): string | null {
+  private readTaskPrompt(worktree: string, phase: 'development' | 'integration'): string | null {
     if (!worktree) return null;
-    const promptFile = resolve(worktree, '.sps', 'task_prompt.txt');
-    if (!existsSync(promptFile)) return null;
-    try {
-      return readFileSync(promptFile, 'utf-8').trim() || null;
-    } catch {
-      return null;
+    const candidateFiles = [
+      resolve(worktree, '.sps', promptFileForPhase(phase)),
+      resolve(worktree, '.sps', LEGACY_TASK_PROMPT_FILE),
+    ];
+    for (const promptFile of candidateFiles) {
+      if (!existsSync(promptFile)) continue;
+      try {
+        const content = readFileSync(promptFile, 'utf-8').trim();
+        if (content) return content;
+      } catch {
+        // try next candidate
+      }
     }
+    return null;
   }
 
   private slotStatusForLease(phase: TaskLease['phase']): WorkerSlotState['status'] {

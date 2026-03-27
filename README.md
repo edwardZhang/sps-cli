@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.23.14**
+**v0.23.16**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -12,7 +12,7 @@ SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool d
 Create cards -> Start pipeline -> AI auto-codes -> Serial merge queue -> Notify completion
 ```
 
-Current design direction: SPS is converging on a worker-owned two-phase execution model. `Inprogress` is the development phase, `QA` is the integration/merge phase, label-driven skill profile injection remains part of worker prompt construction, and the next implementation round is targeted at moving merge ownership out of fixed closeout logic and into the `QA` worker phase.
+Current design direction: SPS is converging on a worker-owned two-phase execution model. `Inprogress` is the development phase, `QA` is the integration/merge phase, and label-driven skill profile injection remains part of worker prompt construction. `v0.23.16` lands the first concrete step: per-worktree `.sps/development_prompt.txt` and `.sps/integration_prompt.txt`, plus phase-aware recovery prompt selection. Merge ownership still remains to be moved out of fixed closeout logic and into the `QA` worker phase.
 
 ## Table of Contents
 

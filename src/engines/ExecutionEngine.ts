@@ -12,6 +12,12 @@ import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { readQueue } from '../core/queue.js';
+import {
+  buildPhasePrompt,
+  DEVELOPMENT_PROMPT_FILE,
+  INTEGRATION_PROMPT_FILE,
+  LEGACY_TASK_PROMPT_FILE,
+} from '../core/taskPrompts.js';
 import { Logger } from '../core/logger.js';
 import { ProcessSupervisor, type WorkerHandle } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
@@ -538,7 +544,7 @@ export class ExecutionEngine {
       this.log.warn(`PM claim for seq ${seq} failed (non-fatal): ${msg}`);
     }
 
-    // Step 5: Build task context (CLAUDE.md + .sps/task_prompt.txt)
+    // Step 5: Build task context (.sps/development_prompt.txt + .sps/integration_prompt.txt)
     try {
       this.buildTaskContext(card, worktreePath);
       this.log.ok(`Step 5: Task context built for seq ${seq}`);
@@ -552,7 +558,7 @@ export class ExecutionEngine {
 
     // Step 6: Launch worker via Supervisor
     try {
-      const promptFile = resolve(worktreePath, '.sps', 'task_prompt.txt');
+      const promptFile = resolve(worktreePath, '.sps', LEGACY_TASK_PROMPT_FILE);
 
       // Check global resource limit
       const acquire = this.resourceLimiter.tryAcquireDetailed();
@@ -1002,24 +1008,6 @@ export class ExecutionEngine {
     // ── 3. Project Knowledge (truncated) ──
     const knowledge = this.loadProjectKnowledge(worktreePath);
 
-    // ── Assemble prompt ──
-    const sections: string[] = [];
-
-    if (skillContent) {
-      sections.push(skillContent);
-      sections.push('---');
-    }
-
-    if (projectRules) {
-      sections.push(projectRules);
-      sections.push('---');
-    }
-
-    if (knowledge) {
-      sections.push(knowledge);
-      sections.push('---');
-    }
-
     // Build requirements based on MR mode
     const mrMode = this.ctx.mrMode;   // 'none' | 'create'
     const createMR = mrMode === 'create';
@@ -1027,49 +1015,37 @@ export class ExecutionEngine {
     // Generate .sps/merge.sh (kept as manual fallback, not executed by worker)
     this.writeMergeScript(worktreePath, branchName, card, mrMode === 'create');
 
-    const requirements = [
-      '1. Implement the changes described above',
-      '2. Self-test your changes (run existing tests if any, ensure no regressions)',
-      '3. Update project knowledge (create docs/ dir if needed):',
-      '   - If you made architecture/design choices, append to docs/DECISIONS.md:',
-      `     ## [${card.seq}-${card.name}] ${new Date().toISOString().slice(0, 10)}`,
-      '     - Decision: ...',
-      '     - Reason: ...',
-      '   - Append a summary of your changes to docs/CHANGELOG.md:',
-      `     ## [${card.seq}-${card.name}] ${new Date().toISOString().slice(0, 10)}`,
-      '     - What changed and why',
-      `4. git add, commit, and push to branch ${branchName}`,
-      '5. Verify all changes are committed and pushed to your feature branch',
-      '6. Say "done"',
-    ];
+    const sharedPromptContext = {
+      taskSeq: card.seq,
+      taskTitle: card.name,
+      taskDescription: card.desc || '(no description)',
+      cardId: card.id,
+      worktreePath,
+      branchName,
+      targetBranch: this.ctx.mergeBranch,
+      mergeMode: mrMode,
+      gitlabProjectId: resolveGitlabProjectId(this.ctx.config),
+      skillContent,
+      projectRules,
+      knowledge,
+    } as const;
 
-    requirements.push('');
-    requirements.push('IMPORTANT: You MUST complete ALL steps above. Push ALL your code to the feature branch. Do NOT run merge scripts — merge is handled automatically by the pipeline. After pushing, say "done" and STOP. Do NOT run long-running commands (npm run dev, npm start, yarn dev, docker compose up, or any dev server / watch mode).');
-
-    sections.push(`# Current Task
-
-Task ID: ${card.seq}
-Task: ${card.name}
-Branch: ${branchName}
-Target Branch: ${this.ctx.mergeBranch}
-Card Full ID: ${card.id}
-GitLab Project ID: ${resolveGitlabProjectId(this.ctx.config)}
-MR Mode: ${mrMode}
-
-Description:
-${card.desc || '(no description)'}
-
-Requirements:
-${requirements.join('\n')}`);
+    const developmentPrompt = buildPhasePrompt({
+      ...sharedPromptContext,
+      phase: 'development',
+    });
+    const integrationPrompt = buildPhasePrompt({
+      ...sharedPromptContext,
+      phase: 'integration',
+    });
 
     const spsDir = resolve(worktreePath, '.sps');
     if (!existsSync(spsDir)) {
       mkdirSync(spsDir, { recursive: true });
     }
-    writeFileSync(
-      resolve(spsDir, 'task_prompt.txt'),
-      sections.join('\n\n') + '\n',
-    );
+    writeFileSync(resolve(spsDir, DEVELOPMENT_PROMPT_FILE), developmentPrompt);
+    writeFileSync(resolve(spsDir, INTEGRATION_PROMPT_FILE), integrationPrompt);
+    writeFileSync(resolve(spsDir, LEGACY_TASK_PROMPT_FILE), developmentPrompt);
   }
 
   /**
