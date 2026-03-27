@@ -10,6 +10,7 @@ import { resolve } from 'node:path';
 import { readState } from '../core/state.js';
 import { readACPState } from '../core/acpState.js';
 import { loadProjectConf } from '../core/config.js';
+import { hasPersistedActiveRun, isACPBackedSlot, isProcessAlive, isPersistedSessionAlive } from '../core/sessionLiveness.js';
 
 const HOME = process.env.HOME || '/home/coral';
 const PROJECTS_DIR = resolve(HOME, '.coral', 'projects');
@@ -17,15 +18,6 @@ const PROJECTS_DIR = resolve(HOME, '.coral', 'projects');
 interface LockInfo {
   pid: number;
   startedAt: string;
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 interface ProjectStatus {
@@ -55,7 +47,7 @@ function getProjectStatus(project: string): ProjectStatus {
       const lock: LockInfo = JSON.parse(readFileSync(lockFile, 'utf-8'));
       pid = lock.pid;
       startedAt = lock.startedAt;
-      tick = isPidAlive(lock.pid) ? 'running' : 'stale-lock';
+      tick = isProcessAlive(lock.pid) ? 'running' : 'stale-lock';
     } catch {
       tick = 'stale-lock';
     }
@@ -75,22 +67,18 @@ function getProjectStatus(project: string): ProjectStatus {
       let merging = 0;
       for (const [slotName, slot] of slots) {
         if (slot.status === 'active') {
-          if (
-            slot.transport === 'acp' ||
-            slot.transport === 'pty' ||
-            slot.mode === 'acp' ||
-            slot.mode === 'pty'
-          ) {
+          if (isACPBackedSlot(slot)) {
             const session = acpState.sessions[slotName];
-            const runStatus = session?.currentRun?.status || null;
-            if (session && session.sessionState !== 'offline' && runStatus && !['completed', 'failed', 'cancelled', 'lost'].includes(runStatus)) {
+            if (hasPersistedActiveRun(slot, session)) {
               realActive++;
+            } else if (session && isPersistedSessionAlive(slot, session)) {
+              stale++;
             } else {
               stale++;
             }
           } else {
             const workerPid = (slot as unknown as { pid?: number | null }).pid ?? null;
-            if (workerPid && isPidAlive(workerPid)) {
+            if (workerPid && isProcessAlive(workerPid)) {
               realActive++;
             } else {
               stale++;

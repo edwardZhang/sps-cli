@@ -4,8 +4,14 @@ import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { readState, type WorkerSlotState } from '../core/state.js';
 import { readACPState, writeACPState } from '../core/acpState.js';
+import {
+  hasPersistedActiveRun,
+  isACPBackedSlot,
+  isProcessAlive,
+  isPersistedSessionAlive,
+} from '../core/sessionLiveness.js';
 import type { ACPSessionRecord } from '../models/acp.js';
-import { isProcessAlive, tailFile } from '../providers/outputParser.js';
+import { tailFile } from '../providers/outputParser.js';
 import { renderClaudeStreamLines, renderCodexStreamLines } from '../providers/streamRenderer.js';
 import { getSharedPTYManager } from '../providers/PTYAgentRuntime.js';
 
@@ -301,7 +307,7 @@ function collectPanels(projects: string[]): WorkerPanel[] {
       if (isAcpMode) {
         const session = acpState.sessions[slotName];
         const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
-        sessionAlive = !!(session && session.sessionState !== 'offline');
+        sessionAlive = isPersistedSessionAlive(slot, session);
         paneLines = buildACPPanelLines(slot, session);
         if (paneLines.length === 0) {
           paneLines = [`(acp ${slot.agent || 'worker'} ${sessionAlive ? 'connected' : 'offline'})`, `run: ${runStatus}`];
@@ -435,11 +441,9 @@ function renderIdleSummary(projects: string[], termWidth: number): string[] {
     let merging = 0;
     for (const [slotName, w] of Object.entries(state.workers)) {
       if (w.status === 'active') {
-        const isPtyMode = w.transport === 'pty';
-        const isAcpMode = isPtyMode || w.mode === 'acp' || w.transport === 'acp';
-        if (isAcpMode) {
+        if (isACPBackedSlot(w)) {
           const session = acpState.sessions[slotName];
-          if (session && session.sessionState !== 'offline') realActive++;
+          if (hasPersistedActiveRun(w, session)) realActive++;
           else stale++;
         } else {
           const wPid = (w as unknown as { pid?: number | null }).pid ?? null;
@@ -599,7 +603,7 @@ function buildJsonOutput(projects: string[]): DashboardJson {
       const isAcpMode = isPtyMode || slot.mode === 'acp' || slot.transport === 'acp';
       const acpSession = acpState.sessions[slotName];
       const sessionAlive = isAcpMode
-        ? !!(acpSession && acpSession.sessionState !== 'offline')
+        ? isPersistedSessionAlive(slot, acpSession)
         : isPrintMode
           ? !!(slot.pid && slot.pid > 0 && isProcessAlive(slot.pid))
           : allSessions.has(sessionName);

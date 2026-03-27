@@ -319,6 +319,7 @@ export class PTYAgentRuntime implements AgentRuntime {
       tool,
       sessionId,
       sessionName: sessionId,
+      pid,
       cwd,
       status: slotStatus,
       sessionState,
@@ -351,6 +352,7 @@ export class PTYAgentRuntime implements AgentRuntime {
 
     existing.sessionState = nextSessionState;
     existing.status = nextSlotStatus;
+    existing.pid = info.pid;
     existing.lastSeenAt = now();
     existing.lastPaneText = info.buffer;
     existing.updatedAt = now();

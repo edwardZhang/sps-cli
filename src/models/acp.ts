@@ -44,6 +44,7 @@ export interface ACPSessionRecord {
   tool: ACPTool;
   sessionId: string;
   sessionName: string;
+  pid?: number | null;
   cwd: string;
   status: ACPSlotStatus;
   sessionState: ACPSessionStatus;

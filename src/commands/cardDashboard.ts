@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { readState } from '../core/state.js';
 import { readACPState } from '../core/acpState.js';
+import { isPersistedSessionAlive } from '../core/sessionLiveness.js';
 import { createTaskBackend } from '../providers/registry.js';
 import type { Card, CardState } from '../models/types.js';
 
@@ -172,6 +173,7 @@ function labelSummary(labels: string[]): string {
 function deriveBlockedReason(labels: string[], runtimeStatus: string | null): string | null {
   if (labels.includes('CONFLICT')) return 'CONFLICT';
   if (labels.includes('WAITING-CONFIRMATION') || runtimeStatus === 'waiting_input') return 'WAITING';
+  if (runtimeStatus === 'stale') return 'STALE';
   if (labels.includes('NEEDS-FIX')) return 'NEEDS-FIX';
   if (labels.includes('STALE-RUNTIME')) return 'STALE';
   return null;
@@ -194,9 +196,12 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
       const worker = workerSlot ? state.workers[workerSlot] : null;
       const session = workerSlot ? acpState.sessions[workerSlot] : null;
       const effectiveState = (active?.state as CardState | undefined) || card.state;
-      const runtimeStatus = session?.pendingInput
-        ? 'waiting_input'
-        : session?.currentRun?.status || worker?.remoteStatus || (worker?.status === 'active' ? 'running' : null);
+      const sessionAlive = worker ? isPersistedSessionAlive(worker, session) : false;
+      const runtimeStatus = worker?.status === 'active' && worker && !sessionAlive
+        ? 'stale'
+        : session?.pendingInput
+          ? 'waiting_input'
+          : session?.currentRun?.status || worker?.remoteStatus || (worker?.status === 'active' ? 'running' : null);
       const blockedReason = deriveBlockedReason(card.labels, runtimeStatus);
       return {
         seq: card.seq,
@@ -218,7 +223,7 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
       if (worker.status !== 'active') return false;
       if (worker.transport === 'pty' || worker.transport === 'acp' || worker.mode === 'pty' || worker.mode === 'acp') {
         const slotName = Object.entries(state.workers).find(([, slot]) => slot === worker)?.[0];
-        return !!(slotName && acpState.sessions[slotName] && acpState.sessions[slotName].sessionState !== 'offline');
+        return !!(slotName && isPersistedSessionAlive(worker, acpState.sessions[slotName]));
       }
       return true;
     }).length;
