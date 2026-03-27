@@ -549,7 +549,7 @@ export class PostActions {
         }
         state.leases[ctx.seq].phase = slotStatus === 'merging'
           ? 'merging'
-          : session.pendingInput || session.currentRun?.status === 'waiting_input'
+          : session.pendingInput || ['waiting_input', 'needs_confirmation'].includes(session.currentRun?.status || '')
             ? 'waiting_confirmation'
             : slotStatus === 'resolving'
               ? 'resolving_conflict'

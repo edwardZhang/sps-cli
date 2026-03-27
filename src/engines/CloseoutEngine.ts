@@ -195,14 +195,14 @@ export class CloseoutEngine {
         worker.pid = session.pid ?? null;
         worker.outputFile = null;
         worker.exitCode = null;
-        worker.status = session.pendingInput || session.currentRun?.status === 'waiting_input'
+        worker.status = session.pendingInput || ['waiting_input', 'needs_confirmation'].includes(session.currentRun?.status || '')
           ? 'resolving'
           : 'merging';
         if (draft.leases[card.seq]) {
           draft.leases[card.seq].slot = slotName;
           draft.leases[card.seq].sessionId = session.sessionId;
           draft.leases[card.seq].runId = session.currentRun?.runId || null;
-          draft.leases[card.seq].phase = session.pendingInput || session.currentRun?.status === 'waiting_input'
+          draft.leases[card.seq].phase = session.pendingInput || ['waiting_input', 'needs_confirmation'].includes(session.currentRun?.status || '')
             ? 'waiting_confirmation'
             : 'merging';
           draft.leases[card.seq].pmStateObserved = 'QA';
@@ -212,16 +212,25 @@ export class CloseoutEngine {
 
       const run = session.currentRun;
       if (!run) return 'idle';
-      if (run.status === 'waiting_input') {
+      if (run.status !== slot.remoteStatus) {
+        if (run.status === 'waiting_input') {
+          this.log.info(`seq ${card.seq}: integration worker waiting for input — ${session.pendingInput?.prompt || 'input required'}`);
+        } else if (run.status === 'needs_confirmation') {
+          this.log.warn(`seq ${card.seq}: integration worker needs confirmation — ${session.pendingInput?.prompt || 'confirmation required'}`);
+        } else if (run.status === 'stalled_submit') {
+          this.log.warn(`seq ${card.seq}: integration worker prompt submission stalled — ${session.stalledReason || 'auto-repair pending'}`);
+        }
+      }
+      if (run.status === 'waiting_input' || run.status === 'needs_confirmation') {
         actions.push({
           action: 'qa-waiting',
           entity: `seq:${card.seq}`,
           result: 'skip',
-          message: 'Integration worker waiting for input',
+          message: `Integration worker ${run.status}`,
         });
         return 'waiting';
       }
-      if (['submitted', 'running'].includes(run.status)) {
+      if (['submitted', 'running', 'stalled_submit'].includes(run.status)) {
         actions.push({
           action: 'qa-running',
           entity: `seq:${card.seq}`,

@@ -54,8 +54,8 @@ export interface WorkerHandle {
   exitCode: number | null;
   sessionId: string | null;
   runId: string | null;
-  sessionState: 'booting' | 'ready' | 'busy' | 'draining' | 'offline' | null;
-  remoteStatus: 'submitted' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled' | 'lost' | null;
+  sessionState: 'booting' | 'ready' | 'busy' | 'needs_confirmation' | 'draining' | 'offline' | null;
+  remoteStatus: 'submitted' | 'running' | 'waiting_input' | 'needs_confirmation' | 'stalled_submit' | 'completed' | 'failed' | 'cancelled' | 'lost' | null;
   lastEventAt: string | null;
   startedAt: string;
   exitedAt: string | null;

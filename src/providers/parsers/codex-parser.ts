@@ -25,7 +25,7 @@ export class CodexOutputParser implements OutputParser {
         return;
       }
       if (/update available/i.test(this.accumulated) && /press enter to continue/i.test(this.accumulated)) {
-        session.setState('waiting_input');
+        session.setState('needs_confirmation');
         session.emit('waiting-input', {
           type: 'confirmation',
           prompt: 'Codex update notice — press Enter to continue',
@@ -38,7 +38,7 @@ export class CodexOutputParser implements OutputParser {
       }
       // Trust/sandbox prompt during boot
       if (/trust|sandbox|approve/i.test(this.accumulated) && /\[y\/n\]|Enter/i.test(this.accumulated)) {
-        session.setState('waiting_input');
+        session.setState('needs_confirmation');
         session.emit('waiting-input', {
           type: 'trust',
           prompt: 'Codex trust/sandbox prompt',
@@ -55,7 +55,7 @@ export class CodexOutputParser implements OutputParser {
     const permMatch = this.accumulated.match(/\? (Allow|Approve|Execute)[:\s]+(.+?)(?:\n|$)/);
     if (permMatch) {
       const promptText = permMatch[2].trim();
-      session.setState('waiting_input');
+      session.setState('needs_confirmation');
       session.emit('waiting-input', {
         type: 'permission',
         prompt: promptText,
@@ -66,8 +66,8 @@ export class CodexOutputParser implements OutputParser {
       return;
     }
 
-    // ── waiting_input → ready ──
-    if (state === 'waiting_input' && this.hasPrompt()) {
+    // ── waiting_input / needs_confirmation → ready ──
+    if ((state === 'waiting_input' || state === 'needs_confirmation') && this.hasPrompt()) {
       session.setState('ready');
       this.accumulated = '';
       return;
@@ -104,6 +104,6 @@ export class CodexOutputParser implements OutputParser {
   }
 
   private hasBusyIndicator(chunk: string): boolean {
-    return /Running|Thinking|Executing|apply_patch|Searching|Reading/.test(chunk);
+    return /Working|Running|Thinking|Executing|apply_patch|Searching|Reading|Ran|Updated|Inspecting|Planning/i.test(chunk);
   }
 }

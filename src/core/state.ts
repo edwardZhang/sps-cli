@@ -21,9 +21,9 @@ export interface WorkerSlotState {
   /** ACP run ID for the active task */
   runId?: string | null;
   /** ACP session lifecycle status */
-  sessionState?: 'booting' | 'ready' | 'busy' | 'draining' | 'offline' | null;
+  sessionState?: 'booting' | 'ready' | 'busy' | 'needs_confirmation' | 'draining' | 'offline' | null;
   /** ACP run lifecycle status */
-  remoteStatus?: 'submitted' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled' | 'lost' | null;
+  remoteStatus?: 'submitted' | 'running' | 'waiting_input' | 'needs_confirmation' | 'stalled_submit' | 'completed' | 'failed' | 'cancelled' | 'lost' | null;
   /** Last ACP event timestamp observed by SPS */
   lastEventAt?: string | null;
   /** OS process ID of the worker (print mode) */

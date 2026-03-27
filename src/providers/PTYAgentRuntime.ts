@@ -8,6 +8,7 @@
  */
 import type { ProjectContext } from '../core/context.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
+import { drainPTYControl } from '../core/ptyControl.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type {
   ACPState,
@@ -28,6 +29,25 @@ function previewPrompt(prompt: string): string {
   return oneLine.length > 120 ? `${oneLine.slice(0, 117)}...` : oneLine;
 }
 
+function outputAgeMs(lastOutputAt: string | null | undefined): number {
+  if (!lastOutputAt) return Number.POSITIVE_INFINITY;
+  const parsed = Date.parse(lastOutputAt);
+  if (Number.isNaN(parsed)) return Number.POSITIVE_INFINITY;
+  return Date.now() - parsed;
+}
+
+function hasPromptReturned(buffer: string): boolean {
+  const tail = buffer
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(-8);
+  return tail.some(line =>
+    /^[›❯>]\s/.test(line) ||
+    (/OpenAI Codex/i.test(line) && /(\/review|\/model|% left)/i.test(line)),
+  );
+}
+
 // Shared singleton per tick process
 let sharedManager: PTYSessionManager | null = null;
 
@@ -42,6 +62,8 @@ export class PTYAgentRuntime implements AgentRuntime {
   private readonly manager: PTYSessionManager;
   private readonly runtimeStore: RuntimeStore;
   private notifier: Notifier | null = null;
+  private controlLoopStarted = false;
+  private controlDrainInFlight = false;
 
   constructor(
     private readonly ctx: ProjectContext,
@@ -51,6 +73,7 @@ export class PTYAgentRuntime implements AgentRuntime {
     this.manager = manager || getSharedPTYManager();
     this.runtimeStore = new RuntimeStore(ctx);
     this.notifier = notifier || null;
+    this.startControlLoop();
   }
 
   /** Set notifier for waiting_input push notifications */
@@ -80,7 +103,7 @@ export class PTYAgentRuntime implements AgentRuntime {
       });
       // Clear pending when state leaves waiting_input
       ptySession.on('state-change', (newState: string) => {
-        if (newState !== 'waiting_input') {
+        if (newState !== 'waiting_input' && newState !== 'needs_confirmation') {
           this.clearPendingInput(normalizedSlot);
         }
       });
@@ -110,12 +133,13 @@ export class PTYAgentRuntime implements AgentRuntime {
 
     if (!session) throw new Error(`Failed to create session for ${normalizedSlot}`);
 
-    const { runId } = this.manager.startRun(this.ctx.projectName, normalizedSlot, prompt);
+    await this.applyQueuedControlCommands();
+    const { runId } = await this.manager.startRun(this.ctx.projectName, normalizedSlot, prompt);
 
     const info = this.manager.inspect(this.ctx.projectName, normalizedSlot)!;
     const record = this.buildSessionRecord(normalizedSlot, info, selectedTool, cwd, {
       runId,
-      status: 'submitted',
+      status: info.stalledReason ? 'stalled_submit' : 'submitted',
       promptPreview: previewPrompt(prompt),
       startedAt: now(),
     });
@@ -135,13 +159,14 @@ export class PTYAgentRuntime implements AgentRuntime {
       throw new Error(`No live PTY session for ${normalizedSlot}`);
     }
 
-    const { runId } = this.manager.resumeRun(this.ctx.projectName, normalizedSlot, prompt);
+    await this.applyQueuedControlCommands();
+    const { runId } = await this.manager.resumeRun(this.ctx.projectName, normalizedSlot, prompt);
 
     const info = this.manager.inspect(this.ctx.projectName, normalizedSlot)!;
     const tool = session.tool as ACPTool;
     const record = this.buildSessionRecord(normalizedSlot, info, tool, session.cwd, {
       runId,
-      status: 'submitted',
+      status: info.stalledReason ? 'stalled_submit' : 'submitted',
       promptPreview: previewPrompt(prompt),
       startedAt: now(),
     });
@@ -154,18 +179,19 @@ export class PTYAgentRuntime implements AgentRuntime {
   }
 
   async inspect(slot?: string): Promise<ACPState> {
+    await this.applyQueuedControlCommands();
     const state = this.runtimeStore.readACPState();
 
     if (slot) {
       const normalizedSlot = this.normalizeSlot(slot);
-      const info = this.manager.inspect(this.ctx.projectName, normalizedSlot);
+      const info = await this.manager.maintainSession(this.ctx.projectName, normalizedSlot);
       if (info) {
         this.syncSessionRecord(state, normalizedSlot, info);
       }
     } else {
       // Inspect all slots
       for (const [slotName, record] of Object.entries(state.sessions)) {
-        const info = this.manager.inspect(this.ctx.projectName, slotName);
+        const info = await this.manager.maintainSession(this.ctx.projectName, slotName);
         if (info) {
           this.syncSessionRecord(state, slotName, info);
         } else {
@@ -238,7 +264,7 @@ export class PTYAgentRuntime implements AgentRuntime {
           state.sessions[slot].pendingInput = pending;
           state.sessions[slot].updatedAt = now();
           if (state.sessions[slot].currentRun) {
-            state.sessions[slot].currentRun!.status = 'waiting_input';
+            state.sessions[slot].currentRun!.status = event.type === 'input' ? 'waiting_input' : 'needs_confirmation';
             state.sessions[slot].currentRun!.updatedAt = now();
           }
         }
@@ -293,19 +319,25 @@ export class PTYAgentRuntime implements AgentRuntime {
     const sessionId = isSessionInfo ? (info as SessionInfo).sessionId : (info as any).sessionId;
     const alive = isSessionInfo ? (info as SessionInfo).alive : (info as any).isAlive();
     const buffer = isSessionInfo ? (info as SessionInfo).buffer : (info as any).getBuffer(30);
+    const lastOutputAt = isSessionInfo ? (info as SessionInfo).lastOutputAt : null;
+    const submitAttempts = isSessionInfo ? (info as SessionInfo).submitAttempts : 0;
+    const stalledReason = isSessionInfo ? (info as SessionInfo).stalledReason : null;
+    const promptPreview = run?.promptPreview ?? (isSessionInfo ? (info as SessionInfo).promptPreview : null);
+    const executionEvidence = isSessionInfo ? (info as SessionInfo).executionEvidence : false;
 
     const hasRun = !!run;
     const sessionState: ACPSessionRecord['sessionState'] =
       !alive ? 'offline' :
+      state === 'needs_confirmation' ? 'needs_confirmation' :
       hasRun ? 'busy' :
       state === 'busy' || state === 'waiting_input' ? 'busy' :
       state === 'ready' ? 'ready' :
       'booting';
 
     const slotStatus: ACPSessionRecord['status'] =
-      hasRun ? 'active' :
+      hasRun || stalledReason ? 'active' :
       state === 'busy' ? 'active' :
-      state === 'waiting_input' ? 'active' :
+      state === 'waiting_input' || state === 'needs_confirmation' ? 'active' :
       'idle';
 
     return {
@@ -320,7 +352,7 @@ export class PTYAgentRuntime implements AgentRuntime {
       currentRun: run ? {
         runId: run.runId,
         status: run.status as any,
-        promptPreview: run.promptPreview,
+        promptPreview: promptPreview || run.promptPreview,
         startedAt: run.startedAt,
         updatedAt: now(),
         completedAt: null,
@@ -329,6 +361,9 @@ export class PTYAgentRuntime implements AgentRuntime {
       createdAt: now(),
       updatedAt: now(),
       lastSeenAt: now(),
+      lastOutputAt,
+      submitAttempts,
+      stalledReason,
       lastPaneText: buffer,
     };
   }
@@ -339,45 +374,148 @@ export class PTYAgentRuntime implements AgentRuntime {
 
     const prevSessionState = existing.sessionState;
     const prevRunStatus = existing.currentRun?.status ?? null;
-    const nextSessionState = info.alive
-      ? (info.state === 'busy' || info.state === 'waiting_input' ? 'busy' : info.state === 'ready' ? 'ready' : 'booting')
-      : 'offline';
-    const nextSlotStatus = info.state === 'busy' || info.state === 'waiting_input' ? 'active' : 'idle';
+    const hadActiveRun = !!existing.currentRun && (
+      prevRunStatus === 'submitted' ||
+      prevRunStatus === 'running' ||
+      prevRunStatus === 'waiting_input' ||
+      prevRunStatus === 'needs_confirmation' ||
+      prevRunStatus === 'stalled_submit'
+    );
+    const outputSettled = outputAgeMs(info.lastOutputAt) > 1_500;
+    const promptReturned = hasPromptReturned(info.buffer);
 
-    existing.sessionState = nextSessionState;
-    existing.status = nextSlotStatus;
     existing.pid = info.pid;
     existing.lastSeenAt = now();
+    existing.lastOutputAt = info.lastOutputAt;
+    existing.submitAttempts = info.submitAttempts;
+    existing.stalledReason = info.stalledReason;
     existing.lastPaneText = info.buffer;
     existing.updatedAt = now();
 
+    let nextRunStatus = prevRunStatus;
     if (existing.currentRun) {
-      if (info.state === 'waiting_input') {
-        existing.currentRun.status = 'waiting_input';
-        existing.currentRun.updatedAt = now();
-        return;
-      }
-
-      if (info.state === 'busy' && (
-        prevRunStatus === 'submitted' ||
-        prevRunStatus === 'running' ||
-        prevRunStatus === 'waiting_input'
-      )) {
-        existing.currentRun.status = 'running';
-        existing.currentRun.updatedAt = now();
-        return;
-      }
-
-      if (
-        info.state === 'ready' &&
-        nextSlotStatus === 'idle' &&
-        (prevSessionState === 'busy' || prevRunStatus === 'running' || prevRunStatus === 'waiting_input') &&
-        prevRunStatus !== 'completed'
+      if (info.state === 'needs_confirmation') {
+        nextRunStatus = 'needs_confirmation';
+      } else if (info.state === 'waiting_input') {
+        nextRunStatus = 'waiting_input';
+      } else if (info.stalledReason && !info.executionEvidence) {
+        nextRunStatus = 'stalled_submit';
+      } else if (
+        hadActiveRun &&
+        outputSettled &&
+        promptReturned &&
+        (!info.stalledReason || info.executionEvidence) &&
+        (
+          info.state === 'ready' ||
+          prevSessionState === 'busy' ||
+          prevSessionState === 'needs_confirmation' ||
+          prevRunStatus === 'submitted' ||
+          prevRunStatus === 'running' ||
+          prevRunStatus === 'waiting_input' ||
+          prevRunStatus === 'needs_confirmation' ||
+          prevRunStatus === 'stalled_submit'
+        )
       ) {
-        existing.currentRun.status = 'completed';
-        existing.currentRun.completedAt = now();
+        nextRunStatus = 'completed';
+      } else if (
+        hadActiveRun &&
+        (
+          info.state === 'busy' ||
+          info.executionEvidence ||
+          !outputSettled
+        )
+      ) {
+        nextRunStatus = 'running';
+      }
+
+      if (nextRunStatus && nextRunStatus !== prevRunStatus) {
+        existing.currentRun.status = nextRunStatus as typeof existing.currentRun.status;
         existing.currentRun.updatedAt = now();
+        if (nextRunStatus === 'completed') {
+          existing.currentRun.completedAt = now();
+        }
       }
     }
+
+    const runIsActive =
+      nextRunStatus === 'submitted' ||
+      nextRunStatus === 'running' ||
+      nextRunStatus === 'waiting_input' ||
+      nextRunStatus === 'needs_confirmation' ||
+      nextRunStatus === 'stalled_submit';
+
+    const nextSessionState = info.alive
+      ? (
+        nextRunStatus === 'completed' ? 'ready' :
+        info.state === 'needs_confirmation' ? 'needs_confirmation' :
+        info.state === 'busy' || info.state === 'waiting_input' || runIsActive ? 'busy' :
+        info.state === 'ready' ? 'ready' :
+        'booting'
+      )
+      : 'offline';
+
+    const nextSlotStatus = nextRunStatus === 'completed'
+      ? 'idle'
+      : runIsActive || info.state === 'busy' || info.state === 'waiting_input' || info.state === 'needs_confirmation'
+      ? 'active'
+      : 'idle';
+
+    existing.sessionState = nextSessionState;
+    existing.status = nextSlotStatus;
+  }
+
+  private async applyQueuedControlCommands(): Promise<void> {
+    if (this.controlDrainInFlight) return;
+    this.controlDrainInFlight = true;
+    try {
+    const commands = drainPTYControl(this.ctx);
+    if (commands.length === 0) return;
+
+    const appliedAt = now();
+    const appliedSlots = new Set<string>();
+
+    for (const command of commands) {
+      const session = this.manager.getSession(this.ctx.projectName, command.slot);
+      if (!session || !session.isAlive()) continue;
+
+      if (command.type === 'reject') {
+        session.reject();
+      } else if (command.type === 'confirm') {
+        session.confirm();
+      } else {
+        this.manager.respond(this.ctx.projectName, command.slot, command.response);
+      }
+      appliedSlots.add(command.slot);
+    }
+
+    if (appliedSlots.size === 0) return;
+
+    this.runtimeStore.updateACPState('pty-control-apply', (state) => {
+      for (const slot of appliedSlots) {
+        const session = state.sessions[slot];
+        if (!session) continue;
+        session.pendingInput = null;
+        session.updatedAt = appliedAt;
+        if (session.currentRun && (
+          session.currentRun.status === 'waiting_input' ||
+          session.currentRun.status === 'needs_confirmation'
+        )) {
+          session.currentRun.status = 'running';
+          session.currentRun.updatedAt = appliedAt;
+        }
+      }
+    });
+    } finally {
+      this.controlDrainInFlight = false;
+    }
+  }
+
+  private startControlLoop(): void {
+    if (this.controlLoopStarted) return;
+    this.controlLoopStarted = true;
+    const timer = setInterval(() => {
+      void this.applyQueuedControlCommands();
+    }, 1_000);
+    timer.unref();
   }
 }

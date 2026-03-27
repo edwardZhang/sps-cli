@@ -393,7 +393,7 @@ export class RuntimeCoordinator {
     liveWorker: boolean,
   ): TaskLeasePhase | null {
     const runStatus = getPersistedRunStatus(candidate.slot || createIdleWorkerSlot(), candidate.session);
-    const waitingInput = runStatus === 'waiting_input' || !!candidate.session?.pendingInput;
+    const waitingInput = runStatus === 'waiting_input' || runStatus === 'needs_confirmation' || !!candidate.session?.pendingInput;
 
     if (liveWorker) {
       if (waitingInput) return 'waiting_confirmation';

@@ -13,10 +13,10 @@ import { createRequire } from 'node:module';
 
 // ─── Types ──────────────────────────────────────────────────────
 
-export type SessionState = 'booting' | 'ready' | 'busy' | 'waiting_input' | 'offline';
+export type SessionState = 'booting' | 'ready' | 'busy' | 'waiting_input' | 'needs_confirmation' | 'offline';
 
 export interface WaitingInputEvent {
-  type: 'trust' | 'permission' | 'confirmation' | 'unknown';
+  type: 'input' | 'trust' | 'permission' | 'confirmation' | 'unknown';
   prompt: string;
   options?: string[];
   dangerous?: boolean;
@@ -96,6 +96,12 @@ export class PTYSession extends EventEmitter {
   private outputStream: WriteStream | null = null;
   private currentRunId: string | null = null;
   private _alive = true;
+  private lastOutputAt: number | null = null;
+  private submitAttempts = 0;
+  private lastSubmitAt: number | null = null;
+  private stalledReason: string | null = null;
+  private promptPreview: string | null = null;
+  private promptText: string | null = null;
 
   readonly pid: number;
   readonly sessionId: string;
@@ -140,6 +146,7 @@ export class PTYSession extends EventEmitter {
 
     // ── Real-time stream processing ──
     this.terminal.onData((chunk: string) => {
+      this.lastOutputAt = Date.now();
       this.buffer += chunk;
       this.trimBuffer();
       if (this.outputStream) this.outputStream.write(chunk);
@@ -166,9 +173,9 @@ export class PTYSession extends EventEmitter {
     this.terminal.write(data);
   }
 
-  /** Send a prompt followed by Enter */
+  /** Send prompt text without implicitly submitting it. */
   sendPrompt(prompt: string): void {
-    this.write(prompt + '\r');
+    this.write(prompt);
   }
 
   /** Send Enter key (confirm) */
@@ -196,6 +203,9 @@ export class PTYSession extends EventEmitter {
     const prev = this.state;
     if (prev === state) return;
     this.state = state;
+    if (state === 'busy' || state === 'waiting_input' || state === 'needs_confirmation') {
+      this.stalledReason = null;
+    }
     this.emit('state-change', state, prev);
   }
 
@@ -207,8 +217,50 @@ export class PTYSession extends EventEmitter {
     this.currentRunId = runId;
   }
 
+  beginRun(runId: string, promptText: string, promptPreview: string): void {
+    this.currentRunId = runId;
+    this.promptText = promptText;
+    this.promptPreview = promptPreview;
+    this.submitAttempts = 0;
+    this.lastSubmitAt = null;
+    this.stalledReason = null;
+  }
+
   isAlive(): boolean {
     return this._alive;
+  }
+
+  getLastOutputAt(): number | null {
+    return this.lastOutputAt;
+  }
+
+  getPromptPreview(): string | null {
+    return this.promptPreview;
+  }
+
+  getPromptText(): string | null {
+    return this.promptText;
+  }
+
+  getSubmitAttempts(): number {
+    return this.submitAttempts;
+  }
+
+  getLastSubmitAt(): number | null {
+    return this.lastSubmitAt;
+  }
+
+  markSubmitAttempt(): void {
+    this.submitAttempts += 1;
+    this.lastSubmitAt = Date.now();
+  }
+
+  getStalledReason(): string | null {
+    return this.stalledReason;
+  }
+
+  setStalledReason(reason: string | null): void {
+    this.stalledReason = reason;
   }
 
   // ─── Buffer ───────────────────────────────────────────────────

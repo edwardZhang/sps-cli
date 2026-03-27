@@ -42,7 +42,7 @@ export class ClaudeOutputParser implements OutputParser {
       // Trust prompt during boot
       if (this.accumulated.includes('Yes, I trust this folder') ||
           this.accumulated.includes('trust this folder')) {
-        session.setState('waiting_input');
+        session.setState('needs_confirmation');
         session.emit('waiting-input', {
           type: 'trust',
           prompt: 'Trust this folder?',
@@ -60,7 +60,7 @@ export class ClaudeOutputParser implements OutputParser {
     const permMatch = this.accumulated.match(/\? Allow[:\s]+(.+?)(?:\n|$)/);
     if (permMatch) {
       const promptText = permMatch[1].trim();
-      session.setState('waiting_input');
+      session.setState('needs_confirmation');
       session.emit('waiting-input', {
         type: 'permission',
         prompt: promptText,
@@ -74,7 +74,7 @@ export class ClaudeOutputParser implements OutputParser {
     if (/Enter to confirm|Esc to cancel|y\/n\]?\s*$/i.test(this.accumulated)) {
       const lines = this.accumulated.split('\n').filter(Boolean);
       const promptText = lines[lines.length - 1]?.trim() || 'Confirmation required';
-      session.setState('waiting_input');
+      session.setState('needs_confirmation');
       session.emit('waiting-input', {
         type: 'confirmation',
         prompt: promptText,
@@ -85,8 +85,8 @@ export class ClaudeOutputParser implements OutputParser {
       return;
     }
 
-    // ── waiting_input → ready (user responded, prompt came back) ──
-    if (state === 'waiting_input' && this.hasPrompt()) {
+    // ── waiting_input / needs_confirmation → ready (user responded, prompt came back) ──
+    if ((state === 'waiting_input' || state === 'needs_confirmation') && this.hasPrompt()) {
       session.setState('ready');
       this.lastPromptAt = Date.now();
       this.accumulated = '';

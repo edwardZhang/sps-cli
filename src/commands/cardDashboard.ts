@@ -180,7 +180,7 @@ function deriveBlockedReason(
   evidence: WorktreeEvidence | null,
 ): string | null {
   if (labels.includes('CONFLICT')) return 'CONFLICT';
-  if (labels.includes('WAITING-CONFIRMATION') || runtimeStatus === 'waiting_input') return 'WAITING';
+  if (labels.includes('WAITING-CONFIRMATION') || runtimeStatus === 'waiting_input' || runtimeStatus === 'needs_confirmation') return 'WAITING';
   if (lease?.phase === 'suspended' && (evidence?.worktreeExists || evidence?.branchExists)) return 'RESUMABLE';
   if (runtimeStatus === 'stale') return 'STALE';
   if (labels.includes('NEEDS-FIX')) return 'NEEDS-FIX';
@@ -209,7 +209,7 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
         : worker?.status === 'active' && worker && !sessionAlive
         ? 'stale'
         : session?.pendingInput
-          ? 'waiting_input'
+          ? (session.pendingInput.type === 'input' ? 'waiting_input' : 'needs_confirmation')
           : session?.currentRun?.status || worker?.remoteStatus || (worker?.status === 'active' ? 'running' : null);
       const blockedReason = deriveBlockedReason(card.labels, runtimeStatus, lease, evidence);
       return {
@@ -230,7 +230,7 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
 
     const workerSummary = summarizeWorkerRuntime(state, acpState);
 
-    const waitingCards = snapshots.filter(card => card.runtimeStatus === 'waiting_input' || card.blockedReason === 'WAITING').length;
+    const waitingCards = snapshots.filter(card => ['waiting_input', 'needs_confirmation'].includes(card.runtimeStatus || '') || card.blockedReason === 'WAITING').length;
     const conflictCards = snapshots.filter(card => card.blockedReason === 'CONFLICT').length;
 
     return {
@@ -410,7 +410,7 @@ function renderMiniProject(board: ProjectBoardSnapshot, width: number, height: n
     lines.push(`${FG.gray}│${RESET}${padOrTruncate(compactStateRow(board, ['Planning', 'Backlog', 'Todo']), width - 2)}${FG.gray}│${RESET}`);
     lines.push(`${FG.gray}│${RESET}${padOrTruncate(compactStateRow(board, ['Inprogress', 'QA', 'Done']), width - 2)}${FG.gray}│${RESET}`);
     const hotCards = board.cards
-      .filter(card => card.blockedReason || card.runtimeStatus === 'running' || card.runtimeStatus === 'waiting_input')
+      .filter(card => card.blockedReason || ['running', 'waiting_input', 'needs_confirmation', 'stalled_submit'].includes(card.runtimeStatus || ''))
       .slice(0, 2)
       .map(card => `#${card.seq} ${card.blockedReason || card.runtimeStatus}`)
       .join(' · ');

@@ -1,5 +1,6 @@
 import { ProjectContext } from '../core/context.js';
-import { ACPWorkerRuntime } from '../providers/ACPWorkerRuntime.js';
+import { enqueuePTYResponse } from '../core/ptyControl.js';
+import { createAgentRuntime } from '../providers/registry.js';
 import { Logger } from '../core/logger.js';
 import type { ACPTool } from '../models/acp.js';
 
@@ -33,7 +34,7 @@ export async function executeAcpCommand(
   const jsonOutput = !!flags.json;
 
   const ctx = ProjectContext.load(project);
-  const runtime = new ACPWorkerRuntime(ctx);
+  const runtime = createAgentRuntime(ctx);
 
   if (subcommand === 'ensure') {
     const slot = positionals[0];
@@ -143,9 +144,7 @@ export async function executeAcpCommand(
     // Try PTY first, then tmux ACP
     const transport = ctx.config.raw.WORKER_TRANSPORT || 'acp';
     if (transport === 'pty') {
-      const { PTYAgentRuntime } = await import('../providers/PTYAgentRuntime.js');
-      const ptyRuntime = new PTYAgentRuntime(ctx);
-      ptyRuntime.respond(slot, response);
+      enqueuePTYResponse(ctx, slot, response, 'acp-respond');
     } else {
       // For tmux ACP, use tmux send-keys as fallback
       const { execFileSync } = await import('node:child_process');

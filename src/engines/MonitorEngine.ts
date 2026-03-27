@@ -416,7 +416,7 @@ export class MonitorEngine {
       if (isAgentTransport) {
         const session = acpState.sessions[slotName];
         const pending = session?.pendingInput;
-        if (!session || session.currentRun?.status !== 'waiting_input' || !pending) continue;
+        if (!session || !['waiting_input', 'needs_confirmation'].includes(session.currentRun?.status || '') || !pending) continue;
 
         await this.addLabelSafe(seq, 'WAITING-CONFIRMATION');
         await this.notifySafe(
@@ -789,7 +789,7 @@ export class MonitorEngine {
     session: import('../models/acp.js').ACPSessionRecord | undefined,
   ): boolean {
     if (!session || session.sessionState === 'offline' || !session.currentRun) return false;
-    return ['submitted', 'running', 'waiting_input'].includes(session.currentRun.status);
+    return ['submitted', 'running', 'waiting_input', 'needs_confirmation', 'stalled_submit'].includes(session.currentRun.status);
   }
 
   // ─── Helpers ──────────────────────────────────────────────────

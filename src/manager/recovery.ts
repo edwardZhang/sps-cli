@@ -697,7 +697,7 @@ export class Recovery {
   }
 
   private isActiveRun(status: ACPRunStatus): boolean {
-    return ['submitted', 'running', 'waiting_input'].includes(status);
+    return ['submitted', 'running', 'waiting_input', 'needs_confirmation', 'stalled_submit'].includes(status);
   }
 
   private acpExitCode(status: ACPRunStatus | undefined): number {

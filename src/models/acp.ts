@@ -10,6 +10,7 @@ export type ACPSessionStatus =
   | 'booting'
   | 'ready'
   | 'busy'
+  | 'needs_confirmation'
   | 'draining'
   | 'offline';
 
@@ -17,6 +18,8 @@ export type ACPRunStatus =
   | 'submitted'
   | 'running'
   | 'waiting_input'
+  | 'needs_confirmation'
+  | 'stalled_submit'
   | 'completed'
   | 'failed'
   | 'cancelled'
@@ -32,7 +35,7 @@ export interface ACPRunRecord {
 }
 
 export interface PendingInput {
-  type: 'trust' | 'permission' | 'confirmation' | 'unknown';
+  type: 'input' | 'trust' | 'permission' | 'confirmation' | 'unknown';
   prompt: string;
   options?: string[];
   dangerous?: boolean;
@@ -53,6 +56,9 @@ export interface ACPSessionRecord {
   createdAt: string;
   updatedAt: string;
   lastSeenAt: string | null;
+  lastOutputAt?: string | null;
+  submitAttempts?: number;
+  stalledReason?: string | null;
   lastPaneText: string;
 }
 

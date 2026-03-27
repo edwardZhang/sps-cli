@@ -12,6 +12,15 @@ import { PTYSession, type SessionState, type OutputParser } from './pty-session.
 import { ClaudeOutputParser } from '../providers/parsers/claude-parser.js';
 import { CodexOutputParser } from '../providers/parsers/codex-parser.js';
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function previewPrompt(prompt: string): string {
+  const oneLine = prompt.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 120 ? `${oneLine.slice(0, 117)}...` : oneLine;
+}
+
 // ─── Types ──────────────────────────────────────────────────────
 
 export interface EnsureSessionOpts {
@@ -35,6 +44,11 @@ export interface SessionInfo {
   runId: string | null;
   buffer: string;
   alive: boolean;
+  lastOutputAt: string | null;
+  submitAttempts: number;
+  stalledReason: string | null;
+  promptPreview: string | null;
+  executionEvidence: boolean;
 }
 
 // ─── Manager ────────────────────────────────────────────────────
@@ -117,8 +131,8 @@ export class PTYSessionManager {
       this.log(`[${key}] Session ready (pid=${session.pid})`);
     } catch (err) {
       const state = session.getState();
-      // If stuck in waiting_input (trust prompt not auto-handled), still return session
-      if (state === 'waiting_input') {
+      // If stuck in confirmation/input during boot, still return session
+      if (state === 'waiting_input' || state === 'needs_confirmation') {
         this.log(`[${key}] Session waiting for input (pid=${session.pid})`);
       } else {
         this.log(`[${key}] Session failed to reach ready state: ${state}`);
@@ -136,16 +150,16 @@ export class PTYSessionManager {
   /**
    * Start a new run (send prompt) on an existing session.
    */
-  startRun(project: string, slot: string, prompt: string): { runId: string } {
+  async startRun(project: string, slot: string, prompt: string): Promise<{ runId: string }> {
     const session = this.requireSession(project, slot);
     if (session.getState() !== 'ready') {
       throw new Error(`Session not ready (state=${session.getState()})`);
     }
 
     const runId = String(Date.now());
-    session.setRunId(runId);
-    session.setState('busy');
+    session.beginRun(runId, prompt, previewPrompt(prompt));
     session.sendPrompt(prompt);
+    await this.ensurePromptSubmitted(project, slot, session);
 
     this.log(`[${project}:${slot}] Run started: ${runId}`);
     return { runId };
@@ -154,16 +168,16 @@ export class PTYSessionManager {
   /**
    * Resume a run on the same session (for conflict resolution, retries, etc.)
    */
-  resumeRun(project: string, slot: string, instruction: string): { runId: string } {
+  async resumeRun(project: string, slot: string, instruction: string): Promise<{ runId: string }> {
     const session = this.requireSession(project, slot);
     if (session.getState() !== 'ready') {
       throw new Error(`Session not ready for resume (state=${session.getState()})`);
     }
 
     const runId = String(Date.now());
-    session.setRunId(runId);
-    session.setState('busy');
+    session.beginRun(runId, instruction, previewPrompt(instruction));
     session.sendPrompt(instruction);
+    await this.ensurePromptSubmitted(project, slot, session);
 
     this.log(`[${project}:${slot}] Resume run started: ${runId}`);
     return { runId };
@@ -222,8 +236,15 @@ export class PTYSessionManager {
    */
   respond(project: string, slot: string, response: string): void {
     const session = this.requireSession(project, slot);
-    session.write(response + '\r');
+    this.writeResponse(session, response);
     this.log(`[${project}:${slot}] Sent response: ${response}`);
+  }
+
+  async maintainSession(project: string, slot: string): Promise<SessionInfo | null> {
+    const session = this.getSession(project, slot);
+    if (!session) return null;
+    await this.repairPromptSubmission(project, slot, session);
+    return this.inspect(project, slot);
   }
 
   // ─── Inspection ─────────────────────────────────────────────
@@ -244,6 +265,11 @@ export class PTYSessionManager {
       runId: session.getRunId(),
       buffer: session.getBuffer(30),
       alive: session.isAlive(),
+      lastOutputAt: session.getLastOutputAt() ? new Date(session.getLastOutputAt()!).toISOString() : null,
+      submitAttempts: session.getSubmitAttempts(),
+      stalledReason: session.getStalledReason(),
+      promptPreview: session.getPromptPreview(),
+      executionEvidence: this.hasExecutionEvidence(session),
     };
   }
 
@@ -259,6 +285,11 @@ export class PTYSessionManager {
         runId: session.getRunId(),
         buffer: session.getBuffer(5),
         alive: session.isAlive(),
+        lastOutputAt: session.getLastOutputAt() ? new Date(session.getLastOutputAt()!).toISOString() : null,
+        submitAttempts: session.getSubmitAttempts(),
+        stalledReason: session.getStalledReason(),
+        promptPreview: session.getPromptPreview(),
+        executionEvidence: this.hasExecutionEvidence(session),
       });
     }
     return result;
@@ -325,5 +356,80 @@ export class PTYSessionManager {
 
   private log(msg: string): void {
     process.stderr.write(`[pty-manager] ${msg}\n`);
+  }
+
+  private writeResponse(session: PTYSession, response: string): void {
+    const num = parseInt(response, 10);
+    if (!Number.isNaN(num) && num >= 1) {
+      const downs = '\x1b[B'.repeat(num - 1);
+      session.write(`${downs}\r`);
+      return;
+    }
+    session.write(`${response}\r`);
+  }
+
+  private async ensurePromptSubmitted(project: string, slot: string, session: PTYSession): Promise<void> {
+    const key = `${project}:${slot}`;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      session.markSubmitAttempt();
+      session.confirm();
+      await sleep(900);
+
+      if (this.isRunAccepted(session)) {
+        return;
+      }
+
+      this.log(`[${key}] Prompt still not executing after submit attempt ${attempt}`);
+    }
+
+    session.setStalledReason('Prompt did not start executing after submit attempts');
+  }
+
+  private async repairPromptSubmission(project: string, slot: string, session: PTYSession): Promise<void> {
+    if (!session.isAlive() || !session.getRunId()) return;
+    if (session.getState() !== 'ready') return;
+
+    const attempts = session.getSubmitAttempts();
+    if (attempts === 0) return;
+    if (this.isRunAccepted(session)) return;
+
+    const lastSubmitAt = session.getLastSubmitAt();
+    if (lastSubmitAt && Date.now() - lastSubmitAt < 5_000) return;
+    if (attempts >= 6) return;
+
+    const key = `${project}:${slot}`;
+    const promptText = session.getPromptText();
+    if (attempts >= 3 && promptText) {
+      this.log(`[${key}] Re-sending prompt after stalled submit (attempt ${attempts + 1})`);
+      session.sendPrompt('\x15');
+      await sleep(100);
+      session.sendPrompt(promptText);
+    } else {
+      this.log(`[${key}] Re-submitting Enter after stalled submit (attempt ${attempts + 1})`);
+    }
+
+    session.markSubmitAttempt();
+    session.confirm();
+    await sleep(900);
+
+    if (this.isRunAccepted(session)) {
+      session.setStalledReason(null);
+      return;
+    }
+
+    session.setStalledReason(`Prompt still not executing after ${session.getSubmitAttempts()} submit attempts`);
+  }
+
+  private isRunAccepted(session: PTYSession): boolean {
+    const state = session.getState();
+    if (state === 'busy' || state === 'waiting_input' || state === 'needs_confirmation') {
+      return true;
+    }
+    return this.hasExecutionEvidence(session);
+  }
+
+  private hasExecutionEvidence(session: PTYSession): boolean {
+    const text = session.getBuffer(120);
+    return /Working\(|\bRan\b|I['’]ll do|I['’]m going to|Reading|Searching|Applied|Updated|The repository is|^•\s+/im.test(text);
   }
 }

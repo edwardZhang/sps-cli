@@ -795,6 +795,16 @@ export class ExecutionEngine {
         exitedAt: null,
       });
 
+      if (session.currentRun?.status && session.currentRun.status !== slot.remoteStatus) {
+        if (session.currentRun.status === 'waiting_input') {
+          this.log.info(`seq ${seq}: worker waiting for input — ${session.pendingInput?.prompt || 'input required'}`);
+        } else if (session.currentRun.status === 'needs_confirmation') {
+          this.log.warn(`seq ${seq}: worker needs confirmation — ${session.pendingInput?.prompt || 'confirmation required'}`);
+        } else if (session.currentRun.status === 'stalled_submit') {
+          this.log.warn(`seq ${seq}: worker prompt submission stalled — ${session.stalledReason || 'auto-repair pending'}`);
+        }
+      }
+
       if (!session.currentRun || this.isAcpRunActive(session.currentRun.status)) {
         return null;
       }
@@ -949,7 +959,7 @@ export class ExecutionEngine {
   }
 
   private isAcpRunActive(status: ACPRunStatus): boolean {
-    return ['submitted', 'running', 'waiting_input'].includes(status);
+    return ['submitted', 'running', 'waiting_input', 'needs_confirmation', 'stalled_submit'].includes(status);
   }
 
   private acpRunExitCode(status: ACPRunStatus): number {

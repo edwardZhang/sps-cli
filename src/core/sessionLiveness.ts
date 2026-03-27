@@ -47,7 +47,9 @@ export function getPersistedRunStatus(
   slot: Pick<WorkerSlotState, 'remoteStatus'>,
   session?: Pick<ACPSessionRecord, 'pendingInput' | 'currentRun'> | null,
 ): string | null {
-  if (session?.pendingInput) return 'waiting_input';
+  if (session?.pendingInput) {
+    return session.pendingInput.type === 'input' ? 'waiting_input' : 'needs_confirmation';
+  }
   return session?.currentRun?.status || slot.remoteStatus || null;
 }
 

@@ -2,9 +2,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
+import { enqueuePTYResponse } from '../core/ptyControl.js';
 import { type WorkerSlotState } from '../core/state.js';
 import { readACPState } from '../core/acpState.js';
-import { RuntimeStore } from '../core/runtimeStore.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import {
   hasPersistedActiveRun,
@@ -16,7 +16,6 @@ import { loadRuntimeSnapshot, type ProjectRuntimeSnapshot } from '../core/runtim
 import type { ACPSessionRecord } from '../models/acp.js';
 import { tailFile } from '../providers/outputParser.js';
 import { renderClaudeStreamLines, renderCodexStreamLines } from '../providers/streamRenderer.js';
-import { getSharedPTYManager } from '../providers/PTYAgentRuntime.js';
 
 const HOME = process.env.HOME || '/home/coral';
 
@@ -304,6 +303,10 @@ function analyzeACPSession(
   const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
   const sessionState = session?.sessionState || slot.sessionState || 'offline';
 
+  if (session?.stalledReason) {
+    stalledReason = session.stalledReason;
+  }
+
   if (
     tool === 'codex' &&
     sessionAlive &&
@@ -314,6 +317,14 @@ function analyzeACPSession(
     ((process?.cpu ?? 0) <= 0.1)
   ) {
     stalledReason = `stalled at Codex home screen (${formatDuration(lastOutputAgeSec ?? 0)} no output, cpu ${process?.cpu?.toFixed(1) ?? '0.0'}%)`;
+  }
+
+  if (
+    !stalledReason &&
+    sessionAlive &&
+    runStatus === 'stalled_submit'
+  ) {
+    stalledReason = session?.stalledReason || 'prompt submission stalled';
   }
 
   return {
@@ -373,8 +384,13 @@ function buildACPPanelLines(
     lines.push(`${DIM}${diagnostics.promptText}${RESET}`);
   } else if (session?.currentRun?.promptPreview) {
     lines.push(`${DIM}${session.currentRun.promptPreview}${RESET}`);
-  } else if (rawLines.length > 0) {
-    lines.push(`${DIM}${rawLines[rawLines.length - 1]}${RESET}`);
+  }
+
+  const liveTail = rawLines
+    .filter(line => line !== diagnostics.screenStatus && line !== diagnostics.promptText)
+    .slice(-4);
+  for (const line of liveTail) {
+    lines.push(`${DIM}${line}${RESET}`);
   }
 
   return lines;
@@ -718,9 +734,13 @@ function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJ
         ? analyzeACPSession(snapshot.ctx, slotName, slot, acpSession, sessionAlive)
         : null;
 
+      const projectedStatus = isAcpMode && !sessionAlive && slot.status !== 'idle'
+        ? 'stale'
+        : slot.status;
+
       workers.push({
         slot: slotName,
-        status: slot.status,
+        status: projectedStatus,
         seq: slot.seq,
         branch: slot.branch,
         tmuxSession: slot.tmuxSession,
@@ -783,21 +803,8 @@ function collectPendingInputs(projects: string[]): PendingItem[] {
 function sendResponse(item: PendingItem, response: string): boolean {
   try {
     if (item.transport === 'pty') {
-      const manager = getSharedPTYManager();
-      const ptySession = manager.getSession(item.project, item.slot);
-      if (ptySession?.isAlive()) {
-        // Map numeric option to arrow key sequences for menu selection
-        const num = parseInt(response, 10);
-        if (!isNaN(num) && num >= 1) {
-          // Option N = (N-1) down arrows + Enter
-          const downs = '\x1b[B'.repeat(num - 1);
-          ptySession.write(downs + '\r');
-        } else {
-          ptySession.write(response + '\r');
-        }
-      } else {
-        return false;
-      }
+      const ctx = ProjectContext.load(item.project);
+      enqueuePTYResponse(ctx, item.slot, response, 'worker-dashboard');
     } else {
       // tmux fallback
       const num = parseInt(response, 10);
@@ -816,15 +823,6 @@ function sendResponse(item: PendingItem, response: string): boolean {
       }
     }
 
-    // Clear pending input in state
-    let ctx: ProjectContext;
-    try { ctx = ProjectContext.load(item.project); } catch { return true; }
-    new RuntimeStore(ctx).updateACPState('dashboard-respond', (acpState) => {
-      if (acpState.sessions[item.slot]) {
-        acpState.sessions[item.slot].pendingInput = null;
-        acpState.sessions[item.slot].updatedAt = new Date().toISOString();
-      }
-    });
     return true;
   } catch {
     return false;
