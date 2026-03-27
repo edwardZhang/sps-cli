@@ -1,10 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import type { ProjectContext } from '../core/context.js';
-import { readACPState, writeACPState } from '../core/acpState.js';
 import {
-  readState,
-  writeState,
   createIdleWorkerSlot,
   type RuntimeState,
   type TaskLease,
@@ -13,6 +10,7 @@ import {
   type WorktreeEvidenceStatus,
   type WorkerSlotState,
 } from '../core/state.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import {
   branchPushed,
@@ -60,13 +58,13 @@ export class RuntimeCoordinator {
   }
 
   private async computeRuntimeProjection(persist: boolean, updatedBy: string): Promise<RuntimeRebuildResult> {
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-    const acpState = readACPState(this.ctx.paths.acpStateFile);
+    const store = new RuntimeStore(this.ctx);
+    const { state, acpState } = store.read();
     const cards = await this.taskBackend.listAll();
     const cardsBySeq = new Map(cards.map((card) => [card.seq, card]));
 
     const normalizedACPState = this.normalizeACPState(state, acpState);
-    const nextState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const nextState = structuredClone(state) as RuntimeState;
     nextState.leases = {};
     nextState.worktreeEvidence = {};
     nextState.activeCards = {};
@@ -124,8 +122,14 @@ export class RuntimeCoordinator {
       JSON.stringify(acpState.sessions) !== JSON.stringify(normalizedACPState.sessions);
 
     if (persist && changed) {
-      writeState(this.ctx.paths.stateFile, nextState, updatedBy);
-      writeACPState(this.ctx.paths.acpStateFile, normalizedACPState, updatedBy);
+      store.updateRuntime(updatedBy, (runtimeState, runtimeACPState) => {
+        runtimeState.workers = nextState.workers;
+        runtimeState.activeCards = nextState.activeCards;
+        runtimeState.leases = nextState.leases;
+        runtimeState.worktreeEvidence = nextState.worktreeEvidence;
+        runtimeState.worktreeCleanup = nextState.worktreeCleanup;
+        runtimeACPState.sessions = normalizedACPState.sessions;
+      });
     }
 
     return { state: nextState, acpState: normalizedACPState, updated: changed };

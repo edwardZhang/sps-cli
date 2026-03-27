@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import type { ProjectContext } from '../core/context.js';
-import { readACPState, writeACPState } from '../core/acpState.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type { ACPClient } from '../interfaces/ACPClient.js';
 import type {
@@ -27,13 +27,17 @@ function isTerminalRunStatus(status: ACPRunRecord['status']): boolean {
 }
 
 export class ACPWorkerRuntime implements AgentRuntime {
+  private readonly runtimeStore: RuntimeStore;
+
   constructor(
     private readonly ctx: ProjectContext,
     private readonly client: ACPClient = new LocalACPClient(),
-  ) {}
+  ) {
+    this.runtimeStore = new RuntimeStore(ctx);
+  }
 
   async ensureSession(slot: string, tool?: ACPTool, cwdOverride?: string): Promise<ACPSessionRecord> {
-    const state = readACPState(this.ctx.paths.acpStateFile);
+    const state = this.runtimeStore.readACPState();
     const normalizedSlot = this.normalizeSlot(slot);
     const selectedTool = tool || this.defaultTool();
     const existing = state.sessions[normalizedSlot];
@@ -67,18 +71,20 @@ export class ACPWorkerRuntime implements AgentRuntime {
       pendingInput: null,
     });
 
-    writeACPState(this.ctx.paths.acpStateFile, state, 'acp-ensure-session');
+    this.runtimeStore.updateACPState('acp-ensure-session', (draft) => {
+      draft.sessions[normalizedSlot] = session;
+    });
     return session;
   }
 
   async startRun(slot: string, prompt: string, tool?: ACPTool, cwdOverride?: string): Promise<ACPSessionRecord> {
     const normalizedSlot = this.normalizeSlot(slot);
-    const state = readACPState(this.ctx.paths.acpStateFile);
+    const state = this.runtimeStore.readACPState();
     const session = await this.ensureSession(normalizedSlot, tool, cwdOverride);
     if (session.sessionState !== 'ready') {
       throw new Error(`ACP session ${session.sessionId} is not ready (state=${session.sessionState})`);
     }
-    const freshState = readACPState(this.ctx.paths.acpStateFile);
+    const freshState = this.runtimeStore.readACPState();
     const existing = freshState.sessions[normalizedSlot] || session;
     return this.launchRun(freshState, normalizedSlot, existing, prompt, 'acp-start-run');
   }
@@ -100,7 +106,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
   }
 
   async inspect(slot?: string): Promise<ACPState> {
-    const state = readACPState(this.ctx.paths.acpStateFile);
+    const state = this.runtimeStore.readACPState();
     const slots = slot ? [this.normalizeSlot(slot)] : Object.keys(state.sessions);
 
     for (const slotName of slots) {
@@ -152,13 +158,15 @@ export class ACPWorkerRuntime implements AgentRuntime {
       };
     }
 
-    writeACPState(this.ctx.paths.acpStateFile, state, 'acp-inspect');
+    this.runtimeStore.updateACPState('acp-inspect', (draft) => {
+      draft.sessions = state.sessions;
+    });
     return state;
   }
 
   async stopSession(slot: string): Promise<void> {
     const normalizedSlot = this.normalizeSlot(slot);
-    const state = readACPState(this.ctx.paths.acpStateFile);
+    const state = this.runtimeStore.readACPState();
     const session = state.sessions[normalizedSlot];
     if (!session) {
       throw new Error(`ACP session not found for slot ${normalizedSlot}`);
@@ -187,7 +195,9 @@ export class ACPWorkerRuntime implements AgentRuntime {
       pendingInput: null,
     };
 
-    writeACPState(this.ctx.paths.acpStateFile, state, 'acp-stop-session');
+    this.runtimeStore.updateACPState('acp-stop-session', (draft) => {
+      draft.sessions[normalizedSlot] = state.sessions[normalizedSlot];
+    });
   }
 
   private normalizeSlot(slot: string): string {
@@ -262,7 +272,9 @@ export class ACPWorkerRuntime implements AgentRuntime {
       pendingInput: null,
     });
 
-    writeACPState(this.ctx.paths.acpStateFile, state, updatedBy);
+    this.runtimeStore.updateACPState(updatedBy, (draft) => {
+      draft.sessions[slot] = updated;
+    });
     return updated;
   }
 }

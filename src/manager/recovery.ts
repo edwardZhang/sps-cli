@@ -8,7 +8,7 @@
  */
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { readState, writeState } from '../core/state.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import { ProjectContext } from '../core/context.js';
 import { isProcessAlive } from '../providers/outputParser.js';
@@ -19,7 +19,7 @@ import { ResourceLimiter } from './resource-limiter.js';
 import type { ProjectConfig } from '../core/config.js';
 import { ACPWorkerRuntime } from '../providers/ACPWorkerRuntime.js';
 import type { ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
-import type { TaskLease, WorkerSlotState } from '../core/state.js';
+import type { RuntimeState, TaskLease, WorkerSlotState } from '../core/state.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -51,6 +51,13 @@ export class Recovery {
     private readonly resourceLimiter: ResourceLimiter,
   ) {}
 
+  private stateStore(project: ProjectInfo): RuntimeStore {
+    return new RuntimeStore({
+      paths: { stateFile: project.stateFile },
+      maxWorkers: project.config.MAX_CONCURRENT_WORKERS,
+    });
+  }
+
   /**
    * Scan all projects for active workers and recover them.
    *
@@ -60,7 +67,7 @@ export class Recovery {
     const result: RecoveryResult = { found: 0, alive: 0, completed: 0, failed: 0 };
 
     for (const project of projects) {
-      const state = readState(project.stateFile, project.config.MAX_CONCURRENT_WORKERS);
+      const state = this.stateStore(project).readState();
       const reservedSlots = new Set<string>();
       // Create per-project PostActions (C3 fix: use correct PM config per project)
       const postActions = this.postActionsFactory(project.config);
@@ -227,7 +234,7 @@ export class Recovery {
       const completion = this.judge.judge(judgeInput);
       const ctx = this.buildPostActionContext(project, slotName, seq, slot);
 
-      const state = readState(project.stateFile, project.config.MAX_CONCURRENT_WORKERS);
+      const state = this.stateStore(project).readState();
       const retryCount = this.getRetryCount(state, seq);
 
       if (completion.status === 'completed') {
@@ -342,7 +349,7 @@ export class Recovery {
     return 'failed';
   }
 
-  private listRecoverableLeases(state: ReturnType<typeof readState>): Array<[string, TaskLease]> {
+  private listRecoverableLeases(state: RuntimeState): Array<[string, TaskLease]> {
     return Object.entries(state.leases)
       .filter(([, lease]) => !['suspended', 'released'].includes(lease.phase))
       .sort(([, a], [, b]) => {
@@ -353,7 +360,7 @@ export class Recovery {
   }
 
   private resolveRecoverySlotName(
-    state: ReturnType<typeof readState>,
+    state: RuntimeState,
     seq: string,
     lease: TaskLease,
     reservedSlots: Set<string>,
@@ -382,29 +389,29 @@ export class Recovery {
     return null;
   }
 
-  private getRetryCount(state: ReturnType<typeof readState>, seq: string): number {
+  private getRetryCount(state: RuntimeState, seq: string): number {
     return state.leases[seq]?.retryCount ?? state.activeCards[seq]?.retryCount ?? 0;
   }
 
   private syncAcpSlot(project: ProjectInfo, slotName: string, session: ACPSessionRecord): void {
-    const state = readState(project.stateFile, project.config.MAX_CONCURRENT_WORKERS);
-    const slot = state.workers[slotName];
-    if (!slot) return;
-    const transport = project.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
-    slot.mode = transport;
-    slot.transport = transport;
-    slot.agent = session.tool;
-    slot.tmuxSession = session.sessionName;
-    slot.sessionId = session.sessionId;
-    slot.runId = session.currentRun?.runId || null;
-    slot.sessionState = session.sessionState;
-    slot.remoteStatus = session.currentRun?.status || null;
-    slot.lastEventAt = session.lastSeenAt;
-    slot.pid = null;
-    slot.outputFile = null;
-    slot.exitCode = null;
-    slot.lastHeartbeat = new Date().toISOString();
-    writeState(project.stateFile, state, 'recovery-acp-sync');
+    this.stateStore(project).updateState('recovery-acp-sync', (state) => {
+      const slot = state.workers[slotName];
+      if (!slot) return;
+      const transport = project.config.WORKER_TRANSPORT === 'pty' ? 'pty' : 'acp';
+      slot.mode = transport;
+      slot.transport = transport;
+      slot.agent = session.tool;
+      slot.tmuxSession = session.sessionName;
+      slot.sessionId = session.sessionId;
+      slot.runId = session.currentRun?.runId || null;
+      slot.sessionState = session.sessionState;
+      slot.remoteStatus = session.currentRun?.status || null;
+      slot.lastEventAt = session.lastSeenAt;
+      slot.pid = null;
+      slot.outputFile = null;
+      slot.exitCode = null;
+      slot.lastHeartbeat = new Date().toISOString();
+    });
   }
 
   private isActiveRun(status: ACPRunStatus): boolean {

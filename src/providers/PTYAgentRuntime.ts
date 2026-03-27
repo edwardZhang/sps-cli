@@ -7,7 +7,7 @@
  * - Event-driven state detection (no pane text parsing)
  */
 import type { ProjectContext } from '../core/context.js';
-import { readACPState, writeACPState } from '../core/acpState.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type {
   ACPState,
@@ -40,6 +40,7 @@ export function getSharedPTYManager(): PTYSessionManager {
 
 export class PTYAgentRuntime implements AgentRuntime {
   private readonly manager: PTYSessionManager;
+  private readonly runtimeStore: RuntimeStore;
   private notifier: Notifier | null = null;
 
   constructor(
@@ -48,6 +49,7 @@ export class PTYAgentRuntime implements AgentRuntime {
     notifier?: Notifier | null,
   ) {
     this.manager = manager || getSharedPTYManager();
+    this.runtimeStore = new RuntimeStore(ctx);
     this.notifier = notifier || null;
   }
 
@@ -87,11 +89,9 @@ export class PTYAgentRuntime implements AgentRuntime {
     const record = this.buildSessionRecord(normalizedSlot, session, selectedTool, cwd);
 
     // Persist to acp-state.json
-    const state = readACPState(this.ctx.paths.acpStateFile);
-    state.sessions[normalizedSlot] = record;
-    state.updatedAt = now();
-    state.updatedBy = 'pty-ensure';
-    writeACPState(this.ctx.paths.acpStateFile, state, state.updatedBy);
+    this.runtimeStore.updateACPState('pty-ensure', (state) => {
+      state.sessions[normalizedSlot] = record;
+    });
 
     return record;
   }
@@ -121,11 +121,9 @@ export class PTYAgentRuntime implements AgentRuntime {
     });
 
     // Persist
-    const state = readACPState(this.ctx.paths.acpStateFile);
-    state.sessions[normalizedSlot] = record;
-    state.updatedAt = now();
-    state.updatedBy = 'pty-start-run';
-    writeACPState(this.ctx.paths.acpStateFile, state, state.updatedBy);
+    this.runtimeStore.updateACPState('pty-start-run', (state) => {
+      state.sessions[normalizedSlot] = record;
+    });
 
     return record;
   }
@@ -148,17 +146,15 @@ export class PTYAgentRuntime implements AgentRuntime {
       startedAt: now(),
     });
 
-    const state = readACPState(this.ctx.paths.acpStateFile);
-    state.sessions[normalizedSlot] = record;
-    state.updatedAt = now();
-    state.updatedBy = 'pty-resume-run';
-    writeACPState(this.ctx.paths.acpStateFile, state, state.updatedBy);
+    this.runtimeStore.updateACPState('pty-resume-run', (state) => {
+      state.sessions[normalizedSlot] = record;
+    });
 
     return record;
   }
 
   async inspect(slot?: string): Promise<ACPState> {
-    const state = readACPState(this.ctx.paths.acpStateFile);
+    const state = this.runtimeStore.readACPState();
 
     if (slot) {
       const normalizedSlot = this.normalizeSlot(slot);
@@ -181,9 +177,9 @@ export class PTYAgentRuntime implements AgentRuntime {
       }
     }
 
-    state.updatedAt = now();
-    state.updatedBy = 'pty-inspect';
-    writeACPState(this.ctx.paths.acpStateFile, state, state.updatedBy);
+    this.runtimeStore.updateACPState('pty-inspect', (draft) => {
+      draft.sessions = state.sessions;
+    });
 
     return state;
   }
@@ -192,15 +188,13 @@ export class PTYAgentRuntime implements AgentRuntime {
     const normalizedSlot = this.normalizeSlot(slot);
     this.manager.killSession(this.ctx.projectName, normalizedSlot);
 
-    const state = readACPState(this.ctx.paths.acpStateFile);
-    if (state.sessions[normalizedSlot]) {
-      state.sessions[normalizedSlot].sessionState = 'offline';
-      state.sessions[normalizedSlot].status = 'idle';
-      state.sessions[normalizedSlot].updatedAt = now();
-    }
-    state.updatedAt = now();
-    state.updatedBy = 'pty-stop';
-    writeACPState(this.ctx.paths.acpStateFile, state, state.updatedBy);
+    this.runtimeStore.updateACPState('pty-stop', (state) => {
+      if (state.sessions[normalizedSlot]) {
+        state.sessions[normalizedSlot].sessionState = 'offline';
+        state.sessions[normalizedSlot].status = 'idle';
+        state.sessions[normalizedSlot].updatedAt = now();
+      }
+    });
   }
 
   /**
@@ -239,16 +233,16 @@ export class PTYAgentRuntime implements AgentRuntime {
 
     // Persist to acp-state.json
     try {
-      const state = readACPState(this.ctx.paths.acpStateFile);
-      if (state.sessions[slot]) {
-        state.sessions[slot].pendingInput = pending;
-        state.sessions[slot].updatedAt = now();
-        if (state.sessions[slot].currentRun) {
-          state.sessions[slot].currentRun!.status = 'waiting_input';
-          state.sessions[slot].currentRun!.updatedAt = now();
+      this.runtimeStore.updateACPState('pty-waiting-input', (state) => {
+        if (state.sessions[slot]) {
+          state.sessions[slot].pendingInput = pending;
+          state.sessions[slot].updatedAt = now();
+          if (state.sessions[slot].currentRun) {
+            state.sessions[slot].currentRun!.status = 'waiting_input';
+            state.sessions[slot].currentRun!.updatedAt = now();
+          }
         }
-      }
-      writeACPState(this.ctx.paths.acpStateFile, state, 'pty-waiting-input');
+      });
     } catch { /* best effort */ }
 
     // Log + Notify
@@ -267,12 +261,12 @@ export class PTYAgentRuntime implements AgentRuntime {
 
   private clearPendingInput(slot: string): void {
     try {
-      const state = readACPState(this.ctx.paths.acpStateFile);
-      if (state.sessions[slot]?.pendingInput) {
-        state.sessions[slot].pendingInput = null;
-        state.sessions[slot].updatedAt = now();
-        writeACPState(this.ctx.paths.acpStateFile, state, 'pty-clear-input');
-      }
+      this.runtimeStore.updateACPState('pty-clear-input', (state) => {
+        if (state.sessions[slot]?.pendingInput) {
+          state.sessions[slot].pendingInput = null;
+          state.sessions[slot].updatedAt = now();
+        }
+      });
     } catch { /* best effort */ }
   }
 

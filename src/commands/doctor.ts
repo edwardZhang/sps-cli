@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import { checkPathExists } from '../core/paths.js';
-import { readState, writeState } from '../core/state.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import { Logger } from '../core/logger.js';
 import type { CheckResult, CommandResult } from '../models/types.js';
 
@@ -61,8 +61,10 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
 
   // 1. Load ProjectContext
   let ctx: ProjectContext;
+  let runtimeStore: RuntimeStore;
   try {
     ctx = ProjectContext.load(project);
+    runtimeStore = new RuntimeStore(ctx);
     checks.push({ name: 'conf-load', status: 'pass', message: `Loaded ${ctx.paths.confFile}` });
   } catch (err) {
     checks.push({ name: 'conf-load', status: 'fail', message: String(err) });
@@ -182,7 +184,7 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
   // 5. state.json
   if (checkPathExists(ctx.paths.stateFile)) {
     try {
-      const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
+      const state = runtimeStore.readState();
       checks.push({
         name: 'state-json',
         status: 'pass',
@@ -192,8 +194,8 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
       checks.push({ name: 'state-json', status: 'fail', message: 'state.json exists but is corrupt' });
     }
   } else if (doFix) {
-    const state = readState(ctx.paths.stateFile, ctx.maxWorkers); // creates default
-    writeState(ctx.paths.stateFile, state, 'doctor-init');
+    const state = runtimeStore.readState(); // creates default
+    runtimeStore.updateState('doctor-init', () => {});
     checks.push({ name: 'state-json', status: 'pass', message: `Initialized with ${Object.keys(state.workers).length} worker slots` });
     fixes.push('Initialized state.json');
   } else {

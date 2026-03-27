@@ -3,7 +3,8 @@ import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { type WorkerSlotState } from '../core/state.js';
-import { readACPState, writeACPState } from '../core/acpState.js';
+import { readACPState } from '../core/acpState.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import {
   hasPersistedActiveRun,
@@ -694,12 +695,12 @@ function sendResponse(item: PendingItem, response: string): boolean {
     // Clear pending input in state
     let ctx: ProjectContext;
     try { ctx = ProjectContext.load(item.project); } catch { return true; }
-    const acpState = readACPState(ctx.paths.acpStateFile);
-    if (acpState.sessions[item.slot]) {
-      acpState.sessions[item.slot].pendingInput = null;
-      acpState.sessions[item.slot].updatedAt = new Date().toISOString();
-      writeACPState(ctx.paths.acpStateFile, acpState, 'dashboard-respond');
-    }
+    new RuntimeStore(ctx).updateACPState('dashboard-respond', (acpState) => {
+      if (acpState.sessions[item.slot]) {
+        acpState.sessions[item.slot].pendingInput = null;
+        acpState.sessions[item.slot].updatedAt = new Date().toISOString();
+      }
+    });
     return true;
   } catch {
     return false;

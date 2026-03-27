@@ -7,7 +7,8 @@ import type { Notifier } from '../interfaces/Notifier.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type { CommandResult, ActionRecord, Card, CardState, AuxiliaryState } from '../models/types.js';
 import type { ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
-import { readState, writeState, type TaskLease, type WorkerSlotState } from '../core/state.js';
+import type { RuntimeState, TaskLease, WorkerSlotState } from '../core/state.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { readQueue } from '../core/queue.js';
@@ -21,6 +22,7 @@ const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAIT
 
 export class ExecutionEngine {
   private log: Logger;
+  private runtimeStore: RuntimeStore;
 
   constructor(
     private ctx: ProjectContext,
@@ -34,6 +36,7 @@ export class ExecutionEngine {
     private agentRuntime?: AgentRuntime | null,
   ) {
     this.log = new Logger('pipeline', ctx.projectName, ctx.paths.logsDir);
+    this.runtimeStore = new RuntimeStore(ctx);
   }
 
   async tick(opts: { dryRun?: boolean } = {}): Promise<CommandResult> {
@@ -205,7 +208,7 @@ export class ExecutionEngine {
   private async listRuntimeAwareInprogressCards(): Promise<Card[]> {
     const cards = await this.taskBackend.listByState('Inprogress');
     const bySeq = new Map(cards.map(card => [card.seq, card]));
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
 
     for (const [seq, lease] of Object.entries(state.leases)) {
       const slot = lease.slot ? state.workers[lease.slot] || null : null;
@@ -218,7 +221,7 @@ export class ExecutionEngine {
   }
 
   private async reconcilePmStatesWithRuntime(): Promise<ActionRecord[]> {
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
     const actions: ActionRecord[] = [];
 
     for (const [seq, lease] of Object.entries(state.leases)) {
@@ -306,7 +309,7 @@ export class ExecutionEngine {
     opts: { dryRun?: boolean },
   ): Promise<ActionRecord | null> {
     const seq = card.seq;
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
     const lease = state.leases[seq] || null;
     const slotName = this.findRuntimeSlotName(state, seq, lease);
 
@@ -330,11 +333,11 @@ export class ExecutionEngine {
     if (handle && handle.exitCode === null) {
       // Worker still running — update heartbeat
       try {
-        const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-        if (freshState.workers[slotName]) {
-          freshState.workers[slotName].lastHeartbeat = new Date().toISOString();
-          writeState(this.ctx.paths.stateFile, freshState, 'pipeline-heartbeat');
-        }
+        this.runtimeStore.updateState('pipeline-heartbeat', (freshState) => {
+          if (freshState.workers[slotName]) {
+            freshState.workers[slotName].lastHeartbeat = new Date().toISOString();
+          }
+        });
       } catch { /* non-fatal */ }
       return null;
     }
@@ -342,7 +345,7 @@ export class ExecutionEngine {
     if (handle && handle.exitCode !== null) {
       // Worker exited but PostActions hasn't finished yet (or just finished)
       // Check if slot is now idle
-      const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+      const freshState = this.runtimeStore.readState();
       if (!freshState.workers[slotName] || freshState.workers[slotName].status === 'idle') {
         this.log.ok(`seq ${seq}: Completed (handled by exit callback)`);
         return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Completed via exit callback' };
@@ -353,7 +356,7 @@ export class ExecutionEngine {
 
     // Handle not found in Supervisor — PostActions already removed it, or after tick restart
     // Re-read state to check if PostActions already completed
-    const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const freshState = this.runtimeStore.readState();
     if (!freshState.workers[slotName] || freshState.workers[slotName].status === 'idle') {
       this.log.ok(`seq ${seq}: Completed (PostActions already processed)`);
       return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Completed (PostActions processed)' };
@@ -449,7 +452,7 @@ export class ExecutionEngine {
 
     // Step 4: Claim worker slot
     // Exclude slots that failed launch this tick to prevent repeated failures
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
     const idleSlots = Object.entries(state.workers)
       .filter(([name, w]) => w.status === 'idle' && !failedSlots.has(name));
     if (idleSlots.length === 0) {
@@ -515,7 +518,11 @@ export class ExecutionEngine {
     };
 
     try {
-      writeState(this.ctx.paths.stateFile, state, 'pipeline-launch');
+      this.runtimeStore.updateState('pipeline-launch', (draft) => {
+        draft.workers[slotName] = state.workers[slotName];
+        draft.activeCards[seq] = state.activeCards[seq];
+        draft.leases[seq] = state.leases[seq];
+      });
       this.log.ok(`Step 4: Claimed slot ${slotName} for seq ${seq}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -576,17 +583,17 @@ export class ExecutionEngine {
           worktreePath,
         );
 
-        const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-        if (freshState.workers[slotName]) {
-          this.applyAcpSessionToSlot(freshState.workers[slotName], session);
-          if (freshState.leases[seq]) {
-            freshState.leases[seq].sessionId = session.sessionId;
-            freshState.leases[seq].runId = session.currentRun?.runId || null;
-            freshState.leases[seq].phase = session.pendingInput ? 'waiting_confirmation' : 'coding';
-            freshState.leases[seq].lastTransitionAt = new Date().toISOString();
+        this.runtimeStore.updateState('pipeline-launch-acp', (freshState) => {
+          if (freshState.workers[slotName]) {
+            this.applyAcpSessionToSlot(freshState.workers[slotName], session);
+            if (freshState.leases[seq]) {
+              freshState.leases[seq].sessionId = session.sessionId;
+              freshState.leases[seq].runId = session.currentRun?.runId || null;
+              freshState.leases[seq].phase = session.pendingInput ? 'waiting_confirmation' : 'coding';
+              freshState.leases[seq].lastTransitionAt = new Date().toISOString();
+            }
           }
-          writeState(this.ctx.paths.stateFile, freshState, 'pipeline-launch-acp');
-        }
+        });
 
         this.supervisor.registerAcpHandle({
           id: workerId,
@@ -633,25 +640,25 @@ export class ExecutionEngine {
         });
 
         // Store process info in state
-        const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-        if (freshState.workers[slotName]) {
-          freshState.workers[slotName].mode = 'print';
-          freshState.workers[slotName].transport = 'proc';
-          freshState.workers[slotName].agent = this.ctx.config.WORKER_TOOL;
-          freshState.workers[slotName].pid = workerHandle.pid;
-          freshState.workers[slotName].outputFile = workerHandle.outputFile;
-          freshState.workers[slotName].sessionId = workerHandle.sessionId || null;
-          freshState.workers[slotName].runId = null;
-          freshState.workers[slotName].sessionState = null;
-          freshState.workers[slotName].remoteStatus = null;
-          freshState.workers[slotName].lastEventAt = null;
-          freshState.workers[slotName].exitCode = null;
-          if (freshState.leases[seq]) {
-            freshState.leases[seq].phase = 'coding';
-            freshState.leases[seq].lastTransitionAt = new Date().toISOString();
+        this.runtimeStore.updateState('pipeline-launch-print', (freshState) => {
+          if (freshState.workers[slotName]) {
+            freshState.workers[slotName].mode = 'print';
+            freshState.workers[slotName].transport = 'proc';
+            freshState.workers[slotName].agent = this.ctx.config.WORKER_TOOL;
+            freshState.workers[slotName].pid = workerHandle.pid;
+            freshState.workers[slotName].outputFile = workerHandle.outputFile;
+            freshState.workers[slotName].sessionId = workerHandle.sessionId || null;
+            freshState.workers[slotName].runId = null;
+            freshState.workers[slotName].sessionState = null;
+            freshState.workers[slotName].remoteStatus = null;
+            freshState.workers[slotName].lastEventAt = null;
+            freshState.workers[slotName].exitCode = null;
+            if (freshState.leases[seq]) {
+              freshState.leases[seq].phase = 'coding';
+              freshState.leases[seq].lastTransitionAt = new Date().toISOString();
+            }
           }
-          writeState(this.ctx.paths.stateFile, freshState, 'pipeline-launch-print');
-        }
+        });
 
         this.log.ok(`Step 6: Worker launched for seq ${seq} (pid=${workerHandle.pid})`);
       }
@@ -673,18 +680,18 @@ export class ExecutionEngine {
     try {
       await this.taskBackend.move(seq, 'Inprogress');
       // Update active card state
-      const freshState = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-      if (freshState.activeCards[seq]) {
-        freshState.activeCards[seq].state = 'Inprogress';
-        if (freshState.leases[seq]) {
-          freshState.leases[seq].pmStateObserved = 'Inprogress';
-          if (freshState.leases[seq].phase === 'preparing' || freshState.leases[seq].phase === 'queued') {
-            freshState.leases[seq].phase = 'coding';
+      this.runtimeStore.updateState('pipeline-launch', (freshState) => {
+        if (freshState.activeCards[seq]) {
+          freshState.activeCards[seq].state = 'Inprogress';
+          if (freshState.leases[seq]) {
+            freshState.leases[seq].pmStateObserved = 'Inprogress';
+            if (freshState.leases[seq].phase === 'preparing' || freshState.leases[seq].phase === 'queued') {
+              freshState.leases[seq].phase = 'coding';
+            }
+            freshState.leases[seq].lastTransitionAt = new Date().toISOString();
           }
-          freshState.leases[seq].lastTransitionAt = new Date().toISOString();
         }
-        writeState(this.ctx.paths.stateFile, freshState, 'pipeline-launch');
-      }
+      });
       this.log.ok(`Step 7: Moved seq ${seq} Todo → Inprogress`);
       this.logEvent('launch', seq, 'ok', { worker: slotName, session: sessionName });
       return { action: 'launch', entity: `seq:${seq}`, result: 'ok', message: `Todo → Inprogress (${slotName})` };
@@ -735,14 +742,18 @@ export class ExecutionEngine {
     const inspected = await runtime.inspect(slotName);
     const session = inspected.sessions[slotName];
     const workerId = `${this.ctx.projectName}:${slotName}:${seq}`;
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
     const slot = state.workers[slotName];
     if (!slot) return null;
 
     if (session) {
-      this.applyAcpSessionToSlot(slot, session);
-      slot.lastHeartbeat = new Date().toISOString();
-      writeState(this.ctx.paths.stateFile, state, 'pipeline-acp-heartbeat');
+      this.runtimeStore.updateState('pipeline-acp-heartbeat', (freshState) => {
+        const freshSlot = freshState.workers[slotName];
+        if (freshSlot) {
+          this.applyAcpSessionToSlot(freshSlot, session);
+          freshSlot.lastHeartbeat = new Date().toISOString();
+        }
+      });
       this.supervisor.registerAcpHandle({
         id: workerId,
         pid: null,
@@ -795,11 +806,15 @@ export class ExecutionEngine {
       };
     }
 
-    slot.sessionState = 'offline';
-    slot.remoteStatus = 'lost';
-    slot.lastEventAt = new Date().toISOString();
-    slot.lastHeartbeat = new Date().toISOString();
-    writeState(this.ctx.paths.stateFile, state, 'pipeline-acp-lost');
+    this.runtimeStore.updateState('pipeline-acp-lost', (freshState) => {
+      const lostSlot = freshState.workers[slotName];
+      if (lostSlot) {
+        lostSlot.sessionState = 'offline';
+        lostSlot.remoteStatus = 'lost';
+        lostSlot.lastEventAt = new Date().toISOString();
+        lostSlot.lastHeartbeat = new Date().toISOString();
+      }
+    });
 
     const handle = this.supervisor.updateAcpHandle(workerId, {
       exitCode: 1,
@@ -865,7 +880,7 @@ export class ExecutionEngine {
       tool: handle?.tool || this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL,
     };
 
-    const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
+    const state = this.runtimeStore.readState();
     const retryCount = this.getRetryCount(state, card.seq);
     const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
 
@@ -918,7 +933,7 @@ export class ExecutionEngine {
   }
 
   private findRuntimeSlotName(
-    state: ReturnType<typeof readState>,
+    state: RuntimeState,
     seq: string,
     lease: TaskLease | null,
   ): string | null {
@@ -930,7 +945,7 @@ export class ExecutionEngine {
     return slotEntry?.[0] || null;
   }
 
-  private getRetryCount(state: ReturnType<typeof readState>, seq: string): number {
+  private getRetryCount(state: RuntimeState, seq: string): number {
     return state.leases[seq]?.retryCount ?? state.activeCards[seq]?.retryCount ?? 0;
   }
 
@@ -1169,34 +1184,9 @@ ${requirements.join('\n')}`);
    */
   private releaseSlot(slotName: string, seq: string): void {
     try {
-      const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
-      if (state.workers[slotName]) {
-        state.workers[slotName] = {
-          status: 'idle',
-          seq: null,
-          branch: null,
-          worktree: null,
-          tmuxSession: null,
-          claimedAt: null,
-          lastHeartbeat: null,
-          mode: null,
-          transport: null,
-          agent: null,
-          sessionId: null,
-          runId: null,
-          sessionState: null,
-          remoteStatus: null,
-          lastEventAt: null,
-          pid: null,
-          outputFile: null,
-          exitCode: null,
-          mergeRetries: 0,
-          completedAt: null,
-        };
-      }
-      delete state.activeCards[seq];
-      delete state.leases[seq];
-      writeState(this.ctx.paths.stateFile, state, 'pipeline-release');
+      this.runtimeStore.updateState('pipeline-release', (state) => {
+        this.runtimeStore.releaseTaskProjection(state, seq, { dropLease: true });
+      });
       this.taskBackend.releaseClaim(seq).catch(() => {});
     } catch {
       this.log.warn(`Failed to release slot ${slotName} for seq ${seq}`);

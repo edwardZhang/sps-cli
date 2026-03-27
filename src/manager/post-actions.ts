@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { readState, writeState } from '../core/state.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import { isProcessAlive } from '../providers/outputParser.js';
 import type { CompletionResult } from './completion-judge.js';
 import type { PMClient } from './pm-client.js';
@@ -71,6 +71,13 @@ export class PostActions {
     private readonly mergeMutex?: MergeMutex,
     private readonly agentRuntime: AgentRuntime | null = null,
   ) {}
+
+  private stateStore(ctx: PostActionContext): RuntimeStore {
+    return new RuntimeStore({
+      paths: { stateFile: ctx.stateFile },
+      maxWorkers: ctx.maxWorkers,
+    });
+  }
 
   /**
    * Handle worker completion — serial merge + PM update + release + notify.
@@ -415,14 +422,14 @@ export class PostActions {
       });
 
       // Update state with new PID
-      const state = readState(ctx.stateFile, ctx.maxWorkers);
-      if (state.workers[ctx.slot]) {
-        state.workers[ctx.slot].pid = spawnedPid;
-        state.workers[ctx.slot].outputFile = outputFile;
-        state.workers[ctx.slot].exitCode = null;
-        state.workers[ctx.slot].mergeRetries = (state.workers[ctx.slot].mergeRetries ?? 0) + 1;
-      }
-      writeState(ctx.stateFile, state, 'post-actions-conflict-resolve');
+      this.stateStore(ctx).updateState('post-actions-conflict-resolve', (state) => {
+        if (state.workers[ctx.slot]) {
+          state.workers[ctx.slot].pid = spawnedPid;
+          state.workers[ctx.slot].outputFile = outputFile;
+          state.workers[ctx.slot].exitCode = null;
+          state.workers[ctx.slot].mergeRetries = (state.workers[ctx.slot].mergeRetries ?? 0) + 1;
+        }
+      });
 
       this.log(`Spawned conflict resolver for ${workerId} (pid=${spawnedPid})`);
 
@@ -524,18 +531,18 @@ export class PostActions {
    */
   private setSlotStatus(ctx: PostActionContext, status: 'merging' | 'resolving'): void {
     try {
-      const state = readState(ctx.stateFile, ctx.maxWorkers);
-      if (state.workers[ctx.slot]) {
-        state.workers[ctx.slot].status = status;
-        if (status === 'merging' && !state.workers[ctx.slot].completedAt) {
-          state.workers[ctx.slot].completedAt = new Date().toISOString();
+      this.stateStore(ctx).updateState(`post-actions-${status}`, (state) => {
+        if (state.workers[ctx.slot]) {
+          state.workers[ctx.slot].status = status;
+          if (status === 'merging' && !state.workers[ctx.slot].completedAt) {
+            state.workers[ctx.slot].completedAt = new Date().toISOString();
+          }
         }
-      }
-      if (state.leases[ctx.seq]) {
-        state.leases[ctx.seq].phase = status === 'merging' ? 'merging' : 'resolving_conflict';
-        state.leases[ctx.seq].lastTransitionAt = new Date().toISOString();
-      }
-      writeState(ctx.stateFile, state, `post-actions-${status}`);
+        if (state.leases[ctx.seq]) {
+          state.leases[ctx.seq].phase = status === 'merging' ? 'merging' : 'resolving_conflict';
+          state.leases[ctx.seq].lastTransitionAt = new Date().toISOString();
+        }
+      });
     } catch { /* best effort */ }
   }
 
@@ -581,20 +588,9 @@ export class PostActions {
 
   private async releaseSlot(ctx: PostActionContext): Promise<StepResult> {
     try {
-      const state = readState(ctx.stateFile, ctx.maxWorkers);
-      if (state.workers[ctx.slot]) {
-        state.workers[ctx.slot] = {
-          status: 'idle', seq: null, branch: null, worktree: null,
-          tmuxSession: null, claimedAt: null, lastHeartbeat: null,
-          mode: null, transport: null, agent: null,
-          sessionId: null, runId: null, sessionState: null, remoteStatus: null, lastEventAt: null,
-          pid: null, outputFile: null, exitCode: null,
-          mergeRetries: 0, completedAt: null,
-        };
-      }
-      delete state.activeCards[ctx.seq];
-      delete state.leases[ctx.seq];
-      writeState(ctx.stateFile, state, 'post-actions-release');
+      this.stateStore(ctx).updateState('post-actions-release', (state) => {
+        this.stateStore(ctx).releaseTaskProjection(state, ctx.seq, { dropLease: true });
+      });
       return { step: 'release-slot', ok: true };
     } catch (err) {
       return { step: 'release-slot', ok: false, error: String(err) };
@@ -612,17 +608,17 @@ export class PostActions {
 
   private async markWorktreeCleanup(ctx: PostActionContext): Promise<StepResult> {
     try {
-      const state = readState(ctx.stateFile, ctx.maxWorkers);
-      const cleanup = state.worktreeCleanup ?? [];
-      if (!cleanup.some(e => e.branch === ctx.branch)) {
-        cleanup.push({
-          branch: ctx.branch,
-          worktreePath: ctx.worktree,
-          markedAt: new Date().toISOString(),
-        });
-        state.worktreeCleanup = cleanup;
-        writeState(ctx.stateFile, state, 'post-actions-cleanup');
-      }
+      this.stateStore(ctx).updateState('post-actions-cleanup', (state) => {
+        const cleanup = state.worktreeCleanup ?? [];
+        if (!cleanup.some(e => e.branch === ctx.branch)) {
+          cleanup.push({
+            branch: ctx.branch,
+            worktreePath: ctx.worktree,
+            markedAt: new Date().toISOString(),
+          });
+          state.worktreeCleanup = cleanup;
+        }
+      });
       return { step: 'mark-worktree-cleanup', ok: true };
     } catch (err) {
       return { step: 'mark-worktree-cleanup', ok: false, error: String(err) };
@@ -698,15 +694,15 @@ export class PostActions {
         ...respawnOpts,
       });
 
-      const state = readState(ctx.stateFile, ctx.maxWorkers);
-      if (state.leases[ctx.seq]) {
-        state.leases[ctx.seq].retryCount = retryCount + 1;
-        state.leases[ctx.seq].lastTransitionAt = new Date().toISOString();
-      }
-      if (state.activeCards[ctx.seq]) {
-        state.activeCards[ctx.seq].retryCount = retryCount + 1;
-      }
-      writeState(ctx.stateFile, state, 'post-actions-retry');
+      this.stateStore(ctx).updateState('post-actions-retry', (state) => {
+        if (state.leases[ctx.seq]) {
+          state.leases[ctx.seq].retryCount = retryCount + 1;
+          state.leases[ctx.seq].lastTransitionAt = new Date().toISOString();
+        }
+        if (state.activeCards[ctx.seq]) {
+          state.activeCards[ctx.seq].retryCount = retryCount + 1;
+        }
+      });
 
       this.log(`Respawned ${workerId} with --resume (retry #${retryCount + 1})`);
       return { step: 'respawn', ok: true };
@@ -891,53 +887,53 @@ export class PostActions {
   ): void {
     const workerId = `${ctx.project}:${ctx.slot}:${ctx.seq}`;
     const nowIso = new Date().toISOString();
-    const state = readState(ctx.stateFile, ctx.maxWorkers);
-    const slot = state.workers[ctx.slot];
-
-    if (slot) {
-      const agentMode = ctx.transport === 'pty' ? 'pty' : 'acp';
-      slot.status = slotStatus;
-      slot.mode = agentMode;
-      slot.transport = ctx.transport;
-      slot.agent = session.tool;
-      slot.tmuxSession = session.sessionName;
-      slot.sessionId = session.sessionId;
-      slot.runId = session.currentRun?.runId || null;
-      slot.sessionState = session.sessionState;
-      slot.remoteStatus = session.currentRun?.status || null;
-      slot.lastEventAt = session.lastSeenAt;
-      slot.lastHeartbeat = nowIso;
-      slot.pid = null;
-      slot.outputFile = null;
-      slot.exitCode = null;
-      if (options?.mergeRetryIncrement) {
-        slot.mergeRetries = (slot.mergeRetries ?? 0) + 1;
+    let claimedAt = nowIso;
+    this.stateStore(ctx).updateState(updatedBy, (state) => {
+      const slot = state.workers[ctx.slot];
+      if (slot) {
+        const agentMode = ctx.transport === 'pty' ? 'pty' : 'acp';
+        slot.status = slotStatus;
+        slot.mode = agentMode;
+        slot.transport = ctx.transport;
+        slot.agent = session.tool;
+        slot.tmuxSession = session.sessionName;
+        slot.sessionId = session.sessionId;
+        slot.runId = session.currentRun?.runId || null;
+        slot.sessionState = session.sessionState;
+        slot.remoteStatus = session.currentRun?.status || null;
+        slot.lastEventAt = session.lastSeenAt;
+        slot.lastHeartbeat = nowIso;
+        slot.pid = null;
+        slot.outputFile = null;
+        slot.exitCode = null;
+        if (options?.mergeRetryIncrement) {
+          slot.mergeRetries = (slot.mergeRetries ?? 0) + 1;
+        }
+        claimedAt = slot.claimedAt || nowIso;
       }
-    }
 
-    if (state.leases[ctx.seq]) {
-      state.leases[ctx.seq].slot = ctx.slot;
-      state.leases[ctx.seq].branch = ctx.branch;
-      state.leases[ctx.seq].worktree = ctx.worktree;
-      state.leases[ctx.seq].sessionId = session.sessionId;
-      state.leases[ctx.seq].runId = session.currentRun?.runId || null;
-      if (options?.retryCount != null) {
-        state.leases[ctx.seq].retryCount = options.retryCount;
+      if (state.leases[ctx.seq]) {
+        state.leases[ctx.seq].slot = ctx.slot;
+        state.leases[ctx.seq].branch = ctx.branch;
+        state.leases[ctx.seq].worktree = ctx.worktree;
+        state.leases[ctx.seq].sessionId = session.sessionId;
+        state.leases[ctx.seq].runId = session.currentRun?.runId || null;
+        if (options?.retryCount != null) {
+          state.leases[ctx.seq].retryCount = options.retryCount;
+        }
+        state.leases[ctx.seq].phase = slotStatus === 'merging'
+          ? 'merging'
+          : session.pendingInput || session.currentRun?.status === 'waiting_input'
+            ? 'waiting_confirmation'
+            : slotStatus === 'resolving'
+              ? 'resolving_conflict'
+              : 'coding';
+        state.leases[ctx.seq].lastTransitionAt = nowIso;
       }
-      state.leases[ctx.seq].phase = slotStatus === 'merging'
-        ? 'merging'
-        : session.pendingInput || session.currentRun?.status === 'waiting_input'
-          ? 'waiting_confirmation'
-          : slotStatus === 'resolving'
-            ? 'resolving_conflict'
-            : 'coding';
-      state.leases[ctx.seq].lastTransitionAt = nowIso;
-    }
-    if (state.activeCards[ctx.seq] && options?.retryCount != null) {
-      state.activeCards[ctx.seq].retryCount = options.retryCount;
-    }
-
-    writeState(ctx.stateFile, state, updatedBy);
+      if (state.activeCards[ctx.seq] && options?.retryCount != null) {
+        state.activeCards[ctx.seq].retryCount = options.retryCount;
+      }
+    });
 
     this.supervisor.registerAcpHandle({
       id: workerId,
@@ -955,7 +951,7 @@ export class PostActions {
       sessionState: session.sessionState,
       remoteStatus: session.currentRun?.status || null,
       lastEventAt: session.lastSeenAt,
-      startedAt: slot?.claimedAt || nowIso,
+      startedAt: claimedAt,
       exitedAt: null,
     });
   }

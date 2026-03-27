@@ -22,7 +22,13 @@ export interface TaskRuntimeView {
   session: ACPSessionRecord | null;
 }
 
-type RuntimePaths = Pick<ProjectContext, 'paths' | 'maxWorkers'>;
+type RuntimePaths = {
+  paths: {
+    stateFile: string;
+    acpStateFile?: string;
+  };
+  maxWorkers: number;
+};
 
 export class RuntimeStore {
   constructor(private readonly ctx: RuntimePaths) {}
@@ -32,6 +38,14 @@ export class RuntimeStore {
   }
 
   readACPState(): ACPState {
+    if (!this.ctx.paths.acpStateFile) {
+      return {
+        version: 1,
+        updatedAt: new Date(0).toISOString(),
+        updatedBy: 'runtime-store-empty',
+        sessions: {},
+      };
+    }
     return readACPState(this.ctx.paths.acpStateFile);
   }
 
@@ -50,6 +64,9 @@ export class RuntimeStore {
   }
 
   updateACPState(updatedBy: string, mutator: (acpState: ACPState) => void): ACPState {
+    if (!this.ctx.paths.acpStateFile) {
+      throw new Error('acpStateFile is not configured for this RuntimeStore');
+    }
     const acpState = this.readACPState();
     mutator(acpState);
     writeACPState(this.ctx.paths.acpStateFile, acpState, updatedBy);
@@ -60,6 +77,9 @@ export class RuntimeStore {
     updatedBy: string,
     mutator: (state: RuntimeState, acpState: ACPState) => void,
   ): { state: RuntimeState; acpState: ACPState } {
+    if (!this.ctx.paths.acpStateFile) {
+      throw new Error('acpStateFile is not configured for this RuntimeStore');
+    }
     const state = this.readState();
     const acpState = this.readACPState();
     mutator(state, acpState);
