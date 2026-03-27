@@ -13,8 +13,11 @@ import type {
   ACPState,
   ACPSessionRecord,
   ACPTool,
+  PendingInput,
 } from '../models/acp.js';
 import { PTYSessionManager, type SessionInfo } from '../manager/pty-session-manager.js';
+import type { Notifier } from '../interfaces/Notifier.js';
+import type { WaitingInputEvent } from '../manager/pty-session.js';
 
 function now(): string {
   return new Date().toISOString();
@@ -37,12 +40,20 @@ export function getSharedPTYManager(): PTYSessionManager {
 
 export class PTYAgentRuntime implements AgentRuntime {
   private readonly manager: PTYSessionManager;
+  private notifier: Notifier | null = null;
 
   constructor(
     private readonly ctx: ProjectContext,
     manager?: PTYSessionManager,
+    notifier?: Notifier | null,
   ) {
     this.manager = manager || getSharedPTYManager();
+    this.notifier = notifier || null;
+  }
+
+  /** Set notifier for waiting_input push notifications */
+  setNotifier(notifier: Notifier | null): void {
+    this.notifier = notifier;
   }
 
   async ensureSession(slot: string, tool?: ACPTool, cwdOverride?: string): Promise<ACPSessionRecord> {
@@ -57,6 +68,21 @@ export class PTYAgentRuntime implements AgentRuntime {
       cwd,
       logsDir: this.ctx.paths.logsDir,
     });
+
+    // Hook waiting-input events for persistence + notification
+    const ptySession = this.manager.getSession(this.ctx.projectName, normalizedSlot);
+    if (ptySession) {
+      ptySession.removeAllListeners('waiting-input');
+      ptySession.on('waiting-input', (event: WaitingInputEvent) => {
+        this.handleWaitingInput(normalizedSlot, event);
+      });
+      // Clear pending when state leaves waiting_input
+      ptySession.on('state-change', (newState: string) => {
+        if (newState !== 'waiting_input') {
+          this.clearPendingInput(normalizedSlot);
+        }
+      });
+    }
 
     const record = this.buildSessionRecord(normalizedSlot, session, selectedTool, cwd);
 
@@ -200,6 +226,56 @@ export class PTYAgentRuntime implements AgentRuntime {
     return this.manager;
   }
 
+  // ─── Waiting Input Handling ─────────────────────────────────
+
+  private handleWaitingInput(slot: string, event: WaitingInputEvent): void {
+    const pending: PendingInput = {
+      type: event.type,
+      prompt: event.prompt,
+      options: event.options,
+      dangerous: event.dangerous,
+      timestamp: event.timestamp,
+    };
+
+    // Persist to acp-state.json
+    try {
+      const state = readACPState(this.ctx.paths.acpStateFile);
+      if (state.sessions[slot]) {
+        state.sessions[slot].pendingInput = pending;
+        state.sessions[slot].updatedAt = now();
+        if (state.sessions[slot].currentRun) {
+          state.sessions[slot].currentRun!.status = 'waiting_input';
+          state.sessions[slot].currentRun!.updatedAt = now();
+        }
+      }
+      writeACPState(this.ctx.paths.acpStateFile, state, 'pty-waiting-input');
+    } catch { /* best effort */ }
+
+    // Log + Notify
+    const dangerTag = event.dangerous ? ' DANGEROUS' : '';
+    const msg = `[${this.ctx.projectName}] ${slot} waiting for input${dangerTag}: ${event.prompt}`;
+    process.stderr.write(`[pty-runtime] ${msg}\n`);
+
+    if (this.notifier) {
+      if (event.dangerous) {
+        this.notifier.sendWarning(msg).catch(() => {});
+      } else {
+        this.notifier.send(msg, 'warning').catch(() => {});
+      }
+    }
+  }
+
+  private clearPendingInput(slot: string): void {
+    try {
+      const state = readACPState(this.ctx.paths.acpStateFile);
+      if (state.sessions[slot]?.pendingInput) {
+        state.sessions[slot].pendingInput = null;
+        state.sessions[slot].updatedAt = now();
+        writeACPState(this.ctx.paths.acpStateFile, state, 'pty-clear-input');
+      }
+    } catch { /* best effort */ }
+  }
+
   // ─── Internal ─────────────────────────────────────────────
 
   private normalizeSlot(slot: string): string {
@@ -251,6 +327,7 @@ export class PTYAgentRuntime implements AgentRuntime {
         updatedAt: now(),
         completedAt: null,
       } : null,
+      pendingInput: null,
       createdAt: now(),
       updatedAt: now(),
       lastSeenAt: now(),

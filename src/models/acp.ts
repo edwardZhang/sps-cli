@@ -31,6 +31,14 @@ export interface ACPRunRecord {
   completedAt: string | null;
 }
 
+export interface PendingInput {
+  type: 'trust' | 'permission' | 'confirmation' | 'unknown';
+  prompt: string;
+  options?: string[];
+  dangerous?: boolean;
+  timestamp: string;
+}
+
 export interface ACPSessionRecord {
   slot: string;
   tool: ACPTool;
@@ -40,6 +48,7 @@ export interface ACPSessionRecord {
   status: ACPSlotStatus;
   sessionState: ACPSessionStatus;
   currentRun: ACPRunRecord | null;
+  pendingInput: PendingInput | null;
   createdAt: string;
   updatedAt: string;
   lastSeenAt: string | null;

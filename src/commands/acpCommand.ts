@@ -107,5 +107,65 @@ export async function executeAcpCommand(
     return;
   }
 
-  throw new Error('Usage: sps acp <ensure|run|prompt|status|stop> <project> [args...]');
+  if (subcommand === 'pending') {
+    const state = await runtime.inspect();
+    const pending = Object.values(state.sessions)
+      .filter(s => s.pendingInput)
+      .map(s => ({
+        slot: s.slot,
+        tool: s.tool,
+        type: s.pendingInput!.type,
+        prompt: s.pendingInput!.prompt,
+        dangerous: s.pendingInput!.dangerous || false,
+        timestamp: s.pendingInput!.timestamp,
+      }));
+    if (jsonOutput) {
+      console.log(JSON.stringify(pending, null, 2));
+    } else if (pending.length === 0) {
+      log.info('No pending confirmations');
+    } else {
+      for (const p of pending) {
+        const danger = p.dangerous ? '\x1b[31m DANGEROUS\x1b[0m' : '';
+        log.warn(`${p.slot} | WAITING${danger} | ${p.prompt}`);
+      }
+      console.log(`\n  Respond with: sps acp respond ${project} <slot> "<response>"\n`);
+    }
+    return;
+  }
+
+  if (subcommand === 'respond') {
+    const slot = positionals[0];
+    const response = positionals.slice(1).join(' ').trim() || 'Y';
+    if (!slot) {
+      throw new Error('Usage: sps acp respond <project> <slot> "<response>"');
+    }
+
+    // Try PTY first, then tmux ACP
+    const transport = ctx.config.raw.WORKER_TRANSPORT || 'acp';
+    if (transport === 'pty') {
+      const { PTYAgentRuntime } = await import('../providers/PTYAgentRuntime.js');
+      const ptyRuntime = new PTYAgentRuntime(ctx);
+      ptyRuntime.respond(slot, response);
+    } else {
+      // For tmux ACP, use tmux send-keys as fallback
+      const { execFileSync } = await import('node:child_process');
+      const sessionName = `sps-acp-${project}-${slot.startsWith('worker-') ? slot : 'worker-' + slot}`;
+      try {
+        execFileSync('tmux', ['send-keys', '-t', sessionName, response, 'Enter'], {
+          timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (err) {
+        throw new Error(`Failed to send response to ${sessionName}: ${err}`);
+      }
+    }
+
+    if (jsonOutput) {
+      console.log(JSON.stringify({ ok: true, project, slot, response }));
+    } else {
+      log.ok(`Sent "${response}" to ${slot}`);
+    }
+    return;
+  }
+
+  throw new Error('Usage: sps acp <ensure|run|prompt|status|stop|pending|respond> <project> [args...]');
 }

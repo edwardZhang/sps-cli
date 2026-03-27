@@ -50,7 +50,7 @@ const COMMANDS: Record<string, { desc: string; usage: string }> = {
   scheduler: { desc: 'Planning → Backlog promotion', usage: 'sps scheduler <tick|inspect|validate> <project>' },
   pipeline:  { desc: 'Execution chain (Backlog → Todo → Inprogress)', usage: 'sps pipeline <tick|inspect> <project>' },
   worker:    { desc: 'Worker lifecycle management', usage: 'sps worker <launch|release|inspect|dashboard> <project> [seq|slot]' },
-  acp:       { desc: 'Persistent ACP session management', usage: 'sps acp <ensure|run|prompt|status|stop> <project> [args...]' },
+  acp:       { desc: 'Persistent ACP session management', usage: 'sps acp <ensure|run|prompt|status|stop|pending|respond> <project> [args...]' },
   pm:        { desc: 'PM backend operations', usage: 'sps pm <scan|move|comment|checklist> <project> [args...]' },
   qa:        { desc: 'QA / closeout (QA → merge → Done)', usage: 'sps qa <tick|inspect> <project>' },
   monitor:   { desc: 'Anomaly detection and diagnostics', usage: 'sps monitor <tick|inspect-worker|inspect-card> <project>' },

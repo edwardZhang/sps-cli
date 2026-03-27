@@ -155,7 +155,8 @@ function collectPanels(projects: string[]): WorkerPanel[] {
     for (const [slotName, slot] of Object.entries(state.workers)) {
       const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
       const isPrintMode = slot.mode === 'print';
-      const isAcpMode = slot.mode === 'acp' || slot.transport === 'acp';
+      const isPtyMode = slot.transport === 'pty';
+      const isAcpMode = isPtyMode || slot.mode === 'acp' || slot.transport === 'acp';
 
       let sessionAlive: boolean;
       let paneLines: string[];
@@ -164,9 +165,21 @@ function collectPanels(projects: string[]): WorkerPanel[] {
         const session = acpState.sessions[slotName];
         const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
         sessionAlive = !!(session && session.sessionState !== 'offline');
-        paneLines = session?.lastPaneText
-          ? session.lastPaneText.split('\n')
-          : [`(acp ${slot.agent || 'worker'} ${sessionAlive ? 'connected' : 'offline'})`, `run: ${runStatus}`];
+        if (session?.pendingInput) {
+          const pi = session.pendingInput;
+          const dangerStr = pi.dangerous ? `${FG.red} DANGEROUS${RESET}` : '';
+          paneLines = [
+            `${FG.yellow}⚠ WAITING INPUT${dangerStr}${RESET}`,
+            '',
+            `  ${pi.prompt}`,
+            '',
+            `  Respond: sps acp respond ${projectName} ${slotName} "Y"`,
+          ];
+        } else if (session?.lastPaneText) {
+          paneLines = session.lastPaneText.split('\n');
+        } else {
+          paneLines = [`(acp ${slot.agent || 'worker'} ${sessionAlive ? 'connected' : 'offline'})`, `run: ${runStatus}`];
+        }
       } else if (isPrintMode) {
         // Print mode: check PID liveness + tail output file
         sessionAlive = !!(slot.pid && slot.pid > 0 && isProcessAlive(slot.pid));
@@ -451,7 +464,8 @@ function buildJsonOutput(projects: string[]): DashboardJson {
     for (const [slotName, slot] of Object.entries(state.workers)) {
       const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
       const isPrintMode = slot.mode === 'print';
-      const isAcpMode = slot.mode === 'acp' || slot.transport === 'acp';
+      const isPtyMode = slot.transport === 'pty';
+      const isAcpMode = isPtyMode || slot.mode === 'acp' || slot.transport === 'acp';
       const acpSession = acpState.sessions[slotName];
       const sessionAlive = isAcpMode
         ? !!(acpSession && acpSession.sessionState !== 'offline')

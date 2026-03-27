@@ -64,6 +64,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
       updatedAt: now(),
       lastSeenAt: result.lastSeenAt,
       lastPaneText: result.paneText,
+      pendingInput: null,
     });
 
     writeACPState(this.ctx.paths.acpStateFile, state, 'acp-ensure-session');
@@ -147,6 +148,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
         updatedAt: now(),
         lastSeenAt: sessionInfo.lastSeenAt,
         lastPaneText: paneText,
+      pendingInput: null,
       };
     }
 
@@ -182,6 +184,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
       updatedAt: now(),
       lastSeenAt: now(),
       lastPaneText: '',
+      pendingInput: null,
     };
 
     writeACPState(this.ctx.paths.acpStateFile, state, 'acp-stop-session');
@@ -256,6 +259,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
       updatedAt: now(),
       lastSeenAt: result.lastSeenAt,
       lastPaneText: result.paneText,
+      pendingInput: null,
     });
 
     writeACPState(this.ctx.paths.acpStateFile, state, updatedBy);
