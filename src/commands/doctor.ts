@@ -5,6 +5,8 @@ import { ProjectContext } from '../core/context.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import { checkPathExists } from '../core/paths.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
+import { writeState, createIdleWorkerSlot } from '../core/state.js';
+import type { RuntimeState } from '../core/state.js';
 import { Logger } from '../core/logger.js';
 import type { CheckResult, CommandResult } from '../models/types.js';
 
@@ -12,6 +14,7 @@ interface DoctorFlags {
   json?: boolean;
   fix?: boolean;
   'skip-remote'?: boolean;
+  'reset-state'?: boolean;
   [key: string]: boolean | undefined;
 }
 
@@ -298,6 +301,51 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
     }
   } else {
     checks.push({ name: 'tmux', status: 'skip', message: 'Not required (WORKER_MODE=print)' });
+  }
+
+  // ── State reset ────────────────────────────────────────────────
+  if (flags['reset-state']) {
+    const stateFile = ctx.paths.stateFile;
+    const maxWorkers = ctx.maxWorkers;
+
+    // Read current state to preserve version/generation
+    let generation = 0;
+    if (existsSync(stateFile)) {
+      try {
+        const old = JSON.parse(readFileSync(stateFile, 'utf-8'));
+        generation = (old.generation ?? 0) + 1;
+      } catch { /* corrupt, start fresh */ }
+    }
+
+    // Create clean state with correct worker count
+    const clean: RuntimeState = {
+      version: 1,
+      generation,
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'doctor-reset',
+      workers: {},
+      activeCards: {},
+      leases: {},
+      worktreeEvidence: {},
+      worktreeCleanup: [],
+      sessions: {},
+      integrationQueues: {},
+      pendingPMActions: [],
+    };
+
+    // Initialize worker slots based on MAX_CONCURRENT_WORKERS
+    for (let i = 1; i <= maxWorkers; i++) {
+      clean.workers[`worker-${i}`] = createIdleWorkerSlot();
+    }
+
+    writeState(stateFile, clean, 'doctor-reset');
+
+    checks.push({
+      name: 'state-reset',
+      status: 'pass',
+      message: `State reset: ${maxWorkers} worker slots, cleared activeCards/leases/queues/pendingPMActions`,
+    });
+    fixes.push('Reset runtime state to clean defaults');
   }
 
   outputResult(project, checks, fixes, flags);

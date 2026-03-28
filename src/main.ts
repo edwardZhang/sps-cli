@@ -43,26 +43,79 @@ import { createRequire } from 'node:module';
 const _require = createRequire(import.meta.url);
 const VERSION: string = (_require('../package.json') as { version: string }).version;
 
-const COMMANDS: Record<string, { desc: string; usage: string }> = {
-  setup:     { desc: 'Initial environment setup (credentials, directories)', usage: 'sps setup [--force]' },
-  tick:      { desc: 'Run continuous pipeline (--once for single tick)', usage: 'sps tick <project> [--once]' },
-  card:      { desc: 'Card management', usage: 'sps card <add|dashboard> [project] [args]' },
-  doctor:    { desc: 'Project health check', usage: 'sps doctor <project> [--json] [--skip-remote]' },
-  scheduler: { desc: 'Planning → Backlog promotion', usage: 'sps scheduler <tick|inspect|validate> <project>' },
-  pipeline:  { desc: 'Execution chain (Backlog → Todo → Inprogress)', usage: 'sps pipeline <tick|inspect> <project>' },
-  worker:    { desc: 'Worker lifecycle management', usage: 'sps worker <launch|release|inspect|dashboard> <project> [seq|slot]' },
-  acp:       { desc: 'Persistent ACP session management', usage: 'sps acp <ensure|run|prompt|status|stop|pending|respond> <project> [args...]' },
-  pm:        { desc: 'PM backend operations', usage: 'sps pm <scan|move|comment|checklist> <project> [args...]' },
-  qa:        { desc: 'QA / closeout (QA → merge → Done)', usage: 'sps qa <tick|inspect> <project>' },
-  monitor:   { desc: 'Anomaly detection and diagnostics', usage: 'sps monitor <tick|inspect-worker|inspect-card> <project>' },
-  project:   { desc: 'Project init and validation', usage: 'sps project <init|doctor|validate|paths> <project>' },
-  logs:      { desc: 'Real-time log viewer (pm2-style)', usage: 'sps logs [project] [--err] [--lines N] [--no-follow]' },
-  stop:      { desc: 'Stop running tick process', usage: 'sps stop <project> [--all]' },
-  status:    { desc: 'Show running status of all projects', usage: 'sps status [--json]' },
+interface CommandInfo {
+  desc: string;
+  usage: string;
+  subs?: Record<string, string>;
+  examples?: string[];
+}
+
+const COMMANDS: Record<string, CommandInfo> = {
+  setup:     { desc: '初始环境配置（凭证、目录、配置文件）', usage: 'sps setup [--force]',
+    examples: ['sps setup', 'sps setup --force'] },
+  tick:      { desc: '运行持续流水线（--once 单次执行）', usage: 'sps tick <project> [--once] [--json]',
+    examples: ['sps tick my-project', 'sps tick my-project --once', 'sps tick proj1 proj2'] },
+  card:      { desc: '卡片管理（创建、看板）', usage: 'sps card <子命令> <project> [参数]', subs: {
+    add: '创建新任务卡片',
+    dashboard: '展示卡片看板',
+  }, examples: ['sps card add my-project "New task"', 'sps card dashboard my-project'] },
+  doctor:    { desc: '项目健康检查与状态修复', usage: 'sps doctor <project> [--json] [--fix] [--reset-state] [--skip-remote]',
+    examples: ['sps doctor my-project', 'sps doctor my-project --json', 'sps doctor my-project --reset-state'] },
+  scheduler: { desc: '调度器：Planning → Backlog 晋升', usage: 'sps scheduler <子命令> <project>', subs: {
+    tick: '执行一次调度 tick',
+  }, examples: ['sps scheduler tick my-project'] },
+  pipeline:  { desc: '执行链：Backlog → Todo → Inprogress', usage: 'sps pipeline <子命令> <project>', subs: {
+    tick: '执行一次流水线 tick',
+  }, examples: ['sps pipeline tick my-project'] },
+  worker:    { desc: 'Worker 生命周期管理', usage: 'sps worker <子命令> <project> [seq]', subs: {
+    launch: '启动 Worker 实例',
+    dashboard: '展示 Worker 仪表板',
+  }, examples: ['sps worker launch my-project 1', 'sps worker dashboard'] },
+  acp:       { desc: 'ACP 会话管理（PTY 诊断）', usage: 'sps acp <子命令> <project> [args...]', subs: {
+    ensure: '确保 ACP 会话存在',
+    run: '运行 ACP 命令',
+    prompt: '发送 prompt 到会话',
+    status: '查看会话状态',
+    stop: '停止 ACP 会话',
+    pending: '查看待处理消息',
+    respond: '响应待处理消息',
+  }, examples: ['sps acp status my-project', 'sps acp ensure my-project'] },
+  pm:        { desc: 'PM 后端操作（scan/move/comment/label）', usage: 'sps pm <子命令> <project> [args...]', subs: {
+    scan: '扫描项目卡片',
+    move: '移动卡片状态',
+    comment: '添加卡片评论',
+    checklist: '管理检查清单',
+  }, examples: ['sps pm scan my-project', 'sps pm move my-project'] },
+  qa:        { desc: 'QA 收尾：QA → merge → Done', usage: 'sps qa <子命令> <project>', subs: {
+    tick: '执行一次 QA tick',
+  }, examples: ['sps qa tick my-project'] },
+  monitor:   { desc: '异常检测与诊断', usage: 'sps monitor <子命令> <project>', subs: {
+    tick: '执行一次监控 tick',
+  }, examples: ['sps monitor tick my-project'] },
+  project:   { desc: '项目初始化与验证', usage: 'sps project <子命令> <project>', subs: {
+    init: '初始化新项目',
+    doctor: '项目健康检查',
+  }, examples: ['sps project init my-project', 'sps project doctor my-project'] },
+  logs:      { desc: '实时日志查看器', usage: 'sps logs [project] [--err] [--lines N] [--no-follow]',
+    examples: ['sps logs', 'sps logs my-project', 'sps logs my-project --err --lines 50'] },
+  stop:      { desc: '停止运行中的 tick 进程', usage: 'sps stop <project> [--all]',
+    examples: ['sps stop my-project', 'sps stop --all'] },
+  status:    { desc: '显示所有项目运行状态', usage: 'sps status [--json]',
+    examples: ['sps status', 'sps status --json'] },
 };
 
 function printHelp() {
-  console.log(`sps v${VERSION} — SPS CLI\n`);
+  console.log('');
+  console.log('   ██████╗ ██████╗ ██████╗  █████╗ ██╗         ███████╗██████╗ ███████╗');
+  console.log('  ██╔════╝██╔═══██╗██╔══██╗██╔══██╗██║         ██╔════╝██╔══██╗██╔════╝');
+  console.log('  ██║     ██║   ██║██████╔╝███████║██║         ███████╗██████╔╝███████╗');
+  console.log('  ██║     ██║   ██║██╔══██╗██╔══██║██║         ╚════██║██╔═══╝ ╚════██║');
+  console.log('  ╚██████╗╚██████╔╝██║  ██║██║  ██║███████╗    ███████║██║     ███████║');
+  console.log('   ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝    ╚══════╝╚═╝     ╚══════╝');
+  console.log('');
+  console.log(`  sps v${VERSION} — AI-Driven Development Pipeline Orchestrator`);
+  console.log('  ──────────────────────────────────────────────────────────────────────');
+  console.log('');
   console.log('Usage: sps <command> [subcommand] <project> [options]\n');
   console.log('Commands:');
   for (const [cmd, info] of Object.entries(COMMANDS)) {
@@ -71,8 +124,32 @@ function printHelp() {
   console.log('\nGlobal options:');
   console.log('  --json         Output structured JSON');
   console.log('  --dry-run      Preview actions without executing');
-  console.log('  --help         Show help');
+  console.log('  --help         Show help (可配合命令使用，如 sps card --help)');
   console.log('  --version      Show version');
+}
+
+function printCommandHelp(cmd: string) {
+  const info = COMMANDS[cmd];
+  if (!info) return;
+
+  console.log(`\n  ${cmd} — ${info.desc}\n`);
+  console.log(`  Usage: ${info.usage}\n`);
+
+  if (info.subs && Object.keys(info.subs).length > 0) {
+    console.log('  子命令:');
+    for (const [sub, desc] of Object.entries(info.subs)) {
+      console.log(`    ${sub.padEnd(14)} ${desc}`);
+    }
+    console.log('');
+  }
+
+  if (info.examples && info.examples.length > 0) {
+    console.log('  示例:');
+    for (const ex of info.examples) {
+      console.log(`    $ ${ex}`);
+    }
+    console.log('');
+  }
 }
 
 interface ParsedArgs {
@@ -144,7 +221,16 @@ async function main() {
     process.exit(0);
   }
 
-  if (args.flags.help || !args.command) {
+  if (args.flags.help) {
+    if (args.command && args.command in COMMANDS) {
+      printCommandHelp(args.command);
+    } else {
+      printHelp();
+    }
+    process.exit(0);
+  }
+
+  if (!args.command) {
     printHelp();
     process.exit(0);
   }
