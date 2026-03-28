@@ -103,6 +103,35 @@ export interface WorktreeEvidence {
   lastCheckedAt: string;
 }
 
+export interface PendingPMAction {
+  type: 'move' | 'comment' | 'label' | 'release';
+  taskId: string;
+  project: string;
+  target?: string;
+  message?: string;
+  createdAt: string;
+  retryCount: number;
+}
+
+export interface IntegrationQueueEntry {
+  taskId: string;
+  cardId: string;
+  project: string;
+  prompt: string;
+  cwd: string;
+  branch: string;
+  targetBranch: string;
+  tool: 'claude' | 'codex';
+  transport: 'proc' | 'pty';
+  outputFile: string;
+  enqueuedAt: string;
+}
+
+export interface IntegrationQueueState {
+  active: IntegrationQueueEntry | null;
+  waiting: IntegrationQueueEntry[];
+}
+
 export interface RuntimeState {
   version: number;
   generation: number;
@@ -115,6 +144,10 @@ export interface RuntimeState {
   worktreeCleanup: WorktreeCleanupEntry[];
   /** ACP/PTY session records — merged from former acp-state.json */
   sessions: Record<string, ACPSessionRecord>;
+  /** Per-project:targetBranch integration serialisation queues */
+  integrationQueues: Record<string, IntegrationQueueState>;
+  /** PM operations that failed and need retry on next tick cycle */
+  pendingPMActions: PendingPMAction[];
 }
 
 export function createIdleWorkerSlot(): WorkerSlotState {
@@ -158,6 +191,8 @@ function defaultState(maxWorkers: number): RuntimeState {
     worktreeEvidence: {},
     worktreeCleanup: [],
     sessions: {},
+    integrationQueues: {},
+    pendingPMActions: [],
   };
 }
 
@@ -208,6 +243,8 @@ function reconcileState(raw: RuntimeState, maxWorkers: number): RuntimeState {
     worktreeEvidence: raw.worktreeEvidence || {},
     worktreeCleanup: raw.worktreeCleanup || [],
     sessions: raw.sessions || {},
+    integrationQueues: raw.integrationQueues || {},
+    pendingPMActions: raw.pendingPMActions || [],
   };
 }
 

@@ -1,7 +1,13 @@
 import { ProjectContext } from '../core/context.js';
 import { workflowUsesAgentRuntime } from '../core/config.js';
 import { CloseoutEngine } from '../engines/CloseoutEngine.js';
-import { createTaskBackend, createWorkerProvider, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
+import { createTaskBackend, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
+import { ProcessSupervisor } from '../manager/supervisor.js';
+import { CompletionJudge } from '../manager/completion-judge.js';
+import { ResourceLimiter } from '../manager/resource-limiter.js';
+import { WorkerManagerImpl } from '../manager/worker-manager-impl.js';
+import { SPSEventHandler } from '../engines/EventHandler.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import { Logger } from '../core/logger.js';
 
 export async function executeQaTick(
@@ -26,10 +32,34 @@ export async function executeQaTick(
 
   const taskBackend = createTaskBackend(ctx.config);
   const repoBackend = createRepoBackend(ctx.config);
-  const workerProvider = createWorkerProvider(ctx.config);
   const notifier = createNotifier(ctx.config);
   const agentRuntime = workflowUsesAgentRuntime(ctx.config) ? createAgentRuntime(ctx) : null;
-  const engine = new CloseoutEngine(ctx, taskBackend, repoBackend, workerProvider, notifier, agentRuntime);
+
+  // Build WorkerManager for standalone QA tick
+  const supervisor = new ProcessSupervisor();
+  const maxWorkers = parseInt(process.env.SPS_MANAGER_MAX_WORKERS || '30', 10);
+  const resourceLimiter = new ResourceLimiter({
+    maxGlobalWorkers: maxWorkers,
+    staggerDelayMs: parseInt(process.env.SPS_MANAGER_STAGGER_MS || '5000', 10),
+    maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '80', 10),
+  });
+  const completionJudge = new CompletionJudge();
+  const workerManager = new WorkerManagerImpl({
+    supervisor, completionJudge, resourceLimiter,
+    agentRuntime: agentRuntime ?? null,
+    stateFile: ctx.paths.stateFile,
+    maxWorkers: ctx.maxWorkers,
+  });
+  const runtimeStore = new RuntimeStore({ paths: { stateFile: ctx.paths.stateFile }, maxWorkers: ctx.maxWorkers });
+  const raw = ctx.config.raw;
+  const eventHandler = new SPSEventHandler({
+    taskBackend, notifier, runtimeStore, project,
+    qaStateId: raw.PLANE_STATE_QA || raw.TRELLO_QA_LIST_ID || 'QA',
+    doneStateId: raw.PLANE_STATE_DONE || raw.TRELLO_DONE_LIST_ID || '',
+  });
+  workerManager.onEvent((event) => eventHandler.handle(event));
+
+  const engine = new CloseoutEngine(ctx, taskBackend, repoBackend, workerManager, notifier);
   const result = await engine.tick();
 
   if (jsonOutput) {

@@ -5,11 +5,9 @@ import type { ProjectContext } from '../core/context.js';
 import { resolveWorkflowTransport } from '../core/config.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
-import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
 import type { Notifier } from '../interfaces/Notifier.js';
-import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
-import type { ACPSessionRecord } from '../models/acp.js';
 import type { CommandResult, ActionRecord, Card, RecommendedAction } from '../models/types.js';
+import type { WorkerManager, TaskRunRequest } from '../manager/worker-manager.js';
 import { INTEGRATION_PROMPT_FILE, LEGACY_TASK_PROMPT_FILE } from '../core/taskPrompts.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveWorktreePath } from '../core/paths.js';
@@ -31,9 +29,8 @@ export class CloseoutEngine {
     private ctx: ProjectContext,
     private taskBackend: TaskBackend,
     private repoBackend: RepoBackend,
-    private workerProvider: WorkerProvider,
+    private workerManager: WorkerManager,
     private notifier?: Notifier,
-    private agentRuntime: AgentRuntime | null = null,
   ) {
     this.log = new Logger('qa', ctx.projectName, ctx.paths.logsDir);
     this.runtimeStore = new RuntimeStore(ctx);
@@ -169,151 +166,72 @@ export class CloseoutEngine {
   ): Promise<'idle' | 'active' | 'waiting' | 'failed' | 'done'> {
     if (!slotName) return 'idle';
 
-    const state = this.runtimeStore.readState();
-    const slot = state.workers[slotName];
-    if (!slot || slot.status === 'idle') return 'idle';
+    const snapshots = this.workerManager.inspect({ taskId: String(card.seq) });
+    if (snapshots.length === 0) return 'idle';
 
-    if (slot.transport === 'pty' || slot.transport === 'acp' || slot.mode === 'pty' || slot.mode === 'acp') {
-      if (!this.agentRuntime) return 'failed';
-      const inspected = await this.agentRuntime.inspect(slotName);
-      const session = inspected.sessions[slotName];
+    const snapshot = snapshots[0];
 
-      if (!session) return 'idle';
+    if (snapshot.state === 'idle') return 'idle';
 
-      this.runtimeStore.updateState('closeout-sync-qa-session', (draft) => {
-        const worker = draft.workers[slotName];
-        if (!worker) return;
-        const workflowTransport = resolveWorkflowTransport(this.ctx.config);
-        worker.mode = workflowTransport === 'pty' ? 'pty' : 'acp';
-        worker.transport = workflowTransport === 'pty' ? 'pty' : 'acp';
-        worker.agent = session.tool;
-        worker.tmuxSession = session.sessionName;
-        worker.sessionId = session.sessionId;
-        worker.runId = session.currentRun?.runId || null;
-        worker.sessionState = session.sessionState;
-        worker.remoteStatus = session.currentRun?.status || null;
-        worker.lastEventAt = session.lastSeenAt;
-        worker.lastHeartbeat = new Date().toISOString();
-        worker.pid = session.pid ?? null;
-        worker.outputFile = null;
-        worker.exitCode = null;
-        worker.status = session.pendingInput || ['waiting_input', 'needs_confirmation'].includes(session.currentRun?.status || '')
-          ? 'resolving'
-          : 'merging';
-        if (draft.leases[card.seq]) {
-          draft.leases[card.seq].slot = slotName;
-          draft.leases[card.seq].sessionId = session.sessionId;
-          draft.leases[card.seq].runId = session.currentRun?.runId || null;
-          draft.leases[card.seq].phase = session.pendingInput || ['waiting_input', 'needs_confirmation'].includes(session.currentRun?.status || '')
-            ? 'waiting_confirmation'
-            : 'merging';
-          draft.leases[card.seq].pmStateObserved = 'QA';
-          draft.leases[card.seq].lastTransitionAt = new Date().toISOString();
-        }
+    if (snapshot.state === 'waiting_input') {
+      this.log.info(`seq ${card.seq}: integration worker waiting for input — ${snapshot.pendingInput?.prompt || 'input required'}`);
+      actions.push({
+        action: 'qa-waiting',
+        entity: `seq:${card.seq}`,
+        result: 'skip',
+        message: 'Integration worker waiting_input',
       });
+      return 'waiting';
+    }
 
-      const run = session.currentRun;
-      if (!run) return 'idle';
-      if (run.status !== slot.remoteStatus) {
-        if (run.status === 'waiting_input') {
-          this.log.info(`seq ${card.seq}: integration worker waiting for input — ${session.pendingInput?.prompt || 'input required'}`);
-        } else if (run.status === 'needs_confirmation') {
-          this.log.warn(`seq ${card.seq}: integration worker needs confirmation — ${session.pendingInput?.prompt || 'confirmation required'}`);
-        } else if (run.status === 'stalled_submit') {
-          this.log.warn(`seq ${card.seq}: integration worker prompt submission stalled — ${session.stalledReason || 'auto-repair pending'}`);
-        }
-      }
-      if (run.status === 'waiting_input' || run.status === 'needs_confirmation') {
-        actions.push({
-          action: 'qa-waiting',
-          entity: `seq:${card.seq}`,
-          result: 'skip',
-          message: `Integration worker ${run.status}`,
-        });
-        return 'waiting';
-      }
-      if (['submitted', 'running', 'stalled_submit'].includes(run.status)) {
-        actions.push({
-          action: 'qa-running',
-          entity: `seq:${card.seq}`,
-          result: 'skip',
-          message: `Integration worker ${run.status}`,
-        });
-        return 'active';
-      }
+    if (snapshot.state === 'needs_confirmation') {
+      this.log.warn(`seq ${card.seq}: integration worker needs confirmation — ${snapshot.pendingInput?.prompt || 'confirmation required'}`);
+      actions.push({
+        action: 'qa-waiting',
+        entity: `seq:${card.seq}`,
+        result: 'skip',
+        message: 'Integration worker needs_confirmation',
+      });
+      return 'waiting';
+    }
+
+    if (snapshot.state === 'starting' || snapshot.state === 'running') {
+      actions.push({
+        action: 'qa-running',
+        entity: `seq:${card.seq}`,
+        result: 'skip',
+        message: `Integration worker ${snapshot.state}`,
+      });
+      return 'active';
+    }
+
+    if (snapshot.state === 'completed') {
       if (this.isMergedToBase(worktree, branchName)) {
         await this.releaseAndDone(card, actions);
         return 'done';
       }
-
-      await this.releaseQaSlot(card.seq, slotName);
-      await this.markNeedsFix(card.seq, `Integration run ${run.status} before merge completed`);
-      actions.push({
-        action: 'mark-needs-fix',
-        entity: `seq:${card.seq}`,
-        result: 'ok',
-        message: `Integration run ${run.status} before merge completed`,
-      });
-      return 'failed';
     }
 
-    const sessionName = slot.tmuxSession || `${this.ctx.projectName}-${slotName}`;
-    try {
-      const inspection = await this.workerProvider.inspect(sessionName);
-      if (inspection.alive) {
-        this.runtimeStore.updateState('closeout-sync-qa-proc', (draft) => {
-          const worker = draft.workers[slotName];
-          if (!worker) return;
-          worker.lastHeartbeat = new Date().toISOString();
-          worker.status = 'merging';
-        });
-        actions.push({
-          action: 'qa-running',
-          entity: `seq:${card.seq}`,
-          result: 'skip',
-          message: 'Integration worker running',
-        });
-        return 'active';
-      }
-    } catch {
-      // fall through to merged/failure checks
-    }
-
-    if (this.isMergedToBase(worktree, branchName)) {
-      await this.releaseAndDone(card, actions);
-      return 'done';
-    }
-
+    // 'failed' or 'completed' without merge
     await this.releaseQaSlot(card.seq, slotName);
-    await this.markNeedsFix(card.seq, 'Integration worker exited before merge completed');
+    await this.markNeedsFix(card.seq, `Integration worker ${snapshot.state} before merge completed`);
     actions.push({
       action: 'mark-needs-fix',
       entity: `seq:${card.seq}`,
       result: 'ok',
-      message: 'Integration worker exited before merge completed',
+      message: `Integration worker ${snapshot.state} before merge completed`,
     });
     return 'failed';
   }
 
   private async startIntegrationWorker(
     card: Card,
-    preferredSlot: string | null,
+    _preferredSlot: string | null,
     worktree: string,
     branchName: string,
     actions: ActionRecord[],
   ): Promise<void> {
     const seq = card.seq;
-    const state = this.runtimeStore.readState();
-    const slotName = this.runtimeStore.findAvailableSlot(state, { preferred: preferredSlot });
-    if (!slotName) {
-      actions.push({
-        action: 'qa-launch',
-        entity: `seq:${seq}`,
-        result: 'skip',
-        message: 'No idle worker slot for integration',
-      });
-      return;
-    }
 
     const promptFile = this.resolveIntegrationPrompt(worktree);
     if (!promptFile) {
@@ -327,118 +245,70 @@ export class CloseoutEngine {
       return;
     }
 
+    const prompt = readFileSync(promptFile, 'utf-8').trim();
+    const workflowTransport = resolveWorkflowTransport(this.ctx.config);
+    const logsDir = this.ctx.paths.logsDir;
+
+    const runRequest: TaskRunRequest = {
+      taskId: String(card.seq),
+      cardId: String(card.seq),
+      project: this.ctx.projectName,
+      phase: 'integration',
+      prompt,
+      cwd: worktree,
+      branch: branchName,
+      targetBranch: this.ctx.mergeBranch,
+      tool: (this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
+      transport: workflowTransport === 'pty' ? 'pty' : 'proc',
+      outputFile: resolve(logsDir, `${this.ctx.projectName}-integration-${card.seq}-${Date.now()}.jsonl`),
+    };
+
+    const response = await this.workerManager.run(runRequest);
+    if (!response.accepted) {
+      this.log.info(`seq ${seq}: WM rejected integration run: ${response.rejectReason ?? 'unknown'}`);
+      actions.push({
+        action: 'qa-launch',
+        entity: `seq:${seq}`,
+        result: 'skip',
+        message: `WM rejected: ${response.rejectReason ?? 'unknown'}`,
+      });
+      return;
+    }
+
+    // PM claim (best-effort, non-blocking)
     try {
-      await this.taskBackend.claim(seq, slotName);
+      await this.taskBackend.claim(seq, response.slot!);
     } catch (err) {
       this.log.warn(`seq ${seq}: PM claim for QA worker failed: ${err instanceof Error ? err.message : err}`);
     }
 
-    const workflowTransport = resolveWorkflowTransport(this.ctx.config);
-    if (workflowTransport !== 'proc' && this.agentRuntime) {
-      const prompt = readFileSync(promptFile, 'utf-8').trim();
-      const session = await this.agentRuntime.startRun(
-        slotName,
-        prompt,
-        (this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
+    // Update local runtime projections with the slot WM allocated
+    const slotName = response.slot!;
+    this.runtimeStore.updateState('closeout-launch-integration', (draft) => {
+      draft.activeCards[seq] = {
+        seq: parseInt(seq, 10),
+        state: 'QA',
+        worker: slotName,
+        mrUrl: draft.activeCards[seq]?.mrUrl || null,
+        conflictDomains: draft.activeCards[seq]?.conflictDomains || [],
+        startedAt: draft.activeCards[seq]?.startedAt || new Date().toISOString(),
+        retryCount: draft.activeCards[seq]?.retryCount ?? draft.leases[seq]?.retryCount ?? 0,
+      };
+
+      draft.leases[seq] = {
+        seq: parseInt(seq, 10),
+        pmStateObserved: 'QA',
+        phase: 'merging',
+        slot: slotName,
+        branch: branchName,
         worktree,
-      );
-
-      this.runtimeStore.updateState('closeout-launch-integration', (draft) => {
-        const worker = draft.workers[slotName];
-        if (!worker) return;
-        worker.status = 'merging';
-        worker.seq = parseInt(seq, 10);
-        worker.branch = branchName;
-        worker.worktree = worktree;
-        worker.claimedAt = worker.claimedAt || new Date().toISOString();
-        worker.lastHeartbeat = new Date().toISOString();
-        worker.mode = workflowTransport === 'pty' ? 'pty' : 'acp';
-        worker.transport = workflowTransport === 'pty' ? 'pty' : 'acp';
-        worker.agent = session.tool;
-        worker.tmuxSession = session.sessionName;
-        worker.sessionId = session.sessionId;
-        worker.runId = session.currentRun?.runId || null;
-        worker.sessionState = session.sessionState;
-        worker.remoteStatus = session.currentRun?.status || null;
-        worker.lastEventAt = session.lastSeenAt;
-        worker.pid = session.pid ?? null;
-        worker.outputFile = null;
-        worker.exitCode = null;
-
-        draft.activeCards[seq] = {
-          seq: parseInt(seq, 10),
-          state: 'QA',
-          worker: slotName,
-          mrUrl: draft.activeCards[seq]?.mrUrl || null,
-          conflictDomains: draft.activeCards[seq]?.conflictDomains || [],
-          startedAt: draft.activeCards[seq]?.startedAt || new Date().toISOString(),
-          retryCount: draft.activeCards[seq]?.retryCount ?? draft.leases[seq]?.retryCount ?? 0,
-        };
-
-        draft.leases[seq] = {
-          seq: parseInt(seq, 10),
-          pmStateObserved: 'QA',
-          phase: session.pendingInput ? 'waiting_confirmation' : 'merging',
-          slot: slotName,
-          branch: branchName,
-          worktree,
-          sessionId: session.sessionId,
-          runId: session.currentRun?.runId || null,
-          claimedAt: worker.claimedAt,
-          retryCount: draft.leases[seq]?.retryCount ?? 0,
-          lastTransitionAt: new Date().toISOString(),
-        };
-      });
-    } else {
-      const sessionName = `${this.ctx.projectName}-${slotName}`;
-      const result = await this.workerProvider.launch(sessionName, worktree, promptFile);
-      this.runtimeStore.updateState('closeout-launch-integration-proc', (draft) => {
-        const worker = draft.workers[slotName];
-        if (!worker) return;
-        worker.status = 'merging';
-        worker.seq = parseInt(seq, 10);
-        worker.branch = branchName;
-        worker.worktree = worktree;
-        worker.claimedAt = worker.claimedAt || new Date().toISOString();
-        worker.lastHeartbeat = new Date().toISOString();
-        worker.mode = 'print';
-        worker.transport = 'proc';
-        worker.agent = this.ctx.config.WORKER_TOOL;
-        worker.tmuxSession = sessionName;
-        worker.sessionId = result.sessionId || null;
-        worker.runId = null;
-        worker.sessionState = null;
-        worker.remoteStatus = null;
-        worker.lastEventAt = null;
-        worker.pid = result.pid;
-        worker.outputFile = result.outputFile;
-        worker.exitCode = null;
-
-        draft.activeCards[seq] = {
-          seq: parseInt(seq, 10),
-          state: 'QA',
-          worker: slotName,
-          mrUrl: draft.activeCards[seq]?.mrUrl || null,
-          conflictDomains: draft.activeCards[seq]?.conflictDomains || [],
-          startedAt: draft.activeCards[seq]?.startedAt || new Date().toISOString(),
-          retryCount: draft.activeCards[seq]?.retryCount ?? draft.leases[seq]?.retryCount ?? 0,
-        };
-
-        draft.leases[seq] = {
-          seq: parseInt(seq, 10),
-          pmStateObserved: 'QA',
-          phase: 'merging',
-          slot: slotName,
-          branch: branchName,
-          worktree,
-          sessionId: result.sessionId || null,
-          runId: null,
-          claimedAt: worker.claimedAt,
-          retryCount: draft.leases[seq]?.retryCount ?? 0,
-          lastTransitionAt: new Date().toISOString(),
-        };
-      });
-    }
+        sessionId: response.sessionId || null,
+        runId: null,
+        claimedAt: new Date().toISOString(),
+        retryCount: draft.leases[seq]?.retryCount ?? 0,
+        lastTransitionAt: new Date().toISOString(),
+      };
+    });
 
     actions.push({
       action: 'qa-launch',
@@ -490,11 +360,9 @@ export class CloseoutEngine {
     const state = this.runtimeStore.readState();
     const runtime = this.runtimeStore.getTask(seq, state);
     const slotEntry = runtime.slotName && runtime.slot ? [runtime.slotName, runtime.slot] as const : null;
-    let sessionName: string | null = null;
 
     if (slotEntry) {
-      const [slotName, slotState] = slotEntry;
-      sessionName = slotState.tmuxSession;
+      const [slotName] = slotEntry;
       try {
         this.runtimeStore.updateState('closeout-release', (draft) => {
           this.runtimeStore.releaseTaskProjection(draft, seq, { dropLease: true });
@@ -520,16 +388,14 @@ export class CloseoutEngine {
       this.log.debug(`seq ${seq}: No active worker slot found (already released)`);
     }
 
-    // Step 4: Release worker session (keeps session alive for reuse if configured)
-    if (sessionName && slotEntry?.[1].transport === 'proc') {
-      try {
-        await this.workerProvider.release(sessionName);
-        this.log.ok(`seq ${seq}: Worker session ${sessionName} released`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.log.error(`seq ${seq}: Failed to release session: ${msg}`);
-        errors.push(`release-session: ${msg}`);
-      }
+    // Step 4: Cancel worker via WM (idempotent, safe for already-completed workers)
+    try {
+      await this.workerManager.cancel({ taskId: seq, project: this.ctx.projectName, reason: 'user_cancel' });
+      this.log.ok(`seq ${seq}: Worker cancelled via WorkerManager`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`seq ${seq}: Failed to cancel worker: ${msg}`);
+      errors.push(`cancel-worker: ${msg}`);
     }
 
     // Step 5: Mark worktree for cleanup (actual removal runs at end of tick)
@@ -675,64 +541,6 @@ export class CloseoutEngine {
     }
   }
 
-  private async resumeAcpWorker(
-    slotName: string,
-    seq: string,
-    worktree: string,
-    branchName: string,
-    prompt: string,
-    slotStatus: 'active' | 'resolving',
-    updatedBy: string,
-  ): Promise<void> {
-    if (!this.agentRuntime) {
-      throw new Error('ACP runtime is not configured');
-    }
-
-    let session: ACPSessionRecord;
-    try {
-      session = await this.agentRuntime.resumeRun(slotName, prompt);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.info(
-        `seq ${seq}: Agent resume unavailable for ${slotName}: ${msg}. Creating a fresh ${resolveWorkflowTransport(this.ctx.config).toUpperCase()} session.`,
-      );
-      await this.agentRuntime.ensureSession(slotName, undefined, worktree);
-      session = await this.agentRuntime.startRun(slotName, prompt, undefined, worktree);
-    }
-    this.runtimeStore.updateState(updatedBy, (state) => {
-      const slot = state.workers[slotName];
-      if (slot) {
-        slot.status = slotStatus;
-        const workflowTransport = resolveWorkflowTransport(this.ctx.config);
-        slot.mode = workflowTransport === 'pty' ? 'pty' : 'acp';
-        slot.transport = workflowTransport === 'pty' ? 'pty' : 'acp';
-        slot.agent = session.tool;
-        slot.tmuxSession = session.sessionName;
-        slot.sessionId = session.sessionId;
-        slot.runId = session.currentRun?.runId || null;
-        slot.sessionState = session.sessionState;
-        slot.remoteStatus = session.currentRun?.status || null;
-        slot.lastEventAt = session.lastSeenAt;
-        slot.lastHeartbeat = new Date().toISOString();
-        slot.branch = slot.branch || branchName;
-        slot.worktree = slot.worktree || worktree;
-        slot.seq = parseInt(seq, 10);
-        slot.pid = null;
-        slot.outputFile = null;
-        slot.exitCode = null;
-      }
-      if (state.leases[seq]) {
-        state.leases[seq].slot = slotName;
-        state.leases[seq].branch = branchName;
-        state.leases[seq].worktree = worktree;
-        state.leases[seq].sessionId = session.sessionId;
-        state.leases[seq].runId = session.currentRun?.runId || null;
-        state.leases[seq].phase = slotStatus === 'resolving' ? 'resolving_conflict' : 'coding';
-        state.leases[seq].lastTransitionAt = new Date().toISOString();
-      }
-    });
-  }
-
   private logEvent(
     action: string,
     seq: string,
@@ -778,6 +586,13 @@ export class CloseoutEngine {
   }
 
   private async releaseQaSlot(seq: string, slotName: string): Promise<void> {
+    try {
+      await this.workerManager.cancel({ taskId: seq, project: this.ctx.projectName, reason: 'anomaly' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.warn(`seq ${seq}: WM cancel in releaseQaSlot failed: ${msg}`);
+    }
+
     this.runtimeStore.updateState('closeout-release-qa-slot', (draft) => {
       this.runtimeStore.releaseTaskProjection(draft, seq, {
         dropLease: false,

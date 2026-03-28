@@ -6,7 +6,7 @@ import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type { CommandResult, ActionRecord, Card, CardState, AuxiliaryState } from '../models/types.js';
-import type { ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
+// ACPSessionRecord/ACPRunStatus no longer needed — WM handles ACP lifecycle
 import type { RuntimeState, TaskLease, WorkerSlotState } from '../core/state.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveGitlabProjectId, resolveWorkflowTransport } from '../core/config.js';
@@ -17,13 +17,9 @@ import {
   DEVELOPMENT_PROMPT_FILE,
   INTEGRATION_PROMPT_FILE,
   LEGACY_TASK_PROMPT_FILE,
-  selectWorkerPhase,
 } from '../core/taskPrompts.js';
 import { Logger } from '../core/logger.js';
-import { ProcessSupervisor, type WorkerHandle } from '../manager/supervisor.js';
-import { CompletionJudge } from '../manager/completion-judge.js';
-import { PostActions, type PostActionContext } from '../manager/post-actions.js';
-import { ResourceLimiter } from '../manager/resource-limiter.js';
+import type { WorkerManager, TaskRunRequest, TaskRunResponse } from '../manager/worker-manager.js';
 
 const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME'];
 
@@ -35,10 +31,7 @@ export class ExecutionEngine {
     private ctx: ProjectContext,
     private taskBackend: TaskBackend,
     private repoBackend: RepoBackend,
-    private supervisor: ProcessSupervisor,
-    private completionJudge: CompletionJudge,
-    private postActions: PostActions,
-    private resourceLimiter: ResourceLimiter,
+    private workerManager: WorkerManager,
     private notifier?: Notifier,
     private agentRuntime?: AgentRuntime | null,
   ) {
@@ -339,19 +332,11 @@ export class ExecutionEngine {
       return null;
     }
 
-    if (
-      state.workers[slotName]?.transport === 'acp' ||
-      state.workers[slotName]?.transport === 'pty' ||
-      state.workers[slotName]?.mode === 'acp' ||
-      state.workers[slotName]?.mode === 'pty'
-    ) {
-      return this.checkAcpInprogressCard(card, slotName);
-    }
+    // Use WorkerManager.inspect() to check worker state
+    const snapshots = this.workerManager.inspect({ project: this.ctx.projectName, taskId: seq });
+    const snapshot = snapshots[0];
 
-    const workerId = `${this.ctx.projectName}:${slotName}:${seq}`;
-    const handle = this.supervisor.get(workerId);
-
-    if (handle && handle.exitCode === null) {
+    if (snapshot && (snapshot.state === 'running' || snapshot.state === 'starting')) {
       // Worker still running — update heartbeat
       try {
         this.runtimeStore.updateState('pipeline-heartbeat', (freshState) => {
@@ -363,26 +348,31 @@ export class ExecutionEngine {
       return null;
     }
 
-    if (handle && handle.exitCode !== null) {
-      // Worker exited but PostActions hasn't finished yet (or just finished)
-      // Check if slot is now idle
-      const freshState = this.runtimeStore.readState();
-      if (!freshState.workers[slotName] || freshState.workers[slotName].status === 'idle') {
-        this.log.ok(`seq ${seq}: Completed (handled by exit callback)`);
-        return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Completed via exit callback' };
-      }
-      // PostActions still processing, wait for next tick
+    if (snapshot && (snapshot.state === 'waiting_input' || snapshot.state === 'needs_confirmation')) {
+      // Worker waiting for input — log and wait
+      this.log.info(`seq ${seq}: worker in state ${snapshot.state}`);
       return null;
     }
 
-    // Handle not found in Supervisor — PostActions already removed it, or after tick restart
-    // Re-read state to check if PostActions already completed
+    if (snapshot && snapshot.state === 'completed') {
+      // WM exit callback handled completion
+      this.log.ok(`seq ${seq}: Completed (handled by WM exit callback)`);
+      return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Completed via WM exit callback' };
+    }
+
+    if (snapshot && snapshot.state === 'failed') {
+      // WM exit callback handled failure
+      this.log.info(`seq ${seq}: Failed (handled by WM exit callback)`);
+      return { action: 'complete', entity: `seq:${seq}`, result: 'fail', message: 'Failed via WM exit callback' };
+    }
+
+    // No snapshot found — WM already processed and released the slot
     const freshState = this.runtimeStore.readState();
     if (!freshState.workers[slotName] || freshState.workers[slotName].status === 'idle') {
-      this.log.ok(`seq ${seq}: Completed (PostActions already processed)`);
-      return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Completed (PostActions processed)' };
+      this.log.ok(`seq ${seq}: Completed (WM already processed)`);
+      return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Completed (WM processed)' };
     }
-    // Still active in state but not in Supervisor — MonitorEngine/Recovery handles
+    // Still active in state but no snapshot — MonitorEngine/Recovery handles
     return null;
   }
 
@@ -472,230 +462,79 @@ export class ExecutionEngine {
       return { action: 'launch', entity: `seq:${seq}`, result: 'ok', message: 'dry-run' };
     }
 
-    // Step 4: Claim worker slot
-    // Exclude slots that failed launch this tick to prevent repeated failures
-    const state = this.runtimeStore.readState();
-    const idleSlots = Object.entries(state.workers)
-      .filter(([name, w]) => w.status === 'idle' && !failedSlots.has(name));
-    if (idleSlots.length === 0) {
-      this.log.warn(`No idle worker slot available for seq ${seq}`);
-      return { action: 'launch', entity: `seq:${seq}`, result: 'skip', message: 'No idle worker slot' };
-    }
-
-    const [slotName] = idleSlots[0];
-    const sessionName = `${this.ctx.projectName}-${slotName}`;
-
-    // Claim slot in state.json
-    state.workers[slotName] = {
-      status: 'active',
-      seq: parseInt(seq, 10),
-      branch: branchName,
-      worktree: worktreePath,
-      tmuxSession: sessionName,
-      claimedAt: new Date().toISOString(),
-      lastHeartbeat: new Date().toISOString(),
-      mode: workflowTransport === 'proc'
-        ? this.ctx.config.WORKER_MODE
-        : workflowTransport,
-      transport: workflowTransport,
-      agent: (this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
-      sessionId: null,
-      runId: null,
-      sessionState: null,
-      remoteStatus: null,
-      lastEventAt: null,
-      pid: null,
-      outputFile: null,
-      exitCode: null,
-      mergeRetries: 0,
-      completedAt: null,
-    };
-
-    // Add to active cards
-    const conflictDomains = card.labels
-      .filter((l) => l.startsWith('conflict:'))
-      .map((l) => l.slice('conflict:'.length));
-
-    state.activeCards[seq] = {
-      seq: parseInt(seq, 10),
-      state: 'Todo',
-      worker: slotName,
-      mrUrl: null,
-      conflictDomains,
-      startedAt: new Date().toISOString(),
-    };
-
-    state.leases[seq] = {
-      seq: parseInt(seq, 10),
-      pmStateObserved: card.state,
-      phase: 'preparing',
-      slot: slotName,
-      branch: branchName,
-      worktree: worktreePath,
-      sessionId: null,
-      runId: null,
-      claimedAt: state.workers[slotName].claimedAt,
-      retryCount: 0,
-      lastTransitionAt: new Date().toISOString(),
-    };
-
+    // Step 5: PM claim (kept in Engine — PM backend awareness)
     try {
-      this.runtimeStore.updateState('pipeline-launch', (draft) => {
-        draft.workers[slotName] = state.workers[slotName];
-        draft.activeCards[seq] = state.activeCards[seq];
-        draft.leases[seq] = state.leases[seq];
-      });
-      this.log.ok(`Step 4: Claimed slot ${slotName} for seq ${seq}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`Step 4 failed (claim) for seq ${seq}: ${msg}`);
-      return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Claim slot failed: ${msg}` };
-    }
-
-    // Also claim in PM backend
-    try {
-      await this.taskBackend.claim(seq, slotName);
+      await this.taskBackend.claim(seq, `pending-wm`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.warn(`PM claim for seq ${seq} failed (non-fatal): ${msg}`);
     }
 
-    // Step 5: Build task context (.sps/development_prompt.txt + .sps/integration_prompt.txt)
+    // Step 5b: Build task context (.sps/development_prompt.txt + .sps/integration_prompt.txt)
     try {
       this.buildTaskContext(card, worktreePath);
       this.log.ok(`Step 5: Task context built for seq ${seq}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.error(`Step 5 failed (context) for seq ${seq}: ${msg}`);
-      this.releaseSlot(slotName, seq);
       this.logEvent('launch-context', seq, 'fail', { error: msg });
       return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Context build failed: ${msg}` };
     }
 
-    // Step 6: Launch worker via Supervisor
+    // Step 6: Launch worker via WorkerManager.run()
+    const logsDir = this.ctx.config.raw.LOGS_DIR || `/tmp/sps-${this.ctx.projectName}`;
+    const promptFile = resolve(worktreePath, '.sps', LEGACY_TASK_PROMPT_FILE);
+    let prompt: string;
     try {
-      const promptFile = resolve(worktreePath, '.sps', LEGACY_TASK_PROMPT_FILE);
-
-      // Check global resource limit
-      const acquire = this.resourceLimiter.tryAcquireDetailed();
-      if (!acquire.acquired) {
-        const reason = this.resourceLimiter.formatBlockReason(acquire.stats);
-        this.log.warn(`Global resource limit reached, skipping seq ${seq}: ${reason}`);
-        // Rollback: release slot
-        this.releaseSlot(slotName, seq);
-        return {
-          action: 'launch',
-          entity: `seq:${seq}`,
-          result: 'skip',
-          message: `Global resource limit reached: ${reason}`,
-        };
-      }
-
-      await this.resourceLimiter.enforceStagger();
-
-      const prompt = readFileSync(promptFile, 'utf-8').trim();
-      const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
-
-      if (workflowTransport !== 'proc') {
-        const runtime = this.requireAgentRuntime();
-        const session = await runtime.startRun(
-          slotName,
-          prompt,
-          (this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
-          worktreePath,
-        );
-
-        this.runtimeStore.updateState('pipeline-launch-acp', (freshState) => {
-          if (freshState.workers[slotName]) {
-            this.applyAcpSessionToSlot(freshState.workers[slotName], session);
-            if (freshState.leases[seq]) {
-              freshState.leases[seq].sessionId = session.sessionId;
-              freshState.leases[seq].runId = session.currentRun?.runId || null;
-              freshState.leases[seq].phase = session.pendingInput ? 'waiting_confirmation' : 'coding';
-              freshState.leases[seq].lastTransitionAt = new Date().toISOString();
-            }
-          }
-        });
-
-        this.supervisor.registerAcpHandle({
-          id: workerId,
-          pid: null,
-          outputFile: null,
-          project: this.ctx.projectName,
-          seq: card.seq,
-          slot: slotName,
-          branch: branchName,
-          worktree: worktreePath,
-          tool: session.tool,
-          exitCode: null,
-          sessionId: session.sessionId,
-          runId: session.currentRun?.runId || null,
-          sessionState: session.sessionState,
-          remoteStatus: session.currentRun?.status || null,
-          lastEventAt: session.lastSeenAt,
-          startedAt: new Date().toISOString(),
-          exitedAt: null,
-        });
-
-        this.log.ok(
-          `Step 6: ${workflowTransport.toUpperCase()} worker launched for seq ${seq} ` +
-          `(session=${session.sessionId}, run=${session.currentRun?.runId || 'none'})`,
-        );
-      } else {
-        const outputFile = resolve(
-          this.ctx.config.raw.LOGS_DIR || `/tmp/sps-${this.ctx.projectName}`,
-          `${sessionName}-${Date.now()}.jsonl`,
-        );
-        const workerHandle = this.supervisor.spawn({
-          id: workerId,
-          project: this.ctx.projectName,
-          seq: card.seq,
-          slot: slotName,
-          worktree: worktreePath,
-          branch: branchName,
-          prompt,
-          outputFile,
-          tool: this.ctx.config.WORKER_TOOL,
-          onExit: (exitCode: number) => {
-            this.onWorkerExit(workerId, card, slotName, worktreePath, branchName, exitCode);
-          },
-        });
-
-        // Store process info in state
-        this.runtimeStore.updateState('pipeline-launch-print', (freshState) => {
-          if (freshState.workers[slotName]) {
-            freshState.workers[slotName].mode = 'print';
-            freshState.workers[slotName].transport = 'proc';
-            freshState.workers[slotName].agent = this.ctx.config.WORKER_TOOL;
-            freshState.workers[slotName].pid = workerHandle.pid;
-            freshState.workers[slotName].outputFile = workerHandle.outputFile;
-            freshState.workers[slotName].sessionId = workerHandle.sessionId || null;
-            freshState.workers[slotName].runId = null;
-            freshState.workers[slotName].sessionState = null;
-            freshState.workers[slotName].remoteStatus = null;
-            freshState.workers[slotName].lastEventAt = null;
-            freshState.workers[slotName].exitCode = null;
-            if (freshState.leases[seq]) {
-              freshState.leases[seq].phase = 'coding';
-              freshState.leases[seq].lastTransitionAt = new Date().toISOString();
-            }
-          }
-        });
-
-        this.log.ok(`Step 6: Worker launched for seq ${seq} (pid=${workerHandle.pid})`);
-      }
-
-      if (this.notifier) {
-        await this.notifier.sendSuccess(`[${this.ctx.projectName}] seq:${seq} worker started (${slotName})`).catch(() => {});
-      }
+      prompt = readFileSync(promptFile, 'utf-8').trim();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`Step 6 failed (worker launch) for seq ${seq}: ${msg}`);
-      failedSlots.add(slotName);
-      this.resourceLimiter.release();
-      this.releaseSlot(slotName, seq);
+      this.log.error(`Failed to read prompt file for seq ${seq}: ${msg}`);
+      return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Prompt file read failed: ${msg}` };
+    }
+
+    const runRequest: TaskRunRequest = {
+      taskId: String(card.seq),
+      cardId: String(card.seq),
+      project: this.ctx.projectName,
+      phase: 'development',
+      prompt,
+      cwd: worktreePath,
+      branch: branchName,
+      targetBranch: this.ctx.mergeBranch,
+      tool: this.ctx.config.WORKER_TOOL as 'claude' | 'codex',
+      transport: workflowTransport as 'proc' | 'pty',
+      outputFile: resolve(logsDir, `${this.ctx.projectName}-worker-${card.seq}-${Date.now()}.jsonl`),
+      timeoutSec: this.ctx.config.WORKER_LAUNCH_TIMEOUT_S,
+      maxRetries: this.ctx.config.WORKER_RESTART_LIMIT,
+    };
+
+    let response: TaskRunResponse;
+    try {
+      response = await this.workerManager.run(runRequest);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`Step 6 failed (WM.run) for seq ${seq}: ${msg}`);
+      failedSlots.add(`wm-error-${seq}`);
       this.logEvent('launch-worker', seq, 'fail', { error: msg });
       return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Worker launch failed: ${msg}` };
+    }
+
+    if (!response.accepted) {
+      this.log.warn(`WM rejected seq ${seq}: ${response.rejectReason}`);
+      return {
+        action: 'launch',
+        entity: `seq:${seq}`,
+        result: response.rejectReason === 'resource_exhausted' ? 'skip' : 'fail',
+        message: `WM rejected: ${response.rejectReason}`,
+      };
+    }
+
+    const slotName = response.slot!;
+    this.log.ok(`Step 6: WM launched worker for seq ${seq} (slot=${slotName}, pid=${response.pid ?? 'n/a'})`);
+
+    if (this.notifier) {
+      await this.notifier.sendSuccess(`[${this.ctx.projectName}] seq:${seq} worker started (${slotName})`).catch(() => {});
     }
 
     // Step 7: Move card to Inprogress
@@ -715,129 +554,80 @@ export class ExecutionEngine {
         }
       });
       this.log.ok(`Step 7: Moved seq ${seq} Todo → Inprogress`);
-      this.logEvent('launch', seq, 'ok', { worker: slotName, session: sessionName });
+      this.logEvent('launch', seq, 'ok', { worker: slotName });
       return { action: 'launch', entity: `seq:${seq}`, result: 'ok', message: `Todo → Inprogress (${slotName})` };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.error(`Step 7 failed (move) for seq ${seq}: ${msg}`);
-      // Rollback: kill worker, release slot
-      const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
+      // Rollback: cancel worker via WM (handles kill + resource release)
       try {
-        if (workflowTransport !== 'proc' && this.agentRuntime) {
-          await this.agentRuntime.stopSession(slotName);
-        } else {
-          await this.supervisor.kill(workerId);
-        }
+        await this.workerManager.cancel({ taskId: String(card.seq), project: this.ctx.projectName, reason: 'anomaly' });
       } catch { /* best effort */ }
-      this.supervisor.remove(workerId);
-      this.resourceLimiter.release();
       this.releaseSlot(slotName, seq);
       this.logEvent('launch-move', seq, 'fail', { error: msg });
       return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Move to Inprogress failed: ${msg}` };
     }
   }
 
-  // ─── Worker Exit Callback ───────────────────────────────────────
-
   /**
-   * Called by Supervisor when a worker process exits.
-   * Wires CompletionJudge → PostActions to handle completion or failure.
+   * @deprecated Phase 1 transitional — WM's internal exit callback handles ACP inspection.
+   * Kept for edge-case fallback; will be removed when WM fully owns ACP lifecycle.
    */
-  private async onWorkerExit(
-    workerId: string,
-    card: Card,
-    slotName: string,
-    worktree: string,
-    branch: string,
-    exitCode: number,
-  ): Promise<void> {
-    const handle = this.supervisor.get(workerId);
-    await this.handleWorkerFinalization(card, slotName, worktree, branch, exitCode, handle || null, 'proc');
-  }
-
   private async checkAcpInprogressCard(
     card: Card,
     slotName: string,
   ): Promise<ActionRecord | null> {
-    const runtime = this.requireAgentRuntime();
     const seq = card.seq;
-    const inspected = await runtime.inspect(slotName);
-    const session = inspected.sessions[slotName];
-    const workerId = `${this.ctx.projectName}:${slotName}:${seq}`;
     const state = this.runtimeStore.readState();
     const slot = state.workers[slotName];
     if (!slot) return null;
 
-    if (session) {
+    // Use WorkerManager.inspect() for normalized worker state
+    const snapshots = this.workerManager.inspect({ project: this.ctx.projectName, taskId: seq });
+    const snapshot = snapshots[0];
+
+    if (snapshot && (snapshot.state === 'running' || snapshot.state === 'starting')) {
+      // Worker still active — update heartbeat
       this.runtimeStore.updateState('pipeline-acp-heartbeat', (freshState) => {
         const freshSlot = freshState.workers[slotName];
         if (freshSlot) {
-          this.applyAcpSessionToSlot(freshSlot, session);
           freshSlot.lastHeartbeat = new Date().toISOString();
         }
       });
-      this.supervisor.registerAcpHandle({
-        id: workerId,
-        pid: null,
-        outputFile: null,
-        project: this.ctx.projectName,
-        seq,
-        slot: slotName,
-        branch: slot.branch || this.buildBranchName(card),
-        worktree: slot.worktree || resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR),
-        tool: session.tool,
-        exitCode: null,
-        sessionId: session.sessionId,
-        runId: session.currentRun?.runId || null,
-        sessionState: session.sessionState,
-        remoteStatus: session.currentRun?.status || null,
-        lastEventAt: session.lastSeenAt,
-        startedAt: slot.claimedAt || new Date().toISOString(),
-        exitedAt: null,
-      });
+      return null;
+    }
 
-      if (session.currentRun?.status && session.currentRun.status !== slot.remoteStatus) {
-        if (session.currentRun.status === 'waiting_input') {
-          this.log.info(`seq ${seq}: worker waiting for input — ${session.pendingInput?.prompt || 'input required'}`);
-        } else if (session.currentRun.status === 'needs_confirmation') {
-          this.log.warn(`seq ${seq}: worker needs confirmation — ${session.pendingInput?.prompt || 'confirmation required'}`);
-        } else if (session.currentRun.status === 'stalled_submit') {
-          this.log.warn(`seq ${seq}: worker prompt submission stalled — ${session.stalledReason || 'auto-repair pending'}`);
-        }
-      }
+    if (snapshot && snapshot.state === 'waiting_input') {
+      this.log.info(`seq ${seq}: worker waiting for input`);
+      return null;
+    }
 
-      if (!session.currentRun || this.isAcpRunActive(session.currentRun.status)) {
-        return null;
-      }
+    if (snapshot && snapshot.state === 'needs_confirmation') {
+      this.log.warn(`seq ${seq}: worker needs confirmation`);
+      return null;
+    }
 
-      const handle = this.supervisor.updateAcpHandle(workerId, {
-        exitCode: this.acpRunExitCode(session.currentRun.status),
-        exitedAt: new Date().toISOString(),
-        sessionId: session.sessionId,
-        runId: session.currentRun.runId,
-        sessionState: session.sessionState,
-        remoteStatus: session.currentRun.status,
-        lastEventAt: session.lastSeenAt,
-      }) || this.supervisor.get(workerId) || null;
-
-      await this.handleWorkerFinalization(
-        card,
-        slotName,
-        slot.worktree || resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR),
-        slot.branch || this.buildBranchName(card),
-        this.acpRunExitCode(session.currentRun.status),
-        handle,
-        resolveWorkflowTransport(this.ctx.config) === 'pty' ? 'pty' : 'acp',
-      );
-
+    if (snapshot && snapshot.state === 'completed') {
+      this.log.ok(`seq ${seq}: ACP/PTY run completed (via WM)`);
       return {
         action: 'complete',
         entity: `seq:${seq}`,
-        result: session.currentRun.status === 'completed' ? 'ok' : 'fail',
-        message: `${resolveWorkflowTransport(this.ctx.config).toUpperCase()} run ${session.currentRun.status}`,
+        result: 'ok',
+        message: `${resolveWorkflowTransport(this.ctx.config).toUpperCase()} run completed`,
       };
     }
 
+    if (snapshot && snapshot.state === 'failed') {
+      this.log.info(`seq ${seq}: ACP/PTY run failed (via WM)`);
+      return {
+        action: 'complete',
+        entity: `seq:${seq}`,
+        result: 'fail',
+        message: `${resolveWorkflowTransport(this.ctx.config).toUpperCase()} run failed`,
+      };
+    }
+
+    // No snapshot — session lost or already cleaned up
     this.runtimeStore.updateState('pipeline-acp-lost', (freshState) => {
       const lostSlot = freshState.workers[slotName];
       if (lostSlot) {
@@ -848,123 +638,13 @@ export class ExecutionEngine {
       }
     });
 
-    const handle = this.supervisor.updateAcpHandle(workerId, {
-      exitCode: 1,
-      exitedAt: new Date().toISOString(),
-      sessionState: 'offline',
-      remoteStatus: 'lost',
-      lastEventAt: new Date().toISOString(),
-    }) || this.supervisor.get(workerId) || null;
-
-    await this.handleWorkerFinalization(
-      card,
-      slotName,
-      slot.worktree || resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR),
-      slot.branch || this.buildBranchName(card),
-      1,
-      handle,
-      resolveWorkflowTransport(this.ctx.config) === 'pty' ? 'pty' : 'acp',
-    );
-
+    this.log.warn(`seq ${seq}: ACP session lost — no WM snapshot found`);
     return {
       action: 'complete',
       entity: `seq:${seq}`,
       result: 'fail',
       message: 'ACP session lost',
     };
-  }
-
-  private async handleWorkerFinalization(
-    card: Card,
-    slotName: string,
-    worktree: string,
-    branch: string,
-    exitCode: number,
-    handle: WorkerHandle | null,
-    transport: 'proc' | 'acp' | 'pty',
-  ): Promise<void> {
-    const completion = this.completionJudge.judge({
-      worktree,
-      branch,
-      baseBranch: this.ctx.mergeBranch,
-      outputFile: handle?.outputFile || null,
-      exitCode,
-      logsDir: this.ctx.paths.logsDir,
-      phase: selectWorkerPhase(card.state, this.runtimeStore.readState().leases[card.seq]?.phase),
-    });
-
-    const ctx: PostActionContext = {
-      project: this.ctx.projectName,
-      seq: card.seq,
-      slot: slotName,
-      transport,
-      branch,
-      worktree,
-      baseBranch: this.ctx.mergeBranch,
-      stateFile: this.ctx.paths.stateFile,
-      maxWorkers: this.ctx.maxWorkers,
-      mrMode: this.ctx.mrMode,
-      gitlabProjectId: resolveGitlabProjectId(this.ctx.config),
-      gitlabUrl: this.ctx.config.raw.GITLAB_URL || process.env.GITLAB_URL || '',
-      gitlabToken: this.ctx.config.raw.GITLAB_TOKEN || process.env.GITLAB_TOKEN || '',
-      qaStateId: this.ctx.config.raw.PLANE_STATE_QA || this.ctx.config.raw.TRELLO_QA_LIST_ID || 'QA',
-      doneStateId: this.ctx.config.raw.PLANE_STATE_DONE || this.ctx.config.raw.TRELLO_DONE_LIST_ID || '',
-      maxRetries: this.ctx.config.WORKER_RESTART_LIMIT,
-      logsDir: this.ctx.paths.logsDir,
-      tool: handle?.tool || this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL,
-      pmStateObserved: card.state,
-    };
-
-    const state = this.runtimeStore.readState();
-    const retryCount = this.getRetryCount(state, card.seq);
-    const workerId = `${this.ctx.projectName}:${slotName}:${card.seq}`;
-
-    try {
-      if (completion.status === 'completed') {
-        const results = await this.postActions.executeCompletion(ctx, completion, handle?.sessionId || null);
-        const allOk = results.every(r => r.ok);
-        this.log.ok(`seq ${card.seq}: PostActions completed (${allOk ? 'all ok' : 'some failures'})`);
-      } else {
-        const retrySessionId = transport === 'proc' ? (handle?.sessionId || null) : null;
-        await this.postActions.executeFailure(ctx, completion, exitCode, retrySessionId, retryCount, {
-          onExit: (code: number) => this.onWorkerExit(workerId, card, slotName, worktree, branch, code),
-        });
-        this.log.info(`seq ${card.seq}: Failure handling done`);
-      }
-    } catch (err) {
-      this.log.error(`seq ${card.seq}: PostActions error: ${err}`);
-    }
-  }
-
-  private requireAgentRuntime(): AgentRuntime {
-    if (!this.agentRuntime) {
-      throw new Error('ACP transport requested but AgentRuntime is not configured');
-    }
-    return this.agentRuntime;
-  }
-
-  private applyAcpSessionToSlot(slot: import('../core/state.js').WorkerSlotState, session: ACPSessionRecord): void {
-    const transport = resolveWorkflowTransport(this.ctx.config) === 'pty' ? 'pty' : 'acp';
-    slot.mode = transport;
-    slot.transport = transport;
-    slot.agent = session.tool;
-    slot.tmuxSession = session.sessionName;
-    slot.sessionId = session.sessionId;
-    slot.runId = session.currentRun?.runId || null;
-    slot.sessionState = session.sessionState;
-    slot.remoteStatus = session.currentRun?.status || null;
-    slot.lastEventAt = session.lastSeenAt;
-    slot.pid = null;
-    slot.outputFile = null;
-    slot.exitCode = null;
-  }
-
-  private isAcpRunActive(status: ACPRunStatus): boolean {
-    return ['submitted', 'running', 'waiting_input', 'needs_confirmation', 'stalled_submit'].includes(status);
-  }
-
-  private acpRunExitCode(status: ACPRunStatus): number {
-    return status === 'completed' ? 0 : 1;
   }
 
   private findRuntimeSlotName(

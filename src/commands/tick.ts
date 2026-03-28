@@ -10,9 +10,12 @@ import { MonitorEngine } from '../engines/MonitorEngine.js';
 import { createTaskBackend, createWorkerProvider, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
-import { PostActions } from '../manager/post-actions.js';
 import { ResourceLimiter } from '../manager/resource-limiter.js';
-import { Recovery } from '../manager/recovery.js';
+import { SPSEventHandler } from '../engines/EventHandler.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
+// PostActions and Recovery are no longer used directly — WM handles recovery
+// and SPSEventHandler handles PM operations via the event system.
+import { WorkerManagerImpl } from '../manager/worker-manager-impl.js';
 import { createPMClient } from '../manager/pm-client.js';
 import { RuntimeCoordinator } from '../manager/runtime-coordinator.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
@@ -60,6 +63,7 @@ interface ProjectRunner {
   taskBackend: TaskBackend;
   notifier: Notifier;
   agentRuntime: ReturnType<typeof createAgentRuntime> | null;
+  workerManager: import('../manager/worker-manager-impl.js').WorkerManagerImpl;
   scheduler: SchedulerEngine;
   closeout: CloseoutEngine;
   execution: ExecutionEngine;
@@ -112,9 +116,31 @@ function createRunner(project: string): ProjectRunner | null {
   // Get shared Manager modules
   const { supervisor, resourceLimiter, completionJudge } = getSharedModules();
 
-  // Create per-project Manager modules
-  const pmClient = createPMClient(ctx.config);
-  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier, agentRuntime);
+  // Create per-project WorkerManager (wraps supervisor, judge, limiter)
+  const workerManager = new WorkerManagerImpl({
+    supervisor,
+    completionJudge,
+    resourceLimiter,
+    agentRuntime: agentRuntime ?? null,
+    stateFile: ctx.paths.stateFile,
+    maxWorkers: ctx.maxWorkers,
+  });
+
+  // Register SPSEventHandler for PM operations on worker lifecycle events
+  const runtimeStore = new RuntimeStore({
+    paths: { stateFile: ctx.paths.stateFile },
+    maxWorkers: ctx.maxWorkers,
+  });
+  const raw = ctx.config.raw;
+  const eventHandler = new SPSEventHandler({
+    taskBackend,
+    notifier,
+    runtimeStore,
+    project,
+    qaStateId: raw.PLANE_STATE_QA || raw.TRELLO_QA_LIST_ID || 'QA',
+    doneStateId: raw.PLANE_STATE_DONE || raw.TRELLO_DONE_LIST_ID || '',
+  });
+  workerManager.onEvent((event) => eventHandler.handle(event));
 
   return {
     project,
@@ -123,11 +149,12 @@ function createRunner(project: string): ProjectRunner | null {
     taskBackend,
     notifier,
     agentRuntime,
+    workerManager,
     scheduler: new SchedulerEngine(ctx, taskBackend, notifier),
-    closeout: new CloseoutEngine(ctx, taskBackend, repoBackend, workerProvider, notifier, agentRuntime),
+    closeout: new CloseoutEngine(ctx, taskBackend, repoBackend, workerManager, notifier),
     execution: new ExecutionEngine(
       ctx, taskBackend, repoBackend,
-      supervisor, completionJudge, postActions, resourceLimiter,
+      workerManager,
       notifier, agentRuntime,
     ),
     monitor: new MonitorEngine(ctx, taskBackend, workerProvider, repoBackend, notifier, supervisor),
@@ -200,33 +227,27 @@ export async function executeTick(
     globalLog.info(`Managing ${runners.length} projects: ${runners.map((r) => r.project).join(', ')}`);
   }
 
-  // ─── Recovery: restore active workers from previous tick ───────
-  const { supervisor, completionJudge, resourceLimiter } = getSharedModules();
-  try {
-    const projectInfos = runners.map(r => ({
-      name: r.project,
-      config: r.ctx.config,
-      stateFile: r.ctx.paths.stateFile,
-      logsDir: r.ctx.paths.logsDir,
-    }));
-    // Per-project PostActions factory (each project uses its own PM config)
-    const runnerMap = new Map(runners.map(r => [r.project, r]));
-    const postActionsFactory = (config: import('../core/config.js').ProjectConfig) => {
-      const pmClient = createPMClient(config);
-      const runner = runnerMap.get(config.PROJECT_NAME);
-      return new PostActions(pmClient, supervisor, resourceLimiter, runner?.notifier || null, runner?.agentRuntime || null);
-    };
-    const recovery = new Recovery(supervisor, completionJudge, postActionsFactory, resourceLimiter);
-    const result = await recovery.recover(projectInfos);
-    if (result.found > 0) {
-      globalLog.info(
-        `Recovery: ${result.found} workers found, ${result.alive} alive, ` +
-        `${result.completed} completed, ${result.failed} failed`,
-      );
+  const { supervisor } = getSharedModules();
+
+  // ─── Recovery: restore active workers via WorkerManager ────────
+  for (const runner of runners) {
+    try {
+      const wmResult = await runner.workerManager.recover([{
+        project: runner.project,
+        stateFile: runner.ctx.paths.stateFile,
+        baseBranch: runner.ctx.config.GITLAB_MERGE_BRANCH,
+      }]);
+      if (wmResult.scanned > 0) {
+        globalLog.info(
+          `Recovery (${runner.project}): scanned=${wmResult.scanned} alive=${wmResult.alive} ` +
+          `completed=${wmResult.completed} failed=${wmResult.failed} ` +
+          `released=${wmResult.released} queueRebuilt=${wmResult.queueRebuilt}`,
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      runner.log.warn(`Recovery failed (non-fatal): ${msg}`);
     }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    globalLog.warn(`Recovery failed (non-fatal): ${msg}`);
   }
 
   // Cleanup all locks on exit

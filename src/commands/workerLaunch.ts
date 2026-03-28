@@ -4,9 +4,10 @@ import { ExecutionEngine } from '../engines/ExecutionEngine.js';
 import { createTaskBackend, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
-import { PostActions } from '../manager/post-actions.js';
 import { ResourceLimiter } from '../manager/resource-limiter.js';
-import { createPMClient } from '../manager/pm-client.js';
+import { WorkerManagerImpl } from '../manager/worker-manager-impl.js';
+import { SPSEventHandler } from '../engines/EventHandler.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import { Logger } from '../core/logger.js';
 
 export async function executeWorkerLaunch(
@@ -50,10 +51,21 @@ export async function executeWorkerLaunch(
     staggerDelayMs: parseInt(process.env.SPS_MANAGER_STAGGER_MS || '5000', 10),
     maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '80', 10),
   });
-  const pmClient = createPMClient(ctx.config);
   const agentRuntime = workflowUsesAgentRuntime(ctx.config) ? createAgentRuntime(ctx) : null;
-  const postActions = new PostActions(pmClient, supervisor, resourceLimiter, notifier, agentRuntime);
-  const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, supervisor, completionJudge, postActions, resourceLimiter, notifier, agentRuntime);
+  const workerManager = new WorkerManagerImpl({
+    supervisor, completionJudge, resourceLimiter,
+    agentRuntime: agentRuntime ?? null,
+    stateFile: ctx.paths.stateFile, maxWorkers: ctx.maxWorkers,
+  });
+  const runtimeStore = new RuntimeStore({ paths: { stateFile: ctx.paths.stateFile }, maxWorkers: ctx.maxWorkers });
+  const raw = ctx.config.raw;
+  const eventHandler = new SPSEventHandler({
+    taskBackend, notifier, runtimeStore, project,
+    qaStateId: raw.PLANE_STATE_QA || raw.TRELLO_QA_LIST_ID || 'QA',
+    doneStateId: raw.PLANE_STATE_DONE || raw.TRELLO_DONE_LIST_ID || '',
+  });
+  workerManager.onEvent((event) => eventHandler.handle(event));
+  const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, notifier, agentRuntime);
   const result = await engine.launchSingle(seq, { dryRun });
 
   if (jsonOutput) {

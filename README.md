@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.23.22**
+**v0.24.0**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -12,7 +12,16 @@ SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool d
 Create cards -> Start pipeline -> Development worker completes branch work -> QA worker integrates branch -> Notify completion
 ```
 
-Current design direction: SPS uses a worker-owned two-phase execution model, but the autonomous main workflow is now fixed on one-shot `proc` workers. `Inprogress` is the development phase, `QA` is the integration/merge phase, and label-driven skill profile injection remains part of worker prompt construction. `v0.23.16` added per-worktree `.sps/development_prompt.txt` and `.sps/integration_prompt.txt`, plus phase-aware recovery prompt selection. `v0.23.17` moved the main integration path into the `QA` worker phase. `v0.23.18` finished the state-machine alignment so runtime projection and task-level recovery consistently map `Inprogress` to development and `QA` to integration. `v0.23.19` removed the old fixed merge/conflict flow from `PostActions` and `CloseoutEngine`, and made `CompletionJudge` phase-aware so development completion stops at branch commits while QA completion requires merge evidence. `v0.23.22` keeps that two-phase state machine but reverts the autonomous `tick/pipeline/qa/recovery` path back to one-shot `codex exec` / `claude -p`; PTY/ACP remain available only for `sps acp`, dashboard visibility, and manual diagnostics. If ACP is later reintroduced as the boundary between SPS and a Worker Manager, the required request/status contract is defined in `docs/design/14-acp-worker-manager-protocol.md`.
+**v0.24.0 — Worker Manager architecture**: All worker lifecycle management is now mediated by the `WorkerManager` ACP interface (`src/manager/worker-manager.ts`). ExecutionEngine and CloseoutEngine call `WorkerManager.run()` instead of spawning workers directly. Key changes:
+
+- **WorkerManager**: Unified interface wrapping Supervisor, CompletionJudge, ResourceLimiter. Methods: `run/resume/cancel/sendInput/confirm/inspect/onEvent/recover`.
+- **IntegrationQueue**: Per project+targetBranch FIFO queue. Integration tasks serialize; development tasks parallelize.
+- **SPSEventHandler**: Event-driven PM operations. Worker exit → CompletionJudge → WorkerEvent → EventHandler moves cards, adds labels, sends notifications.
+- **Recovery**: Decision matrix (R1-R9) with rescue push, worktree rebuild, integration queue reconstruction.
+- **Timeouts**: Soft timeout emits status event; hard timeout (1.5x) force-kills. All timers use `.unref()`.
+- **pendingPMActions**: Failed PM operations saved to state.json and retried next tick cycle.
+
+The two-phase state machine continues: `Inprogress` = development, `QA` = integration/merge. One-shot `proc` workers (`codex exec` / `claude -p`) remain the main autonomous path. PTY/ACP available for `sps acp`, dashboard, and manual diagnostics.
 
 ## Table of Contents
 
