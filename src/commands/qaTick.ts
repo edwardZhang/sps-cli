@@ -54,8 +54,6 @@ export async function executeQaTick(
   const raw = ctx.config.raw;
   const eventHandler = new SPSEventHandler({
     taskBackend, notifier, runtimeStore, project,
-    qaStateId: raw.PLANE_STATE_QA || raw.TRELLO_QA_LIST_ID || 'QA',
-    doneStateId: raw.PLANE_STATE_DONE || raw.TRELLO_DONE_LIST_ID || '',
   });
   workerManager.onEvent((event) => eventHandler.handle(event));
 

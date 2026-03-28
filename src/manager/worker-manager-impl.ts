@@ -376,6 +376,14 @@ export class WorkerManagerImpl implements WorkerManager {
       return this.reject('spawn_failed');
     }
 
+    // Update state with pid/sessionId obtained after spawn
+    const postState = this.rd();
+    if (postState.workers[slot]) {
+      postState.workers[slot].pid = pid;
+      postState.workers[slot].sessionId = sessionId ?? null;
+      this.wr(postState, `${label}-pid`);
+    }
+
     this.log(`Launched ${transport}/${tool} worker ${workerId} in ${slot} (pid=${pid})`);
     this.startTimeout(taskId, phase, project, slot, ctx.customTimeoutSec);
     return { accepted: true, slot, workerId, pid: pid ?? undefined, sessionId };

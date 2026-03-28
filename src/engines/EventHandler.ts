@@ -20,8 +20,6 @@ export interface EventHandlerDeps {
   notifier?: Notifier;
   runtimeStore: RuntimeStore;
   project: string;
-  qaStateId: string;
-  doneStateId: string;
 }
 
 // ─── SPSEventHandler ──────────────────────────────────────────
@@ -31,16 +29,12 @@ export class SPSEventHandler {
   private readonly notifier: Notifier | undefined;
   private readonly runtimeStore: RuntimeStore;
   private readonly project: string;
-  private readonly qaStateId: string;
-  private readonly doneStateId: string;
 
   constructor(deps: EventHandlerDeps) {
     this.taskBackend = deps.taskBackend;
     this.notifier = deps.notifier;
     this.runtimeStore = deps.runtimeStore;
     this.project = deps.project;
-    this.qaStateId = deps.qaStateId;
-    this.doneStateId = deps.doneStateId;
   }
 
   /**
@@ -114,9 +108,9 @@ export class SPSEventHandler {
     this.releaseSlot(event);
 
     if (isIntegration) {
-      await this.safeAction({ type: 'move', taskId, project: this.project, target: this.doneStateId });
+      await this.safeAction({ type: 'move', taskId, project: this.project, target: 'Done' });
     } else {
-      await this.safeAction({ type: 'move', taskId, project: this.project, target: this.qaStateId });
+      await this.safeAction({ type: 'move', taskId, project: this.project, target: 'QA' });
     }
 
     await this.safeAction({ type: 'release', taskId, project: this.project });

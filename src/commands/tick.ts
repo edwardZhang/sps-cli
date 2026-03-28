@@ -137,8 +137,6 @@ function createRunner(project: string): ProjectRunner | null {
     notifier,
     runtimeStore,
     project,
-    qaStateId: raw.PLANE_STATE_QA || raw.TRELLO_QA_LIST_ID || 'QA',
-    doneStateId: raw.PLANE_STATE_DONE || raw.TRELLO_DONE_LIST_ID || '',
   });
   workerManager.onEvent((event) => eventHandler.handle(event));
 
