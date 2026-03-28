@@ -63,7 +63,7 @@ export async function executeWorkerLaunch(
     taskBackend, notifier, runtimeStore, project,
   });
   workerManager.onEvent((event) => eventHandler.handle(event));
-  const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, notifier, agentRuntime);
+  const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, notifier);
   const result = await engine.launchSingle(seq, { dryRun });
 
   if (jsonOutput) {

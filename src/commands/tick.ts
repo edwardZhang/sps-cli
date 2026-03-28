@@ -150,11 +150,7 @@ function createRunner(project: string): ProjectRunner | null {
     workerManager,
     scheduler: new SchedulerEngine(ctx, taskBackend, notifier),
     closeout: new CloseoutEngine(ctx, taskBackend, repoBackend, workerManager, notifier),
-    execution: new ExecutionEngine(
-      ctx, taskBackend, repoBackend,
-      workerManager,
-      notifier, agentRuntime,
-    ),
+    execution: new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, notifier),
     monitor: new MonitorEngine(ctx, taskBackend, workerProvider, repoBackend, notifier, supervisor),
     done: false,
     fatalError: false,
@@ -265,7 +261,7 @@ export async function executeTick(
       const result = await runOneTick(runner, dryRun);
       results.push(result);
     }
-    // Wait for any exit callbacks / PostActions to complete
+    // Wait for any pending supervisor exit callbacks to complete
     await supervisor.drainPendingActions();
     if (jsonOutput) {
       outputJson(runners.length === 1 ? results[0] : results);
@@ -333,7 +329,7 @@ export async function executeTick(
       process.exit(errorCount > 0 ? 1 : 0);
     }
 
-    // Drain any pending PostActions before sleeping
+    // Drain any pending supervisor exit callbacks before sleeping
     await supervisor.drainPendingActions();
 
     await sleep(interval * 1000);

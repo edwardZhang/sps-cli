@@ -4,7 +4,6 @@ import type { ProjectContext } from '../core/context.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
-import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type { CommandResult, ActionRecord, Card, CardState, AuxiliaryState } from '../models/types.js';
 // ACPSessionRecord/ACPRunStatus no longer needed — WM handles ACP lifecycle
 import type { RuntimeState, TaskLease, WorkerSlotState } from '../core/state.js';
@@ -33,7 +32,6 @@ export class ExecutionEngine {
     private repoBackend: RepoBackend,
     private workerManager: WorkerManager,
     private notifier?: Notifier,
-    private agentRuntime?: AgentRuntime | null,
   ) {
     this.log = new Logger('pipeline', ctx.projectName, ctx.paths.logsDir);
     this.runtimeStore = new RuntimeStore(ctx);
