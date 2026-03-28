@@ -220,10 +220,12 @@ export class WorkerManagerImpl implements WorkerManager {
     // Phase 1+2: Scan leases and apply per-task decision matrix
     for (const ctx of contexts) {
       const state = readState(ctx.stateFile, this.maxWorkers);
+      const processedSeqs = new Set<string>();
 
       for (const [seq, lease] of Object.entries(state.leases)) {
         if (lease.phase === 'released' || lease.phase === 'suspended') continue;
         result.scanned++;
+        processedSeqs.add(seq);
 
         const slot = lease.slot;
         const worker = slot ? state.workers[slot] ?? null : null;
@@ -259,8 +261,8 @@ export class WorkerManagerImpl implements WorkerManager {
         }
       }
 
-      // Phase 3: Rebuild integration queues from merging/resolving leases
-      this.rebuildIntegrationQueue(ctx, state, result);
+      // Phase 3: Rebuild integration queues — skip tasks already handled above
+      this.rebuildIntegrationQueue(ctx, state, result, processedSeqs);
     }
 
     // Phase 4: Emit collected events so SPSEventHandler processes them
@@ -577,9 +579,13 @@ export class WorkerManagerImpl implements WorkerManager {
    */
   private rebuildIntegrationQueue(
     ctx: RecoveryContext, state: RuntimeState, result: RecoveryResult,
+    processedSeqs: Set<string>,
   ): void {
     const qaLeases = Object.entries(state.leases)
-      .filter(([, l]) => l.phase === 'merging' || l.phase === 'resolving_conflict')
+      .filter(([seq, l]) =>
+        (l.phase === 'merging' || l.phase === 'resolving_conflict') &&
+        !processedSeqs.has(seq),
+      )
       .sort(([, a], [, b]) => (a.lastTransitionAt ?? '').localeCompare(b.lastTransitionAt ?? ''));
 
     for (const [seq, lease] of qaLeases) {

@@ -275,15 +275,27 @@ export class CloseoutEngine {
       return;
     }
 
+    // Queued in IntegrationQueue — no slot yet, will be spawned when active finishes
+    if (response.queued) {
+      this.log.info(`seq ${seq}: Queued for integration (position=${response.queuePosition})`);
+      actions.push({
+        action: 'qa-launch',
+        entity: `seq:${seq}`,
+        result: 'ok',
+        message: `Queued for integration (position=${response.queuePosition})`,
+      });
+      return;
+    }
+
     // PM claim (best-effort, non-blocking)
+    const slotName = response.slot!;
     try {
-      await this.taskBackend.claim(seq, response.slot!);
+      await this.taskBackend.claim(seq, slotName);
     } catch (err) {
       this.log.warn(`seq ${seq}: PM claim for QA worker failed: ${err instanceof Error ? err.message : err}`);
     }
 
     // Update local runtime projections with the slot WM allocated
-    const slotName = response.slot!;
     this.runtimeStore.updateState('closeout-launch-integration', (draft) => {
       draft.activeCards[seq] = {
         seq: parseInt(seq, 10),
