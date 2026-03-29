@@ -8,6 +8,7 @@ import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { CommandResult, ActionRecord, Card, RecommendedAction } from '../models/types.js';
 import type { WorkerManager, TaskRunRequest } from '../manager/worker-manager.js';
+import { IntegrationQueue } from '../manager/integration-queue.js';
 import { INTEGRATION_PROMPT_FILE, LEGACY_TASK_PROMPT_FILE } from '../core/taskPrompts.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveWorktreePath } from '../core/paths.js';
@@ -278,6 +279,16 @@ export class CloseoutEngine {
     // Queued in IntegrationQueue — no slot yet, will be spawned when active finishes
     if (response.queued) {
       this.log.info(`seq ${seq}: Queued for integration (position=${response.queuePosition})`);
+
+      // Update lease to merging even though no slot is assigned yet.
+      // This prevents Monitor from misinterpreting the card as stale.
+      this.runtimeStore.updateState('closeout-queue-integration', (draft) => {
+        if (draft.leases[seq]) {
+          draft.leases[seq].phase = 'merging';
+          draft.leases[seq].lastTransitionAt = new Date().toISOString();
+        }
+      });
+
       actions.push({
         action: 'qa-launch',
         entity: `seq:${seq}`,
@@ -408,6 +419,22 @@ export class CloseoutEngine {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.error(`seq ${seq}: Failed to cancel worker: ${msg}`);
       errors.push(`cancel-worker: ${msg}`);
+    }
+
+    // Step 4b: Clear completed task from IntegrationQueue to unblock waiting tasks.
+    // The WM cancel above only cleans up spawned workers. If this task was the
+    // active entry in the queue (detected as already-merged before WM spawned),
+    // the queue is never advanced. Dequeue explicitly so waiting tasks proceed.
+    try {
+      const iq = new IntegrationQueue(this.ctx.paths.stateFile, this.ctx.config.MAX_CONCURRENT_WORKERS);
+      const active = iq.getActive(this.ctx.projectName, this.ctx.mergeBranch);
+      if (active && active.taskId === seq) {
+        iq.dequeueNext(this.ctx.projectName, this.ctx.mergeBranch);
+        this.log.ok(`seq ${seq}: Integration queue advanced`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.warn(`seq ${seq}: Failed to advance integration queue: ${msg}`);
     }
 
     // Step 5: Mark worktree for cleanup (actual removal runs at end of tick)
