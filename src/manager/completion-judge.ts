@@ -59,8 +59,18 @@ export class CompletionJudge {
 
     const mergedToBase = this.isMergedToBase(worktree, branch, baseBranch);
     if (mergedToBase) {
-      this.log(`Branch ${branch} already merged into ${baseBranch}`);
-      return { status: 'completed', reason: 'already_merged' };
+      // Guard: a freshly created branch with no work is trivially an
+      // ancestor of origin/base. Only trust "already merged" if:
+      // - Branch was pushed (worker pushed their work), OR
+      // - Branch has local commits ahead (worker committed locally)
+      // Without either, the branch just sits at the base commit.
+      const pushed = branchPushed(worktree, branch);
+      const localAhead = branchCommitsAhead(worktree, branch, baseBranch);
+      if (pushed || localAhead > 0) {
+        this.log(`Branch ${branch} already merged into ${baseBranch}`);
+        return { status: 'completed', reason: 'already_merged' };
+      }
+      this.log(`Branch ${branch} is ancestor of ${baseBranch} but has no artifacts — not a real merge`);
     }
 
     if (phase === 'integration') {

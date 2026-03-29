@@ -186,6 +186,8 @@ describe('CompletionJudge', () => {
       execFileSync('git', ['clone', '--bare', tempDir, bareDir], { stdio: 'pipe' });
       execFileSync('git', ['-C', tempDir, 'remote', 'add', 'origin', bareDir], { stdio: 'pipe' });
       execFileSync('git', ['-C', tempDir, 'push', 'origin', 'main'], { stdio: 'pipe' });
+      // Push the feature branch too — simulates worker having pushed their work
+      execFileSync('git', ['-C', tempDir, 'push', 'origin', 'feat-merged'], { stdio: 'pipe' });
       checkoutBranch(tempDir, 'feat-merged');
 
       const result = judge.judge(makeInput({
@@ -213,6 +215,7 @@ describe('CompletionJudge', () => {
       execFileSync('git', ['clone', '--bare', tempDir, bareDir], { stdio: 'pipe' });
       execFileSync('git', ['-C', tempDir, 'remote', 'add', 'origin', bareDir], { stdio: 'pipe' });
       execFileSync('git', ['-C', tempDir, 'push', 'origin', 'main'], { stdio: 'pipe' });
+      execFileSync('git', ['-C', tempDir, 'push', 'origin', 'feat-int'], { stdio: 'pipe' });
       checkoutBranch(tempDir, 'feat-int');
 
       const result = judge.judge(makeInput({
