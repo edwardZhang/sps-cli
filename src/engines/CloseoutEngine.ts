@@ -411,14 +411,21 @@ export class CloseoutEngine {
       this.log.debug(`seq ${seq}: No active worker slot found (already released)`);
     }
 
-    // Step 4: Cancel worker via WM (idempotent, safe for already-completed workers)
+    // Step 4: Silently stop the worker process if still running.
+    // DO NOT use workerManager.cancel() — it emits run.failed events which
+    // trigger NEEDS-FIX labels and error notifications. The task is already
+    // Done; we just need to kill the orphan process without side effects.
     try {
-      await this.workerManager.cancel({ taskId: seq, project: this.ctx.projectName, reason: 'user_cancel' });
-      this.log.ok(`seq ${seq}: Worker cancelled via WorkerManager`);
+      const snapshots = this.workerManager.inspect({ taskId: seq });
+      for (const snap of snapshots) {
+        if (snap.pid && snap.pid > 0) {
+          try { process.kill(snap.pid, 'SIGTERM'); } catch { /* already dead */ }
+        }
+      }
+      this.log.ok(`seq ${seq}: Worker process cleaned up`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`seq ${seq}: Failed to cancel worker: ${msg}`);
-      errors.push(`cancel-worker: ${msg}`);
+      this.log.debug(`seq ${seq}: Worker cleanup: ${msg}`);
     }
 
     // Step 4b: Clear completed task from IntegrationQueue to unblock waiting tasks.
