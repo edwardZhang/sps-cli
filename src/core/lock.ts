@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 interface LockInfo {
@@ -28,7 +28,9 @@ export function acquireTickLock(lockFile: string, timeoutMinutes: number): Acqui
   const dir = dirname(lockFile);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-  if (existsSync(lockFile)) {
+  const hadExistingLock = existsSync(lockFile);
+
+  if (hadExistingLock) {
     try {
       const content = readFileSync(lockFile, 'utf-8');
       const lock: LockInfo = JSON.parse(content);
@@ -50,13 +52,15 @@ export function acquireTickLock(lockFile: string, timeoutMinutes: number): Acqui
     }
   }
 
-  // Write new lock
+  // Write new lock atomically: temp file + rename
   const lock: LockInfo = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
   };
-  writeFileSync(lockFile, JSON.stringify(lock) + '\n');
-  return { acquired: true, reason: existsSync(lockFile) ? 'stale_lock_reclaimed' : undefined };
+  const tmpFile = `${lockFile}.${process.pid}.tmp`;
+  writeFileSync(tmpFile, JSON.stringify(lock) + '\n');
+  renameSync(tmpFile, lockFile);
+  return { acquired: true, reason: hadExistingLock ? 'stale_lock_reclaimed' : undefined };
 }
 
 /**

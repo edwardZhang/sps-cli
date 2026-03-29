@@ -1,90 +1,13 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execSync } from 'node:child_process';
+import { sourceShellConf, sourceCombinedConf as sourceCombinedConfImpl } from './shellEnv.js';
 
 /** Cache for resolved GitLab project IDs to avoid repeated API calls */
 const gitlabIdCache = new Map<string, string>();
 
 export interface RawConfig {
   [key: string]: string;
-}
-
-/**
- * Parse a shell conf file (KEY=value / export KEY=value) into a plain object.
- * Does NOT execute the file — only extracts simple assignments.
- * For complex interpolations ($HOME etc.), falls back to sourcing via bash.
- */
-function parseShellConf(filePath: string): RawConfig {
-  const result: RawConfig = {};
-  const content = readFileSync(filePath, 'utf-8');
-
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-
-    // Match: export KEY="value" | export KEY='value' | export KEY=value | KEY=value
-    const match = trimmed.match(
-      /^(?:export\s+)?([A-Z_][A-Z0-9_]*)=["']?(.*?)["']?\s*$/
-    );
-    if (match) {
-      result[match[1]] = match[2];
-    }
-  }
-  return result;
-}
-
-/**
- * Source a shell file via bash and capture all exported variables.
- * More reliable than regex parsing for files with $HOME, ${VAR} etc.
- */
-function sourceShellConf(filePath: string): RawConfig {
-  try {
-    const output = execSync(
-      `bash -c 'set -a; source "${filePath}" 2>/dev/null; env'`,
-      { encoding: 'utf-8', timeout: 5000 }
-    );
-    const result: RawConfig = {};
-    for (const line of output.split('\n')) {
-      const idx = line.indexOf('=');
-      if (idx > 0) {
-        result[line.slice(0, idx)] = line.slice(idx + 1);
-      }
-    }
-    return result;
-  } catch {
-    // Fallback to regex parsing
-    return parseShellConf(filePath);
-  }
-}
-
-/**
- * Source global env + project conf in a single bash context,
- * so conf can reference variables from ~/.coral/env (e.g., ${PLANE_URL}).
- */
-function sourceCombinedConf(envPath: string, confPath: string): RawConfig {
-  const sources: string[] = [];
-  if (existsSync(envPath)) sources.push(`source "${envPath}" 2>/dev/null`);
-  sources.push(`source "${confPath}" 2>/dev/null`);
-
-  try {
-    const output = execSync(
-      `bash -c 'set -a; ${sources.join('; ')}; env'`,
-      { encoding: 'utf-8', timeout: 5000 }
-    );
-    const result: RawConfig = {};
-    for (const line of output.split('\n')) {
-      const idx = line.indexOf('=');
-      if (idx > 0) {
-        result[line.slice(0, idx)] = line.slice(idx + 1);
-      }
-    }
-    return result;
-  } catch {
-    // Fallback: load separately and merge
-    const globalEnv = existsSync(envPath) ? sourceShellConf(envPath) : {};
-    const projectRaw = sourceShellConf(confPath);
-    return { ...globalEnv, ...projectRaw };
-  }
 }
 
 export interface ProjectConfig {
@@ -188,7 +111,7 @@ export function loadProjectConf(projectName: string): ProjectConfig {
   // Source global env + project conf together in one bash context
   // so that conf can reference variables from ~/.coral/env (e.g., ${PLANE_URL})
   const envPath = resolve(process.env.HOME || '~', '.coral', 'env');
-  const raw = sourceCombinedConf(envPath, confPath);
+  const raw = sourceCombinedConfImpl([envPath, confPath]);
 
   // Strip unreplaced template placeholders (__FOO__) — treat as empty
   for (const key of Object.keys(raw)) {

@@ -8,10 +8,11 @@
  * - Exit callbacks that fire immediately in the tick process
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { openSync, closeSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
+import { openSync, closeSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { isProcessAlive, killProcessGroup, parseClaudeSessionId, parseCodexSessionId } from '../providers/outputParser.js';
+import { isProcessAlive, killProcessGroup, parseClaudeSessionId, parseCodexSessionId, extractLastAssistantText } from '../providers/outputParser.js';
+import { parseShellConf, sourceCombinedConf } from '../core/shellEnv.js';
 import type { RawConfig } from '../core/config.js';
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -287,7 +288,6 @@ export class ProcessSupervisor {
   private inferExitCode(handle: { outputFile: string | null; tool: string }): number {
     if (!handle.outputFile) return 1;
     try {
-      const { extractLastAssistantText } = require('../providers/outputParser.js');
       const lastText = extractLastAssistantText(handle.outputFile);
       // If worker produced meaningful output and said "done", likely succeeded
       if (/\b(done|完成|全部完成|已推送)\b|🎉/i.test(lastText)) {
@@ -303,8 +303,7 @@ export class ProcessSupervisor {
     const env = { ...process.env } as Record<string, string>;
     const envPath = resolve(homedir(), '.coral', 'env');
     if (existsSync(envPath)) {
-      const parsed = this.parseShellFile(envPath);
-      Object.assign(env, parsed);
+      Object.assign(env, parseShellConf(envPath));
     }
     return env;
   }
@@ -312,27 +311,8 @@ export class ProcessSupervisor {
   private loadProjectEnv(project: string): RawConfig {
     const confPath = resolve(homedir(), '.coral', 'projects', project, 'conf');
     if (!existsSync(confPath)) return {};
-
-    // Source both files in one bash context so conf can reference ~/.coral/env vars
     const envPath = resolve(homedir(), '.coral', 'env');
-    try {
-      const { execSync } = require('node:child_process');
-      const sources: string[] = [];
-      if (existsSync(envPath)) sources.push(`source "${envPath}" 2>/dev/null`);
-      sources.push(`source "${confPath}" 2>/dev/null`);
-      const output = execSync(
-        `bash -c 'set -a; ${sources.join('; ')}; env'`,
-        { encoding: 'utf-8', timeout: 5000 },
-      ) as string;
-      const result: RawConfig = {};
-      for (const line of output.split('\n')) {
-        const idx = line.indexOf('=');
-        if (idx > 0) result[line.slice(0, idx)] = line.slice(idx + 1);
-      }
-      return result;
-    } catch {
-      return this.parseShellFile(confPath);
-    }
+    return sourceCombinedConf([envPath, confPath]);
   }
 
   reloadGlobalEnv(): void {
@@ -363,20 +343,6 @@ export class ProcessSupervisor {
     if (!handle.outputFile) return null;
     if (handle.tool === 'claude') return parseClaudeSessionId(handle.outputFile);
     return parseCodexSessionId(handle.outputFile);
-  }
-
-  private parseShellFile(filePath: string): RawConfig {
-    const result: RawConfig = {};
-    try {
-      const content = readFileSync(filePath, 'utf-8');
-      for (const line of content.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const match = trimmed.match(/^(?:export\s+)?([A-Z_][A-Z0-9_]*)=["']?(.*?)["']?\s*$/);
-        if (match) result[match[1]] = match[2];
-      }
-    } catch { /* ignore */ }
-    return result;
   }
 
   private log(msg: string): void {

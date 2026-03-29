@@ -425,6 +425,14 @@ export class WorkerManagerImpl implements WorkerManager {
     this.resourceLimiter.release();
     this.taskSlotMap.delete(taskId);
 
+    // Safety net: if no event handlers are registered, release the slot
+    // in state.json directly. Normally SPSEventHandler does this via the
+    // event system, but if it's missing the slot would leak forever.
+    if (this.eventHandlers.length === 0) {
+      this.releaseSlotInState(slot, taskId);
+      this.log(`Safety net: released slot ${slot} for task ${taskId} (no event handlers)`);
+    }
+
     // ── Auto-dequeue next integration task ──────────────────────
     if (phase === 'integration') {
       await this.advanceIntegrationQueue(project, targetBranch);
