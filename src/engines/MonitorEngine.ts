@@ -290,7 +290,7 @@ export class MonitorEngine {
           message: 'Stale runtime — auto-moved to QA',
         });
         this.logEvent('auto-qa', seq, 'ok');
-        await this.notifySafe(`seq:${seq} auto-moved to QA (stale runtime)`, 'warning');
+        await this.notifySafe(`⚠️ seq:${seq} auto-moved to QA (stale runtime)`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.log.error(`seq ${seq}: Failed to auto-move to QA: ${msg}`);
@@ -302,10 +302,7 @@ export class MonitorEngine {
         });
       }
     } else {
-      await this.notifySafe(
-        `seq:${seq} has a stale runtime — worker session dead but MR may exist`,
-        'warning',
-      );
+      await this.notifySafe(`⚠️ seq:${seq} has a stale runtime — worker session dead but MR may exist`);
       recommendedActions.push({
         action: `Move seq:${seq} to QA or investigate stale runtime`,
         reason: 'Worker session dead, MONITOR_AUTO_QA is disabled',
@@ -357,10 +354,7 @@ export class MonitorEngine {
         `seq ${seq}: Timed out (${elapsedHours.toFixed(1)}h > ${timeoutHours}h threshold)`,
       );
       await this.addLabelSafe(seq, 'STALE-RUNTIME');
-      await this.notifySafe(
-        `seq:${seq} has exceeded timeout (${elapsedHours.toFixed(1)}h)`,
-        'warning',
-      );
+      await this.notifySafe(`⚠️ seq:${seq} has exceeded timeout (${elapsedHours.toFixed(1)}h)`);
 
       timeoutCount++;
       actions.push({
@@ -418,10 +412,7 @@ export class MonitorEngine {
         if (!session || !['waiting_input', 'needs_confirmation'].includes(session.currentRun?.status || '') || !pending) continue;
 
         await this.addLabelSafe(seq, 'WAITING-CONFIRMATION');
-        await this.notifySafe(
-          `seq:${seq} waiting for confirmation (${pending.type}): ${pending.prompt}`,
-          pending.dangerous ? 'warning' : 'info',
-        );
+        await this.notifySafe(`👆 seq:${seq} waiting for confirmation (${pending.type}): ${pending.prompt}`);
         actions.push({
           action: 'mark-waiting',
           entity: `seq:${seq}`,
@@ -476,10 +467,7 @@ export class MonitorEngine {
           if (slotState.seq != null) {
             await this.addLabelSafe(String(slotState.seq), 'WAITING-CONFIRMATION');
           }
-          await this.notifySafe(
-            `seq:${seq} waiting for destructive confirmation: ${waitResult.prompt}`,
-            'warning',
-          );
+          await this.notifySafe(`👆 seq:${seq} waiting for destructive confirmation: ${waitResult.prompt}`);
           actions.push({
             action: 'mark-waiting',
             entity: `seq:${seq}`,
@@ -715,10 +703,7 @@ export class MonitorEngine {
 
         const attempt = retryCount + 1;
         this.log.ok(`seq ${seq}: Auto-retry ${attempt}/${restartLimit} — moved back to Todo (${reason})`);
-        await this.notifySafe(
-          `seq:${seq} auto-retry ${attempt}/${restartLimit} — ${reason}`,
-          'warning',
-        );
+        await this.notifySafe(`⚠️ seq:${seq} auto-retry ${attempt}/${restartLimit} — ${reason}`);
         actions.push({
           action: 'auto-retry',
           entity: `seq:${seq}`,
@@ -770,10 +755,7 @@ export class MonitorEngine {
       } catch { /* best effort */ }
 
       this.log.error(`seq ${seq}: Retry limit reached (${restartLimit}), marked BLOCKED`);
-      await this.notifySafe(
-        `seq:${seq} retry limit reached (${restartLimit}x) — marked BLOCKED, needs manual review`,
-        'error',
-      );
+      await this.notifySafe(`❌ seq:${seq} retry limit reached (${restartLimit}x) — marked BLOCKED, needs manual review`);
       actions.push({
         action: 'retry-exhausted',
         entity: `seq:${seq}`,
@@ -817,13 +799,10 @@ export class MonitorEngine {
     } catch { /* best effort */ }
   }
 
-  private async notifySafe(
-    message: string,
-    level: 'info' | 'success' | 'warning' | 'error',
-  ): Promise<void> {
+  private async notifySafe(message: string): Promise<void> {
     if (!this.notifier) return;
     try {
-      await this.notifier.send(`[${this.ctx.projectName}] ${message}`, level);
+      await this.notifier.send(`[${this.ctx.projectName}] ${message}`);
     } catch {
       // Notification failures are never fatal
     }

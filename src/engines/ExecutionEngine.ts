@@ -532,7 +532,7 @@ export class ExecutionEngine {
     this.log.ok(`Step 6: WM launched worker for seq ${seq} (slot=${slotName}, pid=${response.pid ?? 'n/a'})`);
 
     if (this.notifier) {
-      await this.notifier.sendSuccess(`[${this.ctx.projectName}] seq:${seq} worker started (${slotName})`).catch(() => {});
+      await this.notifier.send(`[${this.ctx.projectName}] ▶️ seq:${seq} worker started (${slotName})`).catch(() => {});
     }
 
     // Step 7: Move card to Inprogress

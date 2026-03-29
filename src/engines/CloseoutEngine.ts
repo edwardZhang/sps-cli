@@ -469,12 +469,9 @@ export class CloseoutEngine {
 
     // Notify
     if (errors.length === 0) {
-      await this.notifySafe(`seq:${seq} merged and released successfully`, 'success');
+      await this.notifySafe(`✅ seq:${seq} merged and released successfully`);
     } else {
-      await this.notifySafe(
-        `seq:${seq} merged but release had errors: ${errors.join('; ')}`,
-        'warning',
-      );
+      await this.notifySafe(`⚠️ seq:${seq} merged but release had errors: ${errors.join('; ')}`);
     }
 
     // Record action
@@ -554,7 +551,7 @@ export class CloseoutEngine {
   private async markNeedsFix(seq: string, reason: string): Promise<void> {
     await this.addLabelSafe(seq, 'NEEDS-FIX');
     await this.commentSafe(seq, `NEEDS-FIX: ${reason}`);
-    await this.notifySafe(`seq:${seq} marked NEEDS-FIX: ${reason}`, 'warning');
+    await this.notifySafe(`⚠️ seq:${seq} marked NEEDS-FIX: ${reason}`);
   }
 
   private async addLabelSafe(seq: string, label: string): Promise<void> {
@@ -575,13 +572,10 @@ export class CloseoutEngine {
     }
   }
 
-  private async notifySafe(
-    message: string,
-    level: 'info' | 'success' | 'warning' | 'error',
-  ): Promise<void> {
+  private async notifySafe(message: string): Promise<void> {
     if (!this.notifier) return;
     try {
-      await this.notifier.send(`[${this.ctx.projectName}] ${message}`, level);
+      await this.notifier.send(`[${this.ctx.projectName}] ${message}`);
     } catch {
       // Notification failures are never fatal
     }

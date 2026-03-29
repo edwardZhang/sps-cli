@@ -306,7 +306,7 @@ export async function executeTick(
       const allDone = await checkAllDone(runner.ctx, runner.taskBackend);
       if (allDone) {
         runner.log.ok('All cards done, no active workers — project complete.');
-        await runner.notifier.sendSuccess(`[${runner.project}] Pipeline complete — all cards done.`).catch(() => {});
+        await runner.notifier.send(`[${runner.project}] 🎉 Pipeline complete — all cards done.`).catch(() => {});
         releaseTickLock(runner.ctx.paths.tickLockFile);
         runner.done = true;
       }
