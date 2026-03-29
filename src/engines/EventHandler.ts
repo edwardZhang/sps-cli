@@ -117,7 +117,7 @@ export class SPSEventHandler {
 
     const reason = completionResult?.reason ?? 'unknown';
     const phaseLabel = isIntegration ? 'integration' : 'development';
-    await this.safeNotify(`✅ seq:${taskId} completed ${phaseLabel} (${reason})`);
+    await this.safeNotify(`✅ [${this.project}] seq:${taskId} completed ${phaseLabel} (${reason})`);
   }
 
   private async onFailed(event: WorkerEvent): Promise<void> {
@@ -136,7 +136,7 @@ export class SPSEventHandler {
       message: `Worker ${reason} (exit ${exitCode ?? 1}). Marked as NEEDS-FIX.`,
     });
 
-    await this.safeNotify(`⚠️ seq:${taskId} FAILED — ${reason}`);
+    await this.safeNotify(`⚠️ [${this.project}] seq:${taskId} FAILED — ${reason}`);
   }
 
   private onInputRequired(event: WorkerEvent): void {
@@ -229,8 +229,7 @@ export class SPSEventHandler {
   private async safeNotify(message: string): Promise<void> {
     if (!this.notifier) return;
     try {
-      const fullMsg = `[${this.project}] ${message}`;
-      await this.notifier.send(fullMsg);
+      await this.notifier.send(message);
     } catch (err) {
       this.logError('notify', err);
     }

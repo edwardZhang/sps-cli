@@ -427,7 +427,7 @@ export class ExecutionEngine {
       this.log.ok(`Step 3: Moved seq ${seq} Backlog → Todo`);
       this.logEvent('prepare', seq, 'ok');
       if (this.notifier) {
-        await this.notifier.send(`[${this.ctx.projectName}] seq:${seq} environment ready (Backlog → Todo)`, 'info').catch(() => {});
+        await this.notifier.send(`ℹ️ [${this.ctx.projectName}] seq:${seq} environment ready (Backlog → Todo)`).catch(() => {});
       }
       return { action: 'prepare', entity: `seq:${seq}`, result: 'ok', message: 'Backlog → Todo' };
     } catch (err) {
@@ -532,7 +532,7 @@ export class ExecutionEngine {
     this.log.ok(`Step 6: WM launched worker for seq ${seq} (slot=${slotName}, pid=${response.pid ?? 'n/a'})`);
 
     if (this.notifier) {
-      await this.notifier.send(`[${this.ctx.projectName}] ▶️ seq:${seq} worker started (${slotName})`).catch(() => {});
+      await this.notifier.send(`▶️ [${this.ctx.projectName}] seq:${seq} worker started (${slotName})`).catch(() => {});
     }
 
     // Step 7: Move card to Inprogress
