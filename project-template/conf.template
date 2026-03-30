@@ -1,6 +1,5 @@
 # ── 项目基础信息 ─────────────────────────────────────────────────
 export PROJECT_NAME="__PROJECT_NAME__"
-export PROJECT_DISPLAY="__PROJECT_DISPLAY__"
 
 # ── 路径配置（可选，不设置则使用默认值）───────────────────────────
 # 业务代码仓库目录（默认: ~/projects/<project>）
@@ -14,7 +13,6 @@ export GITLAB_PROJECT="__GITLAB_PROJECT__"
 # GITLAB_PROJECT_ID 可选 — 留空则通过 GITLAB_PROJECT 路径自动查询
 # export GITLAB_PROJECT_ID=""
 export GITLAB_MERGE_BRANCH="develop"
-export GITLAB_RELEASE_BRANCH="main"
 
 # ── PM Backend ───────────────────────────────────────────────────
 export PM_TOOL="plane"
@@ -33,36 +31,29 @@ export PM_TOOL="plane"
 # ── Plane（PM_TOOL=plane 时填写）────────────────────────────────
 # PLANE_URL / PLANE_API_KEY / PLANE_WORKSPACE_SLUG 从全局 ~/.coral/env 继承
 export PLANE_PROJECT_ID="__PLANE_PROJECT_ID__"
-# export PLANE_PROJECT_NAME=""
 export PLANE_STATE_PLANNING="__PLANE_STATE_PLANNING__"
 export PLANE_STATE_BACKLOG="__PLANE_STATE_BACKLOG__"
 export PLANE_STATE_TODO="__PLANE_STATE_TODO__"
 export PLANE_STATE_INPROGRESS="__PLANE_STATE_INPROGRESS__"
 export PLANE_STATE_QA="__PLANE_STATE_QA__"
 export PLANE_STATE_DONE="__PLANE_STATE_DONE__"
-# export PLANE_STATE_CANCELLED=""
 
-# ── Pipeline 筛选（可选）────────────────────────────────────────
+# ── Pipeline ─────────────────────────────────────────────────────
 export PIPELINE_LABEL="AI-PIPELINE"
-
-# ── MR / CI ─────────────────────────────────────────────────────
 export MR_MODE="none"
-export CI_MODE="none"
 
 # ── Worker / Agent ───────────────────────────────────────────────
 export WORKER_TOOL="claude"
 export MAX_CONCURRENT_WORKERS=3
-# export DEFAULT_WORKER_SKILLS="senior"
-# export WORKER_RESTART_LIMIT=2
-# export AUTOFIX_ATTEMPTS=2
 # export MAX_ACTIONS_PER_TICK=1
+# export WORKER_RESTART_LIMIT=2
+# export DEFAULT_WORKER_SKILLS="senior"
 
 # ── 超时与策略（可选，以下为默认值）──────────────────────────────
 # export INPROGRESS_TIMEOUT_HOURS=8
+# export MONITOR_AUTO_QA=false
 # export CONFLICT_DEFAULT=serial
 # export TICK_LOCK_TIMEOUT_MINUTES=30
-# export NEEDS_FIX_MAX_RETRIES=3
-# export WORKTREE_RETAIN_HOURS=24
 
 # ── 通知（项目特有 — 不同项目可发不同房间）──────────────────────
 # MATRIX_HOMESERVER / MATRIX_ACCESS_TOKEN 从全局 ~/.coral/env 继承

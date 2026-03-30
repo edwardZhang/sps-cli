@@ -13,22 +13,18 @@ export interface RawConfig {
 export interface ProjectConfig {
   // Project basics
   PROJECT_NAME: string;
-  PROJECT_DISPLAY: string;
   PROJECT_DIR?: string;
 
   // GitLab
   GITLAB_PROJECT: string;
   GITLAB_PROJECT_ID: string;
   GITLAB_MERGE_BRANCH: string;
-  GITLAB_RELEASE_BRANCH: string;
 
   // PM backend
   PM_TOOL: 'trello' | 'plane' | 'markdown';
 
   // Pipeline
   PIPELINE_LABEL?: string;
-  PIPELINE_ORDER_FILE?: string;
-  CI_MODE: 'gitlab' | 'local' | 'none';
   MR_MODE: 'none' | 'create';
 
   // Worker
@@ -36,13 +32,8 @@ export interface ProjectConfig {
   WORKER_TRANSPORT: 'proc' | 'acp' | 'acp-sdk';
   MAX_CONCURRENT_WORKERS: number;
   WORKER_RESTART_LIMIT: number;
-  AUTOFIX_ATTEMPTS: number;
-  WORKER_SESSION_REUSE: boolean;
   MAX_ACTIONS_PER_TICK: number;
-  ACP_GATEWAY_MODE: 'local';
-  ACP_ENDPOINT?: string;
   ACP_AGENT?: 'claude' | 'codex';
-  ACP_SESSION_STRATEGY: 'per-slot';
 
   // Worker health
   WORKER_LAUNCH_TIMEOUT_S: number;
@@ -53,15 +44,9 @@ export interface ProjectConfig {
   MONITOR_AUTO_QA: boolean;
   CONFLICT_DEFAULT: 'serial' | 'parallel';
   TICK_LOCK_TIMEOUT_MINUTES: number;
-  NEEDS_FIX_MAX_RETRIES: number;
-  WORKTREE_RETAIN_HOURS: number;
 
   // Paths (overridable)
   WORKTREE_DIR?: string;
-
-  // Deploy
-  DEPLOY_ENABLED: boolean;
-  DEPLOY_SCRIPT?: string;
 
   // Raw values (for PM-specific fields like TRELLO_BOARD_ID, PLANE_STATE_*, etc.)
   raw: RawConfig;
@@ -127,32 +112,23 @@ export function loadProjectConf(projectName: string): ProjectConfig {
 
   return {
     PROJECT_NAME: raw.PROJECT_NAME || projectName,
-    PROJECT_DISPLAY: raw.PROJECT_DISPLAY || raw.PROJECT_NAME || projectName,
     PROJECT_DIR: raw.PROJECT_DIR,
 
     GITLAB_PROJECT: raw.GITLAB_PROJECT || '',
     GITLAB_PROJECT_ID: raw.GITLAB_PROJECT_ID || '',
     GITLAB_MERGE_BRANCH: raw.GITLAB_MERGE_BRANCH || 'develop',
-    GITLAB_RELEASE_BRANCH: raw.GITLAB_RELEASE_BRANCH || 'main',
 
     PM_TOOL: (raw.PM_TOOL as ProjectConfig['PM_TOOL']) || 'trello',
 
     PIPELINE_LABEL: raw.PIPELINE_LABEL,
-    PIPELINE_ORDER_FILE: raw.PIPELINE_ORDER_FILE,
-    CI_MODE: (raw.CI_MODE as ProjectConfig['CI_MODE']) || 'none',
     MR_MODE: (raw.MR_MODE as ProjectConfig['MR_MODE']) || 'none',
 
     WORKER_TOOL: (raw.WORKER_TOOL as ProjectConfig['WORKER_TOOL']) || 'claude',
-    WORKER_TRANSPORT: (raw.WORKER_TRANSPORT as ProjectConfig['WORKER_TRANSPORT']) || 'proc',
+    WORKER_TRANSPORT: (raw.WORKER_TRANSPORT as ProjectConfig['WORKER_TRANSPORT']) || 'acp-sdk',
     MAX_CONCURRENT_WORKERS: parseInt(raw.MAX_CONCURRENT_WORKERS || '3', 10),
     WORKER_RESTART_LIMIT: parseInt(raw.WORKER_RESTART_LIMIT || '2', 10),
-    AUTOFIX_ATTEMPTS: parseInt(raw.AUTOFIX_ATTEMPTS || '2', 10),
-    WORKER_SESSION_REUSE: raw.WORKER_SESSION_REUSE !== 'false',
     MAX_ACTIONS_PER_TICK: parseInt(raw.MAX_ACTIONS_PER_TICK || '1', 10),
-    ACP_GATEWAY_MODE: (raw.ACP_GATEWAY_MODE as ProjectConfig['ACP_GATEWAY_MODE']) || 'local',
-    ACP_ENDPOINT: raw.ACP_ENDPOINT,
     ACP_AGENT: raw.ACP_AGENT as ProjectConfig['ACP_AGENT'] | undefined,
-    ACP_SESSION_STRATEGY: (raw.ACP_SESSION_STRATEGY as ProjectConfig['ACP_SESSION_STRATEGY']) || 'per-slot',
 
     WORKER_LAUNCH_TIMEOUT_S: parseInt(raw.WORKER_LAUNCH_TIMEOUT_S || '120', 10),
     WORKER_IDLE_TIMEOUT_M: parseInt(raw.WORKER_IDLE_TIMEOUT_M || '15', 10),
@@ -161,13 +137,8 @@ export function loadProjectConf(projectName: string): ProjectConfig {
     MONITOR_AUTO_QA: raw.MONITOR_AUTO_QA === 'true',
     CONFLICT_DEFAULT: (raw.CONFLICT_DEFAULT as 'serial' | 'parallel') || 'serial',
     TICK_LOCK_TIMEOUT_MINUTES: parseInt(raw.TICK_LOCK_TIMEOUT_MINUTES || '30', 10),
-    NEEDS_FIX_MAX_RETRIES: parseInt(raw.NEEDS_FIX_MAX_RETRIES || '3', 10),
-    WORKTREE_RETAIN_HOURS: parseInt(raw.WORKTREE_RETAIN_HOURS || '24', 10),
 
     WORKTREE_DIR: raw.WORKTREE_DIR,
-
-    DEPLOY_ENABLED: raw.DEPLOY_ENABLED === 'true',
-    DEPLOY_SCRIPT: raw.DEPLOY_SCRIPT,
 
     raw,
   };

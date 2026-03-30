@@ -828,7 +828,6 @@ SPS 不会覆盖已存在的 CLAUDE.md / AGENTS.md。
 | 字段 | 必填 | 默认值 | 说明 |
 |------|------|-------|------|
 | `PROJECT_NAME` | 是 | — | 项目名称 |
-| `PROJECT_DISPLAY` | 否 | PROJECT_NAME | 显示名称 |
 | `PROJECT_DIR` | 否 | `~/projects/<project>` | 业务仓库路径 |
 
 #### GitLab
@@ -838,7 +837,6 @@ SPS 不会覆盖已存在的 CLAUDE.md / AGENTS.md。
 | `GITLAB_PROJECT` | 是 | — | GitLab 项目路径（如 `group/repo`） |
 | `GITLAB_PROJECT_ID` | 是 | — | GitLab 项目数字 ID |
 | `GITLAB_MERGE_BRANCH` | 是 | `develop` | MR 目标分支 |
-| `GITLAB_RELEASE_BRANCH` | 否 | `main` | 发布分支 |
 
 #### PM 后端
 
@@ -853,11 +851,9 @@ SPS 不会覆盖已存在的 CLAUDE.md / AGENTS.md。
 | 字段 | 必填 | 默认值 | 说明 |
 |------|------|-------|------|
 | `WORKER_TOOL` | 否 | `claude` | Worker 类型：`claude` / `codex` |
-| `WORKER_MODE` | 否 | `print` | 执行模式：`print`（一次性进程） / `interactive`（tmux TUI） |
+| `WORKER_TRANSPORT` | 否 | `acp-sdk` | Worker 传输方式：`acp-sdk`（ACP JSON-RPC，默认）/ `proc`（一次性进程降级） |
 | `MAX_CONCURRENT_WORKERS` | 否 | `3` | 最大并行 Worker 数 |
 | `WORKER_RESTART_LIMIT` | 否 | `2` | Worker 死亡后最大重启次数 |
-| `AUTOFIX_ATTEMPTS` | 否 | `2` | CI 失败自动修复尝试次数 |
-| `WORKER_SESSION_REUSE` | 否 | `true` | 是否复用 tmux session（仅 interactive 模式） |
 | `MAX_ACTIONS_PER_TICK` | 否 | `1` | 每轮 tick 最大操作数 |
 
 #### 超时与策略
@@ -868,16 +864,12 @@ SPS 不会覆盖已存在的 CLAUDE.md / AGENTS.md。
 | `MONITOR_AUTO_QA` | 否 | `false` | Monitor 是否自动将完成的卡推入 QA |
 | `CONFLICT_DEFAULT` | 否 | `serial` | 冲突域默认策略：`serial` / `parallel` |
 | `TICK_LOCK_TIMEOUT_MINUTES` | 否 | `30` | tick 锁超时分钟数 |
-| `NEEDS_FIX_MAX_RETRIES` | 否 | `3` | NEEDS-FIX 最大重试次数 |
-| `WORKTREE_RETAIN_HOURS` | 否 | `24` | worktree 保留小时数 |
 
-#### 路径与部署
+#### 路径
 
 | 字段 | 必填 | 默认值 | 说明 |
 |------|------|-------|------|
 | `WORKTREE_DIR` | 否 | `~/.coral/worktrees/` | worktree 根目录 |
-| `DEPLOY_ENABLED` | 否 | `false` | 是否启用自动部署 |
-| `DEPLOY_SCRIPT` | 否 | — | 部署脚本路径 |
 
 ### 配置示例
 
@@ -885,7 +877,6 @@ SPS 不会覆盖已存在的 CLAUDE.md / AGENTS.md。
 # ~/.coral/projects/my-project/conf
 
 PROJECT_NAME="my-project"
-PROJECT_DISPLAY="My Project"
 PROJECT_DIR="/home/user/projects/my-project"
 
 # GitLab
@@ -900,7 +891,6 @@ PLANE_PROJECT_ID="project-uuid-here"
 
 # Worker
 WORKER_TOOL="claude"
-WORKER_MODE="print"              # print（推荐）或 interactive（tmux 降级）
 MAX_CONCURRENT_WORKERS=3
 MAX_ACTIONS_PER_TICK=1
 

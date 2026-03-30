@@ -9,32 +9,22 @@ import { validateConfig, loadProjectConf, loadGlobalEnv, type ProjectConfig, typ
 function makeConfig(overrides?: Partial<ProjectConfig>): ProjectConfig {
   return {
     PROJECT_NAME: 'test-project',
-    PROJECT_DISPLAY: 'Test Project',
     GITLAB_PROJECT: 'group/test-project',
     GITLAB_PROJECT_ID: '42',
     GITLAB_MERGE_BRANCH: 'develop',
-    GITLAB_RELEASE_BRANCH: 'main',
     PM_TOOL: 'plane',
-    CI_MODE: 'none',
     MR_MODE: 'none',
     WORKER_TOOL: 'claude',
     WORKER_TRANSPORT: 'proc',
     MAX_CONCURRENT_WORKERS: 3,
     WORKER_RESTART_LIMIT: 2,
-    AUTOFIX_ATTEMPTS: 2,
-    WORKER_SESSION_REUSE: true,
     MAX_ACTIONS_PER_TICK: 1,
-    ACP_GATEWAY_MODE: 'local',
-    ACP_SESSION_STRATEGY: 'per-slot',
     WORKER_LAUNCH_TIMEOUT_S: 120,
     WORKER_IDLE_TIMEOUT_M: 15,
     INPROGRESS_TIMEOUT_HOURS: 8,
     MONITOR_AUTO_QA: false,
     CONFLICT_DEFAULT: 'serial',
     TICK_LOCK_TIMEOUT_MINUTES: 30,
-    NEEDS_FIX_MAX_RETRIES: 3,
-    WORKTREE_RETAIN_HOURS: 24,
-    DEPLOY_ENABLED: false,
     raw: {} as RawConfig,
     ...overrides,
   };
@@ -210,14 +200,12 @@ describe('loadProjectConf', () => {
 
     const config = loadProjectConf('minimal');
     expect(config.WORKER_TOOL).toBe('claude');
-    expect(config.WORKER_TRANSPORT).toBe('proc');
+    expect(config.WORKER_TRANSPORT).toBe('acp-sdk');
     expect(config.MAX_CONCURRENT_WORKERS).toBe(3);
     expect(config.WORKER_RESTART_LIMIT).toBe(2);
-    expect(config.CI_MODE).toBe('none');
     expect(config.MR_MODE).toBe('none');
     expect(config.PM_TOOL).toBe('trello');
     expect(config.CONFLICT_DEFAULT).toBe('serial');
-    expect(config.DEPLOY_ENABLED).toBe(false);
     expect(config.MONITOR_AUTO_QA).toBe(false);
   });
 
@@ -248,15 +236,11 @@ describe('loadProjectConf', () => {
       'PROJECT_NAME=bools',
       'GITLAB_PROJECT=g/bools',
       'GITLAB_MERGE_BRANCH=main',
-      'DEPLOY_ENABLED=true',
       'MONITOR_AUTO_QA=true',
-      'WORKER_SESSION_REUSE=false',
     ].join('\n'));
 
     const config = loadProjectConf('bools');
-    expect(config.DEPLOY_ENABLED).toBe(true);
     expect(config.MONITOR_AUTO_QA).toBe(true);
-    expect(config.WORKER_SESSION_REUSE).toBe(false);
   });
 
   it('strips __PLACEHOLDER__ values', () => {
@@ -265,17 +249,13 @@ describe('loadProjectConf', () => {
       'GITLAB_PROJECT=g/ph',
       'GITLAB_MERGE_BRANCH=main',
       'GITLAB_PROJECT_ID=__PROJECT_ID__',
-      'DEPLOY_SCRIPT=__DEPLOY_SCRIPT__',
     ].join('\n'));
 
     const config = loadProjectConf('placeholders');
     expect(config.GITLAB_PROJECT_ID).toBe('');
-    // DEPLOY_SCRIPT is stripped to '' by placeholder logic, then assigned to raw
-    // The config property reads from raw, so it will be '' not undefined
-    expect(config.DEPLOY_SCRIPT).toBeFalsy();
   });
 
-  it('uses project name as fallback for PROJECT_NAME and PROJECT_DISPLAY', () => {
+  it('uses project name as fallback for PROJECT_NAME', () => {
     writeConf('fallback', [
       'GITLAB_PROJECT=g/fb',
       'GITLAB_MERGE_BRANCH=main',
@@ -283,7 +263,6 @@ describe('loadProjectConf', () => {
 
     const config = loadProjectConf('fallback');
     expect(config.PROJECT_NAME).toBe('fallback');
-    expect(config.PROJECT_DISPLAY).toBe('fallback');
   });
 
   it('merges global env with project conf', () => {
@@ -368,16 +347,7 @@ describe('loadProjectConf', () => {
     expect(config.PROJECT_NAME).toBe('single-quoted');
   });
 
-  it('parses all CI_MODE and MR_MODE variants', () => {
-    for (const ci of ['gitlab', 'local', 'none'] as const) {
-      writeConf(`ci-${ci}`, [
-        'PROJECT_NAME=test',
-        'GITLAB_PROJECT=g/test',
-        'GITLAB_MERGE_BRANCH=main',
-        `CI_MODE=${ci}`,
-      ].join('\n'));
-      expect(loadProjectConf(`ci-${ci}`).CI_MODE).toBe(ci);
-    }
+  it('parses all MR_MODE variants', () => {
     for (const mr of ['none', 'create'] as const) {
       writeConf(`mr-${mr}`, [
         'PROJECT_NAME=test',

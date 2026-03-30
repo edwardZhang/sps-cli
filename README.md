@@ -936,7 +936,6 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `PROJECT_NAME` | Yes | -- | Project name |
-| `PROJECT_DISPLAY` | No | PROJECT_NAME | Display name |
 | `PROJECT_DIR` | No | `~/projects/<project>` | Project repository path |
 
 #### GitLab
@@ -946,7 +945,6 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 | `GITLAB_PROJECT` | Yes | -- | GitLab project path (e.g., `group/repo`) |
 | `GITLAB_PROJECT_ID` | Yes | -- | GitLab project numeric ID |
 | `GITLAB_MERGE_BRANCH` | Yes | `develop` | MR target branch |
-| `GITLAB_RELEASE_BRANCH` | No | `main` | Release branch |
 
 #### PM Backend
 
@@ -962,13 +960,9 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 |-------|----------|---------|-------------|
 | `WORKER_TOOL` | No | `claude` | Worker type: `claude` / `codex` |
 | `WORKER_TRANSPORT` | No | `acp-sdk` | Worker transport: `acp-sdk` (ACP JSON-RPC, default), `proc` (one-shot fallback) |
-| `ACP_GATEWAY_MODE` | No | `local` | ACP gateway deployment mode; current releases support `local` only |
 | `ACP_AGENT` | No | `WORKER_TOOL` | Default ACP tool when `sps acp` does not receive a tool override |
-| `ACP_SESSION_STRATEGY` | No | `per-slot` | Session allocation strategy; current releases support `per-slot` only |
 | `MAX_CONCURRENT_WORKERS` | No | `3` | Maximum parallel Workers (worker slot ceiling) |
 | `WORKER_RESTART_LIMIT` | No | `2` | Maximum restart count after Worker death |
-| `AUTOFIX_ATTEMPTS` | No | `2` | CI failure auto-fix attempt count |
-| `WORKER_SESSION_REUSE` | No | `true` | Whether to reuse ACP sessions across tasks |
 | `MAX_ACTIONS_PER_TICK` | No | `1` | Maximum launches per tick cycle; raise with `MAX_CONCURRENT_WORKERS` if one tick should fill all slots |
 
 #### Timeouts and Policies
@@ -979,16 +973,12 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 | `MONITOR_AUTO_QA` | No | `false` | Whether Monitor auto-pushes completed cards to QA |
 | `CONFLICT_DEFAULT` | No | `serial` | Default conflict domain strategy: `serial` / `parallel` |
 | `TICK_LOCK_TIMEOUT_MINUTES` | No | `30` | Tick lock timeout in minutes |
-| `NEEDS_FIX_MAX_RETRIES` | No | `3` | Maximum NEEDS-FIX retry count |
-| `WORKTREE_RETAIN_HOURS` | No | `24` | Worktree retention in hours |
 
-#### Paths and Deployment
+#### Paths
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `WORKTREE_DIR` | No | `~/.coral/worktrees/` | Worktree root directory |
-| `DEPLOY_ENABLED` | No | `false` | Whether to enable auto-deployment |
-| `DEPLOY_SCRIPT` | No | -- | Deployment script path |
 
 ### Configuration Example
 
@@ -996,7 +986,6 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 # ~/.coral/projects/my-project/conf
 
 PROJECT_NAME="my-project"
-PROJECT_DISPLAY="My Project"
 PROJECT_DIR="/home/user/projects/my-project"
 
 # GitLab
@@ -1011,10 +1000,6 @@ PLANE_PROJECT_ID="project-uuid-here"
 
 # Worker
 WORKER_TOOL="claude"
-WORKER_TRANSPORT="acp-sdk"       # acp-sdk (default) or proc (one-shot fallback)
-ACP_GATEWAY_MODE="local"
-ACP_AGENT="claude"
-ACP_SESSION_STRATEGY="per-slot"
 MAX_CONCURRENT_WORKERS=3
 MAX_ACTIONS_PER_TICK=1
 
