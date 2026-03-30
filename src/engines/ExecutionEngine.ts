@@ -74,8 +74,19 @@ export class ExecutionEngine {
       // 2. Process Backlog cards (prepare: branch + worktree + move to Todo)
       //    Prepare does NOT consume launch quota — it only sets up the
       //    environment. This allows prepare + launch to happen in a single tick.
+      //    However, we limit prepares to available capacity: only prepare as
+      //    many cards as there are idle slots + remaining launch quota. This
+      //    prevents cards piling up in Todo when workers can't launch.
       const backlogCards = await this.taskBackend.listByState('Backlog');
+      const currentState = this.runtimeStore.readState();
+      const idleSlots = Object.values(currentState.workers).filter(w => w.status === 'idle').length;
+      const todoCards0 = await this.taskBackend.listByState('Todo');
+      const todoCount = todoCards0.filter(c => !this.shouldSkip(c)).length;
+      const prepareLimit = Math.max(0, idleSlots - todoCount);
+      let preparedThisTick = 0;
+
       for (const card of backlogCards) {
+        if (preparedThisTick >= prepareLimit) break;
         // Auto-clean auxiliary labels on Backlog cards — if a card was manually
         // moved back to Planning/Backlog, stale labels should not block it.
         await this.cleanAuxiliaryLabels(card);
@@ -85,9 +96,7 @@ export class ExecutionEngine {
         }
         const prepareResult = await this.prepareCard(card, opts);
         actions.push(prepareResult);
-        // NOTE: prepare does not count toward actionsThisTick.
-        // It only creates branch + worktree + moves to Todo.
-        // The real throttle point is worker launch (step 3).
+        if (prepareResult.result === 'ok') preparedThisTick++;
       }
 
       // 3. Process Todo cards (launch: claim + context + worker + move to Inprogress)
