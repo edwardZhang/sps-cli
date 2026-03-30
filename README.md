@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.24.0**
+**v0.25.2**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -12,16 +12,16 @@ SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool d
 Create cards -> Start pipeline -> Development worker completes branch work -> QA worker integrates branch -> Notify completion
 ```
 
-**v0.24.0 — Worker Manager architecture**: All worker lifecycle management is now mediated by the `WorkerManager` ACP interface (`src/manager/worker-manager.ts`). ExecutionEngine and CloseoutEngine call `WorkerManager.run()` instead of spawning workers directly. Key changes:
+**v0.25.x highlights**:
 
-- **WorkerManager**: Unified interface wrapping Supervisor, CompletionJudge, ResourceLimiter. Methods: `run/resume/cancel/sendInput/confirm/inspect/onEvent/recover`.
-- **IntegrationQueue**: Per project+targetBranch FIFO queue. Integration tasks serialize; development tasks parallelize.
-- **SPSEventHandler**: Event-driven PM operations. Worker exit → CompletionJudge → WorkerEvent → EventHandler moves cards, adds labels, sends notifications.
-- **Recovery**: Decision matrix (R1-R9) with rescue push, worktree rebuild, integration queue reconstruction.
-- **Timeouts**: Soft timeout emits status event; hard timeout (1.5x) force-kills. All timers use `.unref()`.
-- **pendingPMActions**: Failed PM operations saved to state.json and retried next tick cycle.
+- **Prompt lifecycle refactor (v0.25.0)**: Each engine generates its own phase prompt in-memory and passes via stdin. No cross-phase file dependencies. Integration prompt includes worktree checkout limitation instructions.
+- **False alarm elimination (v0.25.1)**: Monitor grace period (90s) prevents false STALE-RUNTIME labels. CompletionJudge checks branch push status before exit code in integration phase. Worktree cleanup deferred 30s for worker shutdown.
+- **sps reset command (v0.25.2)**: One-command reset for re-execution. Cleans state, worktrees, branches, moves cards to Planning.
+- **Unit test suite (v0.24.5+)**: 202 tests with Vitest, 9 core modules at 80%+ coverage.
+- **Notification emojis**: Per-event emoji (✅⚠️❌👆↔️▶️🎉) with consistent placement.
+- **Local timezone logging**: Console and log files use local time. Log rotation on tick restart.
 
-The two-phase state machine continues: `Inprogress` = development, `QA` = integration/merge. One-shot `proc` workers (`codex exec` / `claude -p`) remain the main autonomous path. PTY/ACP available for `sps acp`, dashboard, and manual diagnostics.
+**Architecture**: Two-phase state machine (`Inprogress` = development, `QA` = integration/merge). WorkerManager ACP interface mediates all worker lifecycle. IntegrationQueue serializes merges. One-shot `proc` workers (`codex exec` / `claude -p`) are the main autonomous path.
 
 ## Table of Contents
 
@@ -44,6 +44,9 @@ The two-phase state machine continues: `Inprogress` = development, `QA` = integr
   - [sps pm](#sps-pm)
   - [sps qa tick](#sps-qa-tick)
   - [sps monitor tick](#sps-monitor-tick)
+  - [sps stop](#sps-stop)
+  - [sps reset](#sps-reset)
+  - [sps logs](#sps-logs)
 - [Worker Rule Files](#worker-rule-files)
 - [Project Configuration](#project-configuration)
 - [Multi-Project Parallel Execution](#multi-project-parallel-execution)
@@ -827,19 +830,65 @@ sps monitor tick my-project --json
 
 ---
 
+### sps stop
+
+Stop running tick process(es).
+
+```bash
+sps stop <project>    # stop specific project
+sps stop --all        # stop all running ticks
+```
+
+---
+
+### sps reset
+
+Reset cards for re-execution. Performs 5 atomic steps: stop tick, clean state, remove worktrees + branches, move cards to Planning, report.
+
+```bash
+sps reset <project>              # reset all non-Done cards
+sps reset <project> --all        # reset ALL cards including Done
+sps reset <project> --card 5     # reset specific card
+sps reset <project> --card 5,6,7 # reset multiple cards
+```
+
+Typical workflow after version upgrade:
+
+```bash
+npm i -g @coralai/sps-cli    # upgrade
+sps reset my-project          # clean reset
+sps tick my-project           # re-run
+```
+
+---
+
+### sps logs
+
+Real-time log viewer.
+
+```bash
+sps logs [project]                    # follow pipeline log
+sps logs <project> --err              # follow error log
+sps logs <project> --lines 50         # show last 50 lines
+sps logs <project> --no-follow        # print and exit
+```
+
+---
+
 ## Worker Rule Files
 
-`sps doctor --fix` generates the following files in the project repository root and auto-commits them:
+`sps doctor --fix` generates rule files based on the configured `WORKER_TOOL`:
 
-| File | Purpose | Committed to git |
-|------|---------|-----------------|
-| `CLAUDE.md` | Project rules for Claude Code Worker | Yes |
-| `AGENTS.md` | Project rules for Codex Worker | Yes |
-| `.sps/task_prompt.txt` | Development-phase compatibility prompt alias | No (.gitignore) |
-| `.sps/development_prompt.txt` | Development-phase worker prompt | No (.gitignore) |
-| `.sps/integration_prompt.txt` | Integration-phase worker prompt | No (.gitignore) |
-| `docs/DECISIONS.md` | Project knowledge base -- architecture decisions and technical choices | Yes (Worker auto-maintained) |
-| `docs/CHANGELOG.md` | Project knowledge base -- change log | Yes (Worker auto-maintained) |
+| File | Purpose | Required by | Committed to git |
+|------|---------|-------------|-----------------|
+| `CLAUDE.md` | Project rules for Claude Code Worker | `WORKER_TOOL=claude` | Yes |
+| `AGENTS.md` | Project rules for Codex Worker | `WORKER_TOOL=codex` | Yes |
+| `.sps/development_prompt.txt` | Development-phase prompt (debug archive) | — | No (.gitignore) |
+| `.sps/integration_prompt.txt` | Integration-phase prompt (debug archive) | — | No (.gitignore) |
+| `docs/DECISIONS.md` | Architecture decisions (worker auto-maintained) | — | Yes |
+| `docs/CHANGELOG.md` | Change log (worker auto-maintained) | — | Yes |
+
+**Note**: Prompts are generated in-memory and passed via stdin (v0.25.0+). The `.sps/` files are debug archives only — their absence does not block the pipeline.
 
 **Skill Profile injection (v0.16+):**
 
