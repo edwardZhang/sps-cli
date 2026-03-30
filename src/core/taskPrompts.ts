@@ -152,17 +152,20 @@ Rules:
 2. Complete the implementation for this task
 3. Run appropriate validation or tests when needed
 4. Commit the finished work to the current task branch ${ctx.branchName}
-5. Before finishing, update docs/CHANGELOG.md with a concise summary of the implementation completed in this phase
-6. If you made architecture or technical decisions, append them to docs/DECISIONS.md
-7. Do not merge into the target branch ${ctx.targetBranch} in this phase
-8. Do not run merge scripts or perform integration work in this phase
-9. Do not push or update the target branch in this phase
-10. If you are blocked by permissions, confirmations, or missing environment requirements, report the exact blocker
-11. Say "done" only after the implementation work is complete and committed on ${ctx.branchName}
+5. Push the branch: git push origin ${ctx.branchName}
+6. Before finishing, update docs/CHANGELOG.md with a concise summary of the implementation completed in this phase
+7. If you made architecture or technical decisions, append them to docs/DECISIONS.md
+8. FORBIDDEN: Do NOT push to or merge into ${ctx.targetBranch}. Specifically:
+   - Do NOT run: git push origin ${ctx.branchName}:${ctx.targetBranch}
+   - Do NOT run: git merge ${ctx.targetBranch}
+   - Do NOT run: git checkout ${ctx.targetBranch}
+   Integration is handled by a separate QA worker in the next phase.
+9. If you are blocked by permissions, confirmations, or missing environment requirements, report the exact blocker
+10. Say "done" only after the implementation work is committed and pushed on ${ctx.branchName}
 
 Completion rule:
-- The intended end of this phase is: the implementation is complete and committed on branch ${ctx.branchName}.
-- Do not merge into ${ctx.targetBranch} in this phase.`;
+- Push the feature branch: git push origin ${ctx.branchName}
+- Do NOT push to ${ctx.targetBranch} — a separate integration worker handles merging.`;
 }
 
 export function buildResumePrompt(

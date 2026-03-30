@@ -66,6 +66,15 @@ export class IntegrationQueue {
     const key = queueKey(entry.project, entry.targetBranch);
     const q = state.integrationQueues[key] ?? emptyQueue();
 
+    // Deduplicate: if task is already active or waiting, return current position
+    if (q.active?.taskId === entry.taskId) {
+      return { queued: false, position: 0 };
+    }
+    const existingIdx = q.waiting.findIndex((e) => e.taskId === entry.taskId);
+    if (existingIdx !== -1) {
+      return { queued: true, position: existingIdx + 1 };
+    }
+
     if (!q.active) {
       q.active = entry;
       state.integrationQueues[key] = q;
