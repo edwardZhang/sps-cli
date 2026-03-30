@@ -308,8 +308,10 @@ export class WorkerManagerImpl implements WorkerManager {
       this.integrationQueue.enqueue(entry);
     }
 
-    if (!this.resourceLimiter.tryAcquire()) {
-      this.log(`Resource exhausted for task ${taskId}`);
+    const acquireResult = this.resourceLimiter.tryAcquireDetailed();
+    if (!acquireResult.acquired) {
+      const reason = this.resourceLimiter.formatBlockReason(acquireResult.stats);
+      this.log(`Resource exhausted for task ${taskId}: ${reason}`);
       // If we just registered as active in the queue, roll back
       if (phase === 'integration') {
         this.integrationQueue.dequeueNext(project, targetBranch);

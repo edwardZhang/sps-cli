@@ -32,7 +32,7 @@ export interface AcquireResult {
 const DEFAULT_CONFIG: ResourceConfig = {
   maxGlobalWorkers: 30,
   staggerDelayMs: 5_000,
-  maxMemoryPercent: 80,
+  maxMemoryPercent: 90,
 };
 
 export class ResourceLimiter {

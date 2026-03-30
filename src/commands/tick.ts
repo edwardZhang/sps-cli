@@ -37,7 +37,7 @@ function getSharedModules() {
   if (!sharedResourceLimiter) {
     const maxWorkers = parseInt(process.env.SPS_MANAGER_MAX_WORKERS || '30', 10);
     const staggerMs = parseInt(process.env.SPS_MANAGER_STAGGER_MS || '5000', 10);
-    const maxMem = parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '80', 10);
+    const maxMem = parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '90', 10);
     sharedResourceLimiter = new ResourceLimiter({
       maxGlobalWorkers: maxWorkers,
       staggerDelayMs: staggerMs,
