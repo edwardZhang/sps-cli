@@ -183,7 +183,23 @@ export class MonitorEngine {
       const branchName = this.buildBranchName(card);
 
       if (!runtime.slotName || !runtime.slot) {
-        if (!runtime.lease) {
+        // Grace period: when a worker just completed, EventHandler releases
+        // the slot (sync) but PM move to QA is async. During this window
+        // the lease exists with phase=merging/slot=null while PM is still
+        // Inprogress. Allow 90 seconds for the PM operation to complete
+        // before treating it as stale.
+        if (runtime.lease) {
+          const transitionAge = Date.now() - new Date(runtime.lease.lastTransitionAt).getTime();
+          if (transitionAge < 90_000) {
+            this.log.debug(`seq ${card.seq}: in transition (lease.phase=${runtime.lease.phase}, ${Math.round(transitionAge / 1000)}s ago) — skipping stale check`);
+            continue;
+          }
+          const mrStatus = await this.repoBackend.getMrStatus(branchName);
+          if (mrStatus.state === 'merged') {
+            this.log.info(`seq ${card.seq}: Card already merged, skipping stale check`);
+            continue;
+          }
+        } else {
           const mrStatus = await this.repoBackend.getMrStatus(branchName);
           if (mrStatus.state === 'merged') {
             this.log.info(`seq ${card.seq}: Card already merged while closeout was releasing resources, skipping stale check`);
@@ -537,6 +553,11 @@ export class MonitorEngine {
     for (const [seq, lease] of Object.entries(state.leases)) {
       if (!['coding', 'merging', 'resolving_conflict', 'waiting_confirmation', 'closing'].includes(lease.phase)) continue;
       if (!lease.slot) {
+        // Grace period: after development completes, lease transitions to
+        // phase=merging with slot=null while EventHandler processes PM move.
+        // This is a normal transient state, not a real discrepancy.
+        const transitionAge = Date.now() - new Date(lease.lastTransitionAt).getTime();
+        if (transitionAge < 90_000) continue;
         discrepancies.push(`seq:${seq}: lease phase=${lease.phase} but no slot is assigned`);
         continue;
       }

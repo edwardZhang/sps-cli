@@ -489,10 +489,24 @@ export class CloseoutEngine {
     const queue = state.worktreeCleanup ?? [];
     if (queue.length === 0) return;
 
-    this.log.info(`Cleaning up ${queue.length} worktree(s)`);
-    const remaining: typeof queue = [];
+    // Only clean up entries marked at least 30 seconds ago.
+    // Entries marked in the current tick may still have worker processes
+    // shutting down (SIGTERM grace period). Defer to next tick.
+    const now = Date.now();
+    const ready = queue.filter(e => now - new Date(e.markedAt).getTime() >= 30_000);
+    const deferred = queue.filter(e => now - new Date(e.markedAt).getTime() < 30_000);
 
-    for (const entry of queue) {
+    if (ready.length === 0) {
+      if (deferred.length > 0) {
+        this.log.debug(`${deferred.length} worktree(s) deferred — waiting for worker shutdown`);
+      }
+      return;
+    }
+
+    this.log.info(`Cleaning up ${ready.length} worktree(s)`);
+    const remaining: typeof queue = [...deferred];
+
+    for (const entry of ready) {
       try {
         await this.repoBackend.removeWorktree(
           this.ctx.paths.repoDir,

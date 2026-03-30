@@ -74,6 +74,15 @@ export class CompletionJudge {
     }
 
     if (phase === 'integration') {
+      // Check if branch was pushed to target (worker did git push origin branch:target)
+      // even if exit code is non-zero (claude/codex may exit 1 after successful push)
+      const pushed = branchPushed(worktree, branch);
+      if (pushed) {
+        const ahead = branchCommitsAhead(worktree, branch, baseBranch);
+        if (ahead > 0) {
+          return { status: 'completed', reason: 'branch_pushed' };
+        }
+      }
       if (exitCode === 0) {
         return { status: 'incomplete', reason: 'integration_not_merged' };
       }
