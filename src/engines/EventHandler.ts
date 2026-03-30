@@ -109,6 +109,8 @@ export class SPSEventHandler {
 
     if (isIntegration) {
       await this.safeAction({ type: 'move', taskId, project: this.project, target: 'Done' });
+      // Mark worktree for cleanup — the task is fully done
+      this.markWorktreeCleanup(taskId, event);
     } else {
       await this.safeAction({ type: 'move', taskId, project: this.project, target: 'QA' });
     }
@@ -232,6 +234,35 @@ export class SPSEventHandler {
       await this.notifier.send(message);
     } catch (err) {
       this.logError('notify', err);
+    }
+  }
+
+  // ─── Worktree Cleanup ───────────────────────────────────────────
+
+  private markWorktreeCleanup(taskId: string, event: WorkerEvent): void {
+    try {
+      const state = this.runtimeStore.readState();
+      // Try to find worktree path from lease, evidence, or event context
+      const lease = state.leases[taskId];
+      const evidence = state.worktreeEvidence?.[taskId];
+      const worktreePath = lease?.worktree || evidence?.worktree || null;
+      const branch = lease?.branch || event.slot || null;
+
+      if (!worktreePath || !branch) {
+        this.log(`No worktree info for task ${taskId} — skipping cleanup mark`);
+        return;
+      }
+
+      const cleanup = state.worktreeCleanup ?? [];
+      if (cleanup.some(e => e.worktreePath === worktreePath)) return; // already marked
+
+      cleanup.push({ branch, worktreePath, markedAt: new Date().toISOString() });
+      this.runtimeStore.updateState('event-handler-worktree-mark', (draft) => {
+        draft.worktreeCleanup = cleanup;
+      });
+      this.log(`Marked worktree for cleanup: ${worktreePath}`);
+    } catch (err) {
+      this.logError('markWorktreeCleanup', err);
     }
   }
 
