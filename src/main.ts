@@ -54,8 +54,8 @@ interface CommandInfo {
 const COMMANDS: Record<string, CommandInfo> = {
   setup:     { desc: '初始环境配置（凭证、目录、配置文件）', usage: 'sps setup [--force]',
     examples: ['sps setup', 'sps setup --force'] },
-  tick:      { desc: '运行持续流水线（--once 单次执行）', usage: 'sps tick <project> [--once] [--json]',
-    examples: ['sps tick my-project', 'sps tick my-project --once', 'sps tick proj1 proj2'] },
+  tick:      { desc: '运行持续流水线', usage: 'sps tick <project> [--json]',
+    examples: ['sps tick my-project', 'sps tick proj1 proj2'] },
   card:      { desc: '卡片管理（创建、看板）', usage: 'sps card <子命令> <project> [参数]', subs: {
     add: '创建新任务卡片',
     dashboard: '展示卡片看板',

@@ -174,7 +174,6 @@ function createRunner(project: string): ProjectRunner | null {
  * Projects are ticked sequentially within each cycle. One project's error
  * does not affect others.
  *
- * --once: single tick cycle, then exit.
  */
 export async function executeTick(
   projects: string[],
@@ -183,7 +182,6 @@ export async function executeTick(
   const globalLog = new Logger('tick', '');
   const jsonOutput = !!flags.json;
   const dryRun = !!flags['dry-run'];
-  const once = !!flags.once;
   const interval = DEFAULT_INTERVAL_S;
 
   if (projects.length === 0) {
@@ -255,23 +253,6 @@ export async function executeTick(
   process.on('exit', cleanupAll);
   process.on('SIGINT', () => { cleanupAll(); process.exit(130); });
   process.on('SIGTERM', () => { cleanupAll(); process.exit(143); });
-
-  // ─── Single tick mode ──────────────────────────────────────────
-  if (once) {
-    const results: TickResult[] = [];
-    for (const runner of runners) {
-      const result = await runOneTick(runner, dryRun);
-      results.push(result);
-    }
-    // Wait for any pending supervisor exit callbacks to complete
-    await supervisor.drainPendingActions();
-    if (jsonOutput) {
-      outputJson(runners.length === 1 ? results[0] : results);
-    }
-    cleanupAll();
-    const worstExit = Math.max(...results.map((r) => r.exitCode));
-    process.exit(worstExit);
-  }
 
   // ─── Continuous mode ───────────────────────────────────────────
   for (const runner of runners) {

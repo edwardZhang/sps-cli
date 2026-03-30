@@ -400,7 +400,7 @@ Profile files are located at `~/.coral/profiles/<name>.md`. When no label is pre
 Unified main loop -- orchestrates all engines, executing scheduler -> qa -> pipeline -> monitor in sequence.
 
 ```bash
-sps tick <project> [project2] [project3] ... [--once] [--json] [--dry-run]
+sps tick <project> [project2] [project3] ... [--json] [--dry-run]
 ```
 
 **Execution order (per tick cycle):**
@@ -415,7 +415,6 @@ sps tick <project> [project2] [project3] ... [--once] [--json] [--dry-run]
 | Mode | Behavior |
 |------|----------|
 | Continuous (default) | Cycles every 30 seconds, auto-exits when all cards are complete |
-| Single-run (`--once`) | Executes one tick cycle then exits immediately |
 
 **Concurrency mutex:**
 
@@ -444,11 +443,11 @@ sps tick my-project
 # Multi-project simultaneous management
 sps tick project-a project-b project-c
 
-# Single execution + JSON output (suitable for cron)
-sps tick my-project --once --json
+# JSON output (suitable for cron)
+sps tick my-project --json
 
 # Preview mode
-sps tick my-project --once --dry-run
+sps tick my-project --dry-run
 ```
 
 **JSON output format:**
