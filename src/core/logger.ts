@@ -20,6 +20,16 @@ export interface EventEntry {
   meta?: Record<string, unknown>;
 }
 
+/**
+ * Format a Date as local time: YYYY-MM-DD HH:mm:ss.SSS
+ * Used for console and log file output (human-readable).
+ */
+function formatLocalTimestamp(d: Date): string {
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const pad3 = (n: number) => String(n).padStart(3, '0');
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${pad3(d.getMilliseconds())}`;
+}
+
 export class Logger {
   private component: string;
   private project: string;
@@ -40,20 +50,26 @@ export class Logger {
   }
 
   private log(level: string, msg: string, color: string, icon: string) {
-    const ts = new Date().toISOString();
+    const now = new Date();
+    const localTs = formatLocalTimestamp(now);
+    const utcTs = now.toISOString();
     const tag = this.project ? `${this.project}/${this.component}` : this.component;
-    const prefix = `${COLORS.gray}${ts}${COLORS.reset} ${COLORS.cyan}[${tag}]${COLORS.reset}`;
+
+    // Console: local time for readability
+    const prefix = `${COLORS.gray}${localTs}${COLORS.reset} ${COLORS.cyan}[${tag}]${COLORS.reset}`;
     console.error(`${prefix} ${color}${icon} ${msg}${COLORS.reset}`);
 
+    // File: local time for consistency with console
     if (this.logsDir) {
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       this.appendToFile(
-        resolve(this.logsDir, `pipeline-${ts.slice(0, 10)}.log`),
-        `${ts} [${tag}] ${level} ${msg}`
+        resolve(this.logsDir, `pipeline-${dateStr}.log`),
+        `${localTs} [${tag}] ${level} ${msg}`
       );
       if (level === 'WARN' || level === 'ERROR') {
         this.appendToFile(
-          resolve(this.logsDir, `error-${ts.slice(0, 10)}.log`),
-          `${ts} [${tag}] ${level} ${msg}`
+          resolve(this.logsDir, `error-${dateStr}.log`),
+          `${localTs} [${tag}] ${level} ${msg}`
         );
       }
     }
