@@ -68,6 +68,8 @@ export class WorkerManagerImpl implements WorkerManager {
   private readonly eventHandlers: WorkerEventHandler[] = [];
   private readonly taskSlotMap = new Map<string, string>();
   private readonly timeouts = new Map<string, NodeJS.Timeout>();
+  /** Abort controllers for ACP completion monitors keyed by slot name. */
+  private readonly acpMonitorAborts = new Map<string, AbortController>();
 
   constructor(deps: WorkerManagerDeps) {
     this.supervisor = deps.supervisor;
@@ -465,12 +467,27 @@ export class WorkerManagerImpl implements WorkerManager {
     const runtime = this.agentRuntime;
     const pollIntervalMs = 10_000; // 10s
 
+    // Abort any previous monitor for this slot (prevents ghost polls
+    // from a prior phase, e.g. development monitor still running when
+    // integration starts on the same slot).
+    this.acpMonitorAborts.get(ctx.slot)?.abort();
+    const abortController = new AbortController();
+    this.acpMonitorAborts.set(ctx.slot, abortController);
+
     const poll = async () => {
+      if (abortController.signal.aborted) {
+        this.log(`ACP monitor: ${ctx.taskId} aborted (slot ${ctx.slot} reused)`);
+        return;
+      }
+
       try {
         const state = await runtime.inspect(ctx.slot.replace(/^worker-/, ''));
+        if (abortController.signal.aborted) return;
+
         const session = Object.values(state.sessions).find(s => s.sessionName === ctx.sessionName);
         if (!session) {
           this.log(`ACP monitor: session ${ctx.sessionName} not found — treating as lost`);
+          this.acpMonitorAborts.delete(ctx.slot);
           await this.handleExit({ ...ctx, exitCode: 1 });
           return;
         }
@@ -479,12 +496,14 @@ export class WorkerManagerImpl implements WorkerManager {
         if (runStatus === 'completed') {
           this.log(`ACP monitor: ${ctx.taskId} completed`);
           this.clearAcpSessionRun(ctx.sessionName);
+          this.acpMonitorAborts.delete(ctx.slot);
           await this.handleExit({ ...ctx, exitCode: 0 });
           return;
         }
         if (runStatus === 'failed' || runStatus === 'cancelled' || runStatus === 'lost') {
           this.log(`ACP monitor: ${ctx.taskId} ${runStatus}`);
           this.clearAcpSessionRun(ctx.sessionName);
+          this.acpMonitorAborts.delete(ctx.slot);
           await this.handleExit({ ...ctx, exitCode: 1 });
           return;
         }
@@ -492,6 +511,7 @@ export class WorkerManagerImpl implements WorkerManager {
         // Still running — poll again
         setTimeout(poll, pollIntervalMs);
       } catch (err) {
+        if (abortController.signal.aborted) return;
         this.log(`ACP monitor error for ${ctx.taskId}: ${err instanceof Error ? err.message : String(err)}`);
         setTimeout(poll, pollIntervalMs);
       }
