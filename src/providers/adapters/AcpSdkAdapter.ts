@@ -276,6 +276,18 @@ export class AcpSdkAdapter implements ACPClient {
         : 'failed';
     } else if (acc.hasPendingPermission) {
       runState = 'needs_confirmation';
+    } else if (acc.lastUpdateAt && acc.getRecentText().length > 0) {
+      // Idle detection: if agent has produced output but no updates for 60s,
+      // treat as completed. Some ACP adapters (e.g. codex-acp) may not
+      // resolve the prompt() call even after the agent finishes.
+      const idleMs = Date.now() - new Date(acc.lastUpdateAt).getTime();
+      if (idleMs > 60_000) {
+        acc.stopReason = 'end_turn';
+        session.activePromise = null;
+        runState = 'completed';
+      } else {
+        runState = 'running';
+      }
     } else {
       runState = 'running';
     }
