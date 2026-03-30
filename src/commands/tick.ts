@@ -385,6 +385,11 @@ async function checkAllDone(
       return false;
     }
   }
+
+  // Don't exit while worktree cleanup is pending — one more tick needed
+  const cleanupQueue = state.worktreeCleanup ?? [];
+  if (cleanupQueue.length > 0) return false;
+
   return true;
 }
 
