@@ -1,15 +1,15 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ProjectContext } from '../core/context.js';
-import { resolveWorkflowTransport } from '../core/config.js';
+import { resolveWorkflowTransport, resolveGitlabProjectId } from '../core/config.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { CommandResult, ActionRecord, Card, RecommendedAction } from '../models/types.js';
 import type { WorkerManager, TaskRunRequest } from '../manager/worker-manager.js';
 import { IntegrationQueue } from '../manager/integration-queue.js';
-import { INTEGRATION_PROMPT_FILE, LEGACY_TASK_PROMPT_FILE } from '../core/taskPrompts.js';
+import { buildPhasePrompt, INTEGRATION_PROMPT_FILE } from '../core/taskPrompts.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { Logger } from '../core/logger.js';
@@ -234,19 +234,8 @@ export class CloseoutEngine {
   ): Promise<void> {
     const seq = card.seq;
 
-    const promptFile = this.resolveIntegrationPrompt(worktree);
-    if (!promptFile) {
-      await this.markNeedsFix(seq, 'Missing integration prompt in worktree');
-      actions.push({
-        action: 'mark-needs-fix',
-        entity: `seq:${seq}`,
-        result: 'ok',
-        message: 'Missing integration prompt in worktree',
-      });
-      return;
-    }
-
-    const prompt = readFileSync(promptFile, 'utf-8').trim();
+    // Generate integration prompt in-memory (no disk file dependency)
+    const prompt = this.buildIntegrationPrompt(card, worktree, branchName);
     const workflowTransport = resolveWorkflowTransport(this.ctx.config);
     const logsDir = this.ctx.paths.logsDir;
 
@@ -596,14 +585,45 @@ export class CloseoutEngine {
     });
   }
 
-  private resolveIntegrationPrompt(worktree: string): string | null {
-    const promptPath = resolve(worktree, '.sps', INTEGRATION_PROMPT_FILE);
-    if (existsSync(promptPath)) return promptPath;
+  /**
+   * Generate integration prompt in-memory. Archive to .sps/ for debugging.
+   * Independent of ExecutionEngine — each phase generates its own prompt.
+   */
+  private buildIntegrationPrompt(card: Card, worktree: string, branchName: string): string {
+    // Load project rules from worktree
+    let projectRules = '';
+    const claudeMdPath = resolve(worktree, 'CLAUDE.md');
+    const agentsMdPath = resolve(worktree, 'AGENTS.md');
+    if (existsSync(claudeMdPath)) {
+      projectRules = readFileSync(claudeMdPath, 'utf-8').trim();
+    }
+    if (existsSync(agentsMdPath)) {
+      const agentsRules = readFileSync(agentsMdPath, 'utf-8').trim();
+      projectRules = projectRules ? `${projectRules}\n\n${agentsRules}` : agentsRules;
+    }
 
-    const legacyPromptPath = resolve(worktree, '.sps', LEGACY_TASK_PROMPT_FILE);
-    if (existsSync(legacyPromptPath)) return legacyPromptPath;
+    const prompt = buildPhasePrompt({
+      taskSeq: card.seq,
+      taskTitle: card.name,
+      taskDescription: card.desc || '(no description)',
+      cardId: card.id,
+      worktreePath: worktree,
+      branchName,
+      targetBranch: this.ctx.mergeBranch,
+      mergeMode: this.ctx.mrMode,
+      gitlabProjectId: resolveGitlabProjectId(this.ctx.config),
+      projectRules: projectRules || undefined,
+      phase: 'integration',
+    });
 
-    return null;
+    // Archive to .sps/ for debugging (non-blocking)
+    try {
+      const spsDir = resolve(worktree, '.sps');
+      if (!existsSync(spsDir)) mkdirSync(spsDir, { recursive: true });
+      writeFileSync(resolve(spsDir, INTEGRATION_PROMPT_FILE), prompt);
+    } catch { /* archive failure should never block integration */ }
+
+    return prompt;
   }
 
   private isMergedToBase(worktree: string, branchName: string): boolean {

@@ -88,31 +88,51 @@ function buildPhaseInstructions(ctx: PhasePromptContext): string {
 
 You are in the integration phase for this task.
 
-Your responsibility in this phase is to integrate the current task branch back into the target branch.
+Your responsibility is to merge branch ${ctx.branchName} into ${ctx.targetBranch}.
 
-First inspect the repository state yourself in this worktree:
-1. Confirm the current branch
-2. Check git status
-3. Check whether a rebase or merge is already in progress
-4. Inspect conflicts if they exist
-5. Determine the exact next step required to finish integration
+## CRITICAL: Worktree Checkout Limitation
 
-Rules:
-1. Work only in the current worktree: ${ctx.worktreePath}
-2. Integrate branch ${ctx.branchName} back into target branch ${ctx.targetBranch}
-3. If there are conflicts, resolve them carefully based on the task intent and current codebase
-4. Complete any required git add / rebase --continue / merge follow-up steps
-5. If the integration requires pushing the target branch or the task branch, do it as part of this phase
-6. Before finishing, update docs/CHANGELOG.md with a concise summary of the integration or conflict-resolution work completed in this phase
-7. If you made architecture or technical decisions during integration, append them to docs/DECISIONS.md
-8. Validate the repository state before finishing
-9. Do not restart development from scratch unless the repository state clearly requires code changes to complete integration
-10. If you are blocked by permissions, confirmations, or external policy, report the exact blocker instead of looping forever
-11. Say "done" only after integration work is complete or you have identified a concrete external blocker
+You are working inside a git worktree at: ${ctx.worktreePath}
+The target branch "${ctx.targetBranch}" is checked out in the main repository.
+Git does NOT allow the same branch to be checked out in two worktrees simultaneously.
 
-Completion rule:
-- The preferred outcome of this phase is: branch ${ctx.branchName} has been successfully merged back into ${ctx.targetBranch}, and any required pushes have completed.
-- Do not treat this phase as a fresh development task.`;
+DO NOT run:
+  git checkout ${ctx.targetBranch}    ← will fail with "already used by worktree"
+  git switch ${ctx.targetBranch}      ← same error
+  git branch -f ${ctx.targetBranch}   ← same error
+
+Instead, use this merge strategy:
+  1. Stay on branch ${ctx.branchName}
+  2. Rebase onto origin/${ctx.targetBranch}: git fetch origin && git rebase origin/${ctx.targetBranch}
+  3. Resolve any conflicts during rebase
+  4. Push the rebased branch: git push origin ${ctx.branchName} --force-with-lease
+  5. Push to target: git push origin ${ctx.branchName}:${ctx.targetBranch}
+
+## Steps
+
+1. Confirm the current branch (should be ${ctx.branchName})
+2. Check git status — look for in-progress rebase/merge
+3. Fetch latest: git fetch origin
+4. Rebase onto origin/${ctx.targetBranch}
+5. Resolve any conflicts based on the task intent and codebase
+6. Complete rebase: git add . && git rebase --continue
+7. Push: git push origin ${ctx.branchName}:${ctx.targetBranch}
+8. Validate the final state
+
+## Rules
+
+1. Work only in this worktree: ${ctx.worktreePath}
+2. Never checkout or switch to ${ctx.targetBranch} — use rebase + push instead
+3. If conflicts exist, resolve them carefully based on the task intent
+4. Before finishing, update docs/CHANGELOG.md with integration summary
+5. If you made architecture decisions, append to docs/DECISIONS.md
+6. Do not restart development from scratch
+7. If blocked by permissions or external policy, report the exact blocker
+8. Say "done" only after the push to ${ctx.targetBranch} succeeds
+
+## Completion
+
+The task is complete when: git push origin ${ctx.branchName}:${ctx.targetBranch} succeeds.`;
   }
 
   return `# Development Phase Instructions

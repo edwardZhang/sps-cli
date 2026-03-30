@@ -14,8 +14,6 @@ import { readQueue } from '../core/queue.js';
 import {
   buildPhasePrompt,
   DEVELOPMENT_PROMPT_FILE,
-  INTEGRATION_PROMPT_FILE,
-  LEGACY_TASK_PROMPT_FILE,
 } from '../core/taskPrompts.js';
 import { Logger } from '../core/logger.js';
 import type { WorkerManager, TaskRunRequest, TaskRunResponse } from '../manager/worker-manager.js';
@@ -479,9 +477,10 @@ export class ExecutionEngine {
       this.log.warn(`PM claim for seq ${seq} failed (non-fatal): ${msg}`);
     }
 
-    // Step 5b: Build task context (.sps/development_prompt.txt + .sps/integration_prompt.txt)
+    // Step 5b: Build development prompt (in-memory, archive to .sps/)
+    let prompt: string;
     try {
-      this.buildTaskContext(card, worktreePath);
+      prompt = this.buildDevelopmentPrompt(card, worktreePath);
       this.log.ok(`Step 5: Task context built for seq ${seq}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -492,15 +491,6 @@ export class ExecutionEngine {
 
     // Step 6: Launch worker via WorkerManager.run()
     const logsDir = this.ctx.config.raw.LOGS_DIR || `/tmp/sps-${this.ctx.projectName}`;
-    const promptFile = resolve(worktreePath, '.sps', LEGACY_TASK_PROMPT_FILE);
-    let prompt: string;
-    try {
-      prompt = readFileSync(promptFile, 'utf-8').trim();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`Failed to read prompt file for seq ${seq}: ${msg}`);
-      return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Prompt file read failed: ${msg}` };
-    }
 
     const runRequest: TaskRunRequest = {
       taskId: String(card.seq),
@@ -699,17 +689,19 @@ export class ExecutionEngine {
    * project rules via tmux paste — even though /clear + cd does not
    * trigger Claude/Codex to re-read CLAUDE.md from disk.
    */
-  private buildTaskContext(card: Card, worktreePath: string): void {
-    if (!existsSync(worktreePath)) {
-      mkdirSync(worktreePath, { recursive: true });
-    }
-
+  /**
+   * Build the shared prompt context used by both development and integration phases.
+   * Loads skill profiles, project rules, and knowledge from the worktree.
+   */
+  buildPromptContext(card: Card, worktreePath: string): {
+    taskSeq: string; taskTitle: string; taskDescription: string; cardId: string;
+    worktreePath: string; branchName: string; targetBranch: string;
+    mergeMode: 'none' | 'create'; gitlabProjectId: string;
+    skillContent?: string; projectRules?: string; knowledge?: string;
+  } {
     const branchName = this.buildBranchName(card);
-
-    // ── 1. Skill Profiles (label-driven) ──
     const skillContent = this.loadSkillProfiles(card);
 
-    // ── 2. Project Rules (CLAUDE.md for claude, AGENTS.md for codex) ──
     const claudeMdPath = resolve(worktreePath, 'CLAUDE.md');
     const agentsMdPath = resolve(worktreePath, 'AGENTS.md');
     const workerTool = this.ctx.config.WORKER_TOOL;
@@ -726,12 +718,9 @@ export class ExecutionEngine {
       this.log.warn(`${expectedFile} not found in worktree — run: sps doctor ${this.ctx.projectName} --fix`);
     }
 
-    // ── 3. Project Knowledge (truncated) ──
     const knowledge = this.loadProjectKnowledge(worktreePath);
 
-    const mrMode = this.ctx.mrMode;
-
-    const sharedPromptContext = {
+    return {
       taskSeq: card.seq,
       taskTitle: card.name,
       taskDescription: card.desc || '(no description)',
@@ -739,29 +728,30 @@ export class ExecutionEngine {
       worktreePath,
       branchName,
       targetBranch: this.ctx.mergeBranch,
-      mergeMode: mrMode,
+      mergeMode: this.ctx.mrMode,
       gitlabProjectId: resolveGitlabProjectId(this.ctx.config),
       skillContent,
       projectRules,
       knowledge,
-    } as const;
+    };
+  }
 
-    const developmentPrompt = buildPhasePrompt({
-      ...sharedPromptContext,
-      phase: 'development',
-    });
-    const integrationPrompt = buildPhasePrompt({
-      ...sharedPromptContext,
-      phase: 'integration',
-    });
+  /**
+   * Generate development prompt and archive to .sps/ for debugging.
+   * Returns the prompt string directly — no disk file dependency.
+   */
+  private buildDevelopmentPrompt(card: Card, worktreePath: string): string {
+    const ctx = this.buildPromptContext(card, worktreePath);
+    const prompt = buildPhasePrompt({ ...ctx, phase: 'development' });
 
-    const spsDir = resolve(worktreePath, '.sps');
-    if (!existsSync(spsDir)) {
-      mkdirSync(spsDir, { recursive: true });
-    }
-    writeFileSync(resolve(spsDir, DEVELOPMENT_PROMPT_FILE), developmentPrompt);
-    writeFileSync(resolve(spsDir, INTEGRATION_PROMPT_FILE), integrationPrompt);
-    writeFileSync(resolve(spsDir, LEGACY_TASK_PROMPT_FILE), developmentPrompt);
+    // Archive to .sps/ for debugging (non-blocking)
+    try {
+      const spsDir = resolve(worktreePath, '.sps');
+      if (!existsSync(spsDir)) mkdirSync(spsDir, { recursive: true });
+      writeFileSync(resolve(spsDir, DEVELOPMENT_PROMPT_FILE), prompt);
+    } catch { /* archive failure should never block worker launch */ }
+
+    return prompt;
   }
 
   /**
