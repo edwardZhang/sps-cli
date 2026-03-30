@@ -12,9 +12,9 @@ export interface WorkerSlotState {
   claimedAt: string | null;
   lastHeartbeat: string | null;
   /** Worker execution mode — null for legacy state files */
-  mode?: 'print' | 'interactive' | 'acp' | 'pty' | null;
+  mode?: 'print' | 'interactive' | 'acp' | 'acp-sdk' | 'pty' | null;
   /** Underlying worker transport */
-  transport?: 'proc' | 'acp' | 'pty' | null;
+  transport?: 'proc' | 'acp' | 'acp-sdk' | 'pty' | null;
   /** Worker tool currently bound to the slot */
   agent?: 'claude' | 'codex' | null;
   /** Claude/Codex session ID for resume chains (print mode) */
@@ -122,7 +122,7 @@ export interface IntegrationQueueEntry {
   branch: string;
   targetBranch: string;
   tool: 'claude' | 'codex';
-  transport: 'proc' | 'pty';
+  transport: 'proc' | 'pty' | 'acp-sdk';
   outputFile: string;
   enqueuedAt: string;
 }

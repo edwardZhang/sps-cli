@@ -34,7 +34,7 @@ export interface ProjectConfig {
   // Worker
   WORKER_TOOL: 'claude' | 'codex';
   WORKER_MODE: 'print' | 'interactive';
-  WORKER_TRANSPORT: 'proc' | 'acp' | 'pty';
+  WORKER_TRANSPORT: 'proc' | 'acp' | 'acp-sdk' | 'pty';
   MAX_CONCURRENT_WORKERS: number;
   WORKER_RESTART_LIMIT: number;
   AUTOFIX_ATTEMPTS: number;
@@ -69,14 +69,21 @@ export interface ProjectConfig {
 }
 
 /**
- * SPS main workflow currently runs workers as one-shot processes.
+ * Resolve the worker transport for SPS workflow execution.
  *
- * PTY/ACP session transports remain available for manual/experimental
- * commands such as `sps acp`, but tick/pipeline/qa/recovery should not
- * use them as the default autonomous execution path.
+ * Default is 'acp-sdk' — uses ACP JSON-RPC over stdio via @agentclientprotocol/sdk.
+ * Override via WORKER_TRANSPORT in project conf:
+ *   - 'acp-sdk' (default): ACP SDK structured protocol
+ *   - 'acp': maps to 'acp-sdk' (legacy alias)
+ *   - 'proc': one-shot process spawn (legacy)
+ *   - 'pty': pseudoterminal sessions (experimental)
  */
-export function resolveWorkflowTransport(_config: ProjectConfig): ProjectConfig['WORKER_TRANSPORT'] {
-  return 'proc';
+export function resolveWorkflowTransport(config: ProjectConfig): ProjectConfig['WORKER_TRANSPORT'] {
+  const transport = config.raw.WORKER_TRANSPORT;
+  if (!transport) return 'acp-sdk';
+  if (transport === 'acp') return 'acp-sdk';
+  if (transport === 'proc' || transport === 'acp-sdk' || transport === 'pty') return transport;
+  return 'acp-sdk';
 }
 
 export function workflowUsesAgentRuntime(config: ProjectConfig): boolean {

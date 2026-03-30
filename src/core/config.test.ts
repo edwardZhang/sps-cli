@@ -93,17 +93,41 @@ describe('validateConfig', () => {
 });
 
 describe('resolveWorkflowTransport', () => {
-  it('always returns proc', async () => {
+  it('defaults to acp-sdk when no WORKER_TRANSPORT set', async () => {
     const { resolveWorkflowTransport } = await import('./config.js');
-    const config = makeConfig({ WORKER_TRANSPORT: 'pty' });
+    const config = makeConfig();
+    expect(resolveWorkflowTransport(config)).toBe('acp-sdk');
+  });
+
+  it('maps acp to acp-sdk', async () => {
+    const { resolveWorkflowTransport } = await import('./config.js');
+    const config = makeConfig({ raw: { WORKER_TRANSPORT: 'acp' } as any });
+    expect(resolveWorkflowTransport(config)).toBe('acp-sdk');
+  });
+
+  it('preserves proc when explicitly set', async () => {
+    const { resolveWorkflowTransport } = await import('./config.js');
+    const config = makeConfig({ raw: { WORKER_TRANSPORT: 'proc' } as any });
     expect(resolveWorkflowTransport(config)).toBe('proc');
+  });
+
+  it('preserves pty when explicitly set', async () => {
+    const { resolveWorkflowTransport } = await import('./config.js');
+    const config = makeConfig({ raw: { WORKER_TRANSPORT: 'pty' } as any });
+    expect(resolveWorkflowTransport(config)).toBe('pty');
   });
 });
 
 describe('workflowUsesAgentRuntime', () => {
-  it('returns false since workflow transport is always proc', async () => {
+  it('returns true for default acp-sdk transport', async () => {
     const { workflowUsesAgentRuntime } = await import('./config.js');
     const config = makeConfig();
+    expect(workflowUsesAgentRuntime(config)).toBe(true);
+  });
+
+  it('returns false for proc transport', async () => {
+    const { workflowUsesAgentRuntime } = await import('./config.js');
+    const config = makeConfig({ raw: { WORKER_TRANSPORT: 'proc' } as any });
     expect(workflowUsesAgentRuntime(config)).toBe(false);
   });
 });

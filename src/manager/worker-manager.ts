@@ -47,7 +47,7 @@ export interface TaskRunRequest {
   branch: string;
   targetBranch: string;
   tool: 'claude' | 'codex';
-  transport: 'proc' | 'pty';
+  transport: 'proc' | 'pty' | 'acp-sdk';
   outputFile: string;
   timeoutSec?: number;
   maxRetries?: number;
@@ -64,7 +64,7 @@ export interface TaskResumeRequest {
   branch: string;
   targetBranch: string;
   tool: 'claude' | 'codex';
-  transport: 'proc' | 'pty';
+  transport: 'proc' | 'pty' | 'acp-sdk';
   outputFile: string;
   sessionId?: string;
 }

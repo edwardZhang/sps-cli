@@ -249,7 +249,7 @@ export class CloseoutEngine {
       branch: branchName,
       targetBranch: this.ctx.mergeBranch,
       tool: (this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
-      transport: workflowTransport === 'pty' ? 'pty' : 'proc',
+      transport: workflowTransport === 'proc' ? 'proc' : workflowTransport as 'proc' | 'pty' | 'acp-sdk',
       outputFile: resolve(logsDir, `${this.ctx.projectName}-integration-${card.seq}-${Date.now()}.jsonl`),
     };
 

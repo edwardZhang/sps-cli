@@ -271,10 +271,13 @@ function getProcessMetrics(pid: number | null | undefined): ProcessMetrics | nul
   }
 }
 
-function latestPTYLogAgeSec(ctx: ProjectContext, slotName: string): number | null {
+function latestWorkerLogAgeSec(ctx: ProjectContext, slotName: string): number | null {
   try {
     const entries = readdirSync(ctx.paths.logsDir)
-      .filter(name => name.startsWith(`${slotName}-pty-`) && name.endsWith('.log'))
+      .filter(name =>
+        (name.startsWith(`${slotName}-pty-`) || name.includes('-acp-')) &&
+        name.endsWith('.log'),
+      )
       .map(name => resolve(ctx.paths.logsDir, name));
     if (entries.length === 0) return null;
     entries.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
@@ -296,7 +299,7 @@ function analyzeACPSession(
   const tool = session?.tool || slot.agent || 'worker';
   const facts = tool === 'codex' ? extractCodexScreenFacts(rawLines) : extractClaudeScreenFacts(rawLines);
   const process = getProcessMetrics(session?.pid ?? slot.pid);
-  const lastOutputAgeSec = latestPTYLogAgeSec(ctx, slotName);
+  const lastOutputAgeSec = latestWorkerLogAgeSec(ctx, slotName);
 
   let stalledReason: string | null = null;
   const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
@@ -363,7 +366,7 @@ function buildACPPanelLines(
     lines.push(`${BOLD}proc:${RESET} pid ${diagnostics.process.pid} · ${diagnostics.process.state} · cpu ${diagnostics.process.cpu.toFixed(1)}% · etime ${diagnostics.process.elapsed}`);
   }
   if (diagnostics.lastOutputAgeSec != null) {
-    lines.push(`${BOLD}output:${RESET} last PTY output ${formatDuration(diagnostics.lastOutputAgeSec)} ago`);
+    lines.push(`${BOLD}output:${RESET} last worker output ${formatDuration(diagnostics.lastOutputAgeSec)} ago`);
   }
   if (diagnostics.stalledReason) {
     lines.push(`${FG.yellow}${BOLD}health:${RESET}${FG.yellow} ${diagnostics.stalledReason}${RESET}`);
@@ -382,12 +385,19 @@ function buildACPPanelLines(
   if (diagnostics.promptText) {
     lines.push(`${DIM}${diagnostics.promptText}${RESET}`);
   } else if (session?.currentRun?.promptPreview) {
-    lines.push(`${DIM}${session.currentRun.promptPreview}${RESET}`);
+    // For ACP-SDK mode, promptPreview is the full prompt (not useful for display)
+    const isAcp = slot.transport === 'acp-sdk' || slot.mode === 'acp-sdk';
+    if (!isAcp) {
+      lines.push(`${DIM}${session.currentRun.promptPreview}${RESET}`);
+    }
   }
 
   const liveTail = rawLines
     .filter(line => line !== diagnostics.screenStatus && line !== diagnostics.promptText)
     .slice(-4);
+  if (liveTail.length === 0 && (slot.transport === 'acp-sdk' || slot.mode === 'acp-sdk')) {
+    lines.push(`${DIM}(waiting for agent output...)${RESET}`);
+  }
   for (const line of liveTail) {
     lines.push(`${DIM}${line}${RESET}`);
   }
@@ -430,7 +440,7 @@ function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[
       const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
       const isPrintMode = slot.mode === 'print';
       const isPtyMode = slot.transport === 'pty';
-      const isAcpMode = isPtyMode || slot.mode === 'acp' || slot.transport === 'acp';
+      const isAcpMode = isPtyMode || slot.mode === 'acp' || slot.mode === 'acp-sdk' || slot.transport === 'acp' || slot.transport === 'acp-sdk';
 
       let sessionAlive: boolean;
       let paneLines: string[];
@@ -523,7 +533,7 @@ function renderPanel(panel: WorkerPanel, panelWidth: number, panelHeight: number
     : '';
   const modeInfo = panel.slot.mode === 'print'
     ? `pid:${panel.slot.pid || '?'}${panel.slot.exitCode != null ? ` exit:${panel.slot.exitCode}` : ''}`
-    : (panel.slot.mode === 'acp' || panel.slot.mode === 'pty')
+    : (panel.slot.mode === 'acp' || panel.slot.mode === 'acp-sdk' || panel.slot.mode === 'pty')
       ? `${panel.slot.mode}:${panel.slot.sessionState || 'unknown'}${panel.slot.remoteStatus ? `/${panel.slot.remoteStatus}` : ''}`
       : '';
   const timeLine = elapsed || heartbeat || modeInfo
@@ -717,7 +727,7 @@ function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJ
       const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
       const isPrintMode = slot.mode === 'print';
       const isPtyMode = slot.transport === 'pty';
-      const isAcpMode = isPtyMode || slot.mode === 'acp' || slot.transport === 'acp';
+      const isAcpMode = isPtyMode || slot.mode === 'acp' || slot.mode === 'acp-sdk' || slot.transport === 'acp' || slot.transport === 'acp-sdk';
       const acpSession = state.sessions[slotName];
       const sessionAlive = isAcpMode
         ? isPersistedSessionAlive(slot, acpSession)

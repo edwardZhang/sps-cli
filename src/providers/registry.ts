@@ -14,6 +14,7 @@ import { CodexTmuxProvider } from './CodexTmuxProvider.js';
 import { GitLabRepoBackend } from './GitLabRepoBackend.js';
 import { MatrixNotifier } from './MatrixNotifier.js';
 import { ProjectContext } from '../core/context.js';
+import { LocalACPClient } from './LocalACPClient.js';
 import { ACPWorkerRuntime } from './ACPWorkerRuntime.js';
 import { PTYAgentRuntime } from './PTYAgentRuntime.js';
 
@@ -58,6 +59,9 @@ export function createAgentRuntime(ctx: ProjectContext): AgentRuntime {
   const transport = ctx.config.raw.WORKER_TRANSPORT || 'acp';
   if (transport === 'pty') {
     return new PTYAgentRuntime(ctx);
+  }
+  if (transport === 'acp-sdk') {
+    return new ACPWorkerRuntime(ctx, new LocalACPClient('sdk'));
   }
   return new ACPWorkerRuntime(ctx);
 }

@@ -52,6 +52,22 @@ function getLogFile(projectName: string, errOnly: boolean): string {
   return resolve(HOME, '.coral', 'projects', projectName, 'logs', `${prefix}-${date}.log`);
 }
 
+/** Find the most recent ACP worker log files for a project. */
+function getAcpLogFiles(projectName: string): string[] {
+  const logsDir = resolve(HOME, '.coral', 'projects', projectName, 'logs');
+  try {
+    return readdirSync(logsDir)
+      .filter(f => f.includes('-acp-') && f.endsWith('.log'))
+      .map(f => resolve(logsDir, f))
+      .sort((a, b) => {
+        try { return statSync(b).mtimeMs - statSync(a).mtimeMs; } catch { return 0; }
+      })
+      .slice(0, 5); // Keep last 5 ACP log files
+  } catch {
+    return [];
+  }
+}
+
 // ── Read last N lines from a file ────────────────────────────────────
 
 function tailLines(filePath: string, n: number): string[] {
@@ -163,6 +179,24 @@ export async function executeLogs(
       offset: getFileSize(filePath),
       lastDate: today,
     });
+
+    // Also watch ACP worker log files
+    if (!errOnly) {
+      for (const acpLog of getAcpLogFiles(projectName)) {
+        const acpLines = tailLines(acpLog, initialLines);
+        const acpTag = `${color}[${projectName}/worker]${RESET}`;
+        for (const line of acpLines) {
+          process.stdout.write(`${acpTag} ${line}\n`);
+        }
+        watched.push({
+          projectName,
+          filePath: acpLog,
+          color,
+          offset: getFileSize(acpLog),
+          lastDate: today,
+        });
+      }
+    }
   }
 
   if (!follow) return;
@@ -209,10 +243,29 @@ export async function executeLogs(
       if (newData.length === 0) continue;
 
       w.offset += Buffer.byteLength(newData, 'utf-8');
-      const tag = `${w.color}[${w.projectName}]${RESET}`;
+      const isWorkerLog = w.filePath.includes('-acp-');
+      const tag = `${w.color}[${w.projectName}${isWorkerLog ? '/worker' : ''}]${RESET}`;
       const lines = newData.split('\n').filter(l => l.length > 0);
       for (const line of lines) {
-        process.stdout.write(`${tag} ${colorLevel(line)}\n`);
+        process.stdout.write(`${tag} ${isWorkerLog ? line : colorLevel(line)}\n`);
+      }
+    }
+
+    // Discover new ACP log files that appeared since last poll
+    if (!errOnly) {
+      const watchedPaths = new Set(watched.map(w => w.filePath));
+      for (const projectName of projects) {
+        for (const acpLog of getAcpLogFiles(projectName)) {
+          if (!watchedPaths.has(acpLog)) {
+            watched.push({
+              projectName,
+              filePath: acpLog,
+              color: colorMap.get(projectName)!,
+              offset: 0,
+              lastDate: today,
+            });
+          }
+        }
       }
     }
 

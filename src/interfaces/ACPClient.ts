@@ -5,6 +5,8 @@ export interface EnsureSessionInput {
   tool: ACPTool;
   cwd: string;
   resetExisting?: boolean;
+  /** Directory for worker output logs (enables sps logs) */
+  logsDir?: string;
 }
 
 export interface EnsureSessionResult {
@@ -12,6 +14,8 @@ export interface EnsureSessionResult {
   sessionState: ACPSessionStatus;
   paneText: string;
   lastSeenAt: string;
+  /** Adapter child process PID (for cross-process liveness checks) */
+  pid?: number | null;
 }
 
 export interface StartRunInput {
@@ -25,11 +29,15 @@ export interface StartRunResult {
   runState: ACPRunStatus;
   paneText: string;
   lastSeenAt: string;
+  /** Adapter child process PID */
+  pid?: number | null;
 }
 
 export interface InspectSessionInput {
   sessionName: string;
   tool: ACPTool;
+  /** Persisted PID for cross-process fallback liveness check */
+  pid?: number | null;
 }
 
 export interface InspectSessionResult {
@@ -42,6 +50,8 @@ export interface InspectRunInput {
   sessionName: string;
   tool: ACPTool;
   activeRun: boolean;
+  /** Persisted PID for cross-process fallback liveness check */
+  pid?: number | null;
 }
 
 export interface InspectRunResult {

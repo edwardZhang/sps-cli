@@ -217,6 +217,11 @@ export async function executeReset(
     a => !targetSeqs.has(a.taskId),
   );
 
+  // Clear ACP sessions — prevents stale run IDs from blocking new workers
+  if (state.sessions) {
+    state.sessions = {};
+  }
+
   writeState(stateFile, state, 'reset');
   log.ok(`Cleaned state: ${clearedLeases} lease(s), ${killedWorkers} worker(s) killed`);
 

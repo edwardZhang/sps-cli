@@ -502,7 +502,7 @@ export class ExecutionEngine {
       branch: branchName,
       targetBranch: this.ctx.mergeBranch,
       tool: this.ctx.config.WORKER_TOOL as 'claude' | 'codex',
-      transport: workflowTransport as 'proc' | 'pty',
+      transport: workflowTransport as 'proc' | 'pty' | 'acp-sdk',
       outputFile: resolve(logsDir, `${this.ctx.projectName}-worker-${card.seq}-${Date.now()}.jsonl`),
       timeoutSec: this.ctx.config.WORKER_LAUNCH_TIMEOUT_S,
       maxRetries: this.ctx.config.WORKER_RESTART_LIMIT,

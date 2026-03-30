@@ -27,8 +27,10 @@ export function isPTYBackedSlot(
 export function isACPBackedSlot(slot: Pick<WorkerSlotState, 'transport' | 'mode'>): boolean {
   return (
     slot.transport === 'acp' ||
+    slot.transport === 'acp-sdk' ||
     slot.transport === 'pty' ||
     slot.mode === 'acp' ||
+    slot.mode === 'acp-sdk' ||
     slot.mode === 'pty'
   );
 }

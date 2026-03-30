@@ -22,7 +22,7 @@ export interface QueueEntry {
   branch: string;
   targetBranch: string;
   tool: 'claude' | 'codex';
-  transport: 'proc' | 'pty';
+  transport: 'proc' | 'pty' | 'acp-sdk';
   outputFile: string;
   enqueuedAt: string;
 }

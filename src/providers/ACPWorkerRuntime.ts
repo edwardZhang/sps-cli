@@ -51,6 +51,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
       tool: selectedTool,
       cwd,
       resetExisting,
+      logsDir: this.ctx.paths.logsDir,
     });
 
     const session = this.upsertSession(state, normalizedSlot, {
@@ -58,6 +59,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
       tool: selectedTool,
       sessionId: result.sessionId,
       sessionName,
+      pid: result.pid ?? existing?.pid ?? null,
       cwd,
       status: result.sessionState === 'ready'
         ? (retainedRun ? 'active' : 'idle')
@@ -116,6 +118,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
       const sessionInfo = await this.client.inspectSession({
         sessionName: session.sessionName,
         tool: session.tool,
+        pid: session.pid,
       });
 
       let nextStatus: ACPSlotStatus = session.status;
@@ -127,6 +130,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
           sessionName: session.sessionName,
           tool: session.tool,
           activeRun: true,
+          pid: session.pid,
         });
         paneText = runInfo.paneText || paneText;
         if (runInfo.runState) {
@@ -153,8 +157,9 @@ export class ACPWorkerRuntime implements AgentRuntime {
         currentRun,
         updatedAt: now(),
         lastSeenAt: sessionInfo.lastSeenAt,
+        lastOutputAt: paneText ? now() : session.lastOutputAt,
         lastPaneText: paneText,
-      pendingInput: null,
+        pendingInput: null,
       };
     }
 

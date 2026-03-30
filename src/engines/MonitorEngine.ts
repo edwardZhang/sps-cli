@@ -97,7 +97,7 @@ export class MonitorEngine {
       if (this.supervisor.get(workerId)) continue;
 
       if (
-        (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') &&
+        (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk' || slotState.mode === 'pty') &&
         this.isAcpSessionAlive(state.sessions[slotName])
       ) {
         continue;
@@ -214,7 +214,7 @@ export class MonitorEngine {
 
       const slotState = runtime.slot;
 
-      if (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') {
+      if (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk' || slotState.mode === 'pty') {
         const session = runtime.slotName ? state.sessions[runtime.slotName] : undefined;
         if (this.isAcpSessionAlive(session)) {
           continue;
@@ -418,8 +418,10 @@ export class MonitorEngine {
       if (!slotState) continue;
       const isAgentTransport =
         slotState.transport === 'acp' ||
+        slotState.transport === 'acp-sdk' ||
         slotState.transport === 'pty' ||
         slotState.mode === 'acp' ||
+        slotState.mode === 'acp-sdk' ||
         slotState.mode === 'pty';
 
       if (isAgentTransport) {
@@ -568,7 +570,7 @@ export class MonitorEngine {
         continue;
       }
 
-      if (slotState.transport === 'acp' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'pty') {
+      if (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk' || slotState.mode === 'pty') {
         const session = state.sessions[slotName];
         if (this.isAcpSessionAlive(session)) continue;
       }
