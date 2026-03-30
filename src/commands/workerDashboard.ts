@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { enqueuePTYResponse } from '../core/ptyControl.js';
@@ -338,6 +338,22 @@ function analyzeACPSession(
   };
 }
 
+/** Read last N lines from the most recent ACP log file for this session. */
+function tailAcpLogFile(ctx: ProjectContext, sessionName: string | undefined, n: number): string[] {
+  if (!sessionName) return [];
+  try {
+    const entries = readdirSync(ctx.paths.logsDir)
+      .filter(name => name.includes('-acp-') && name.endsWith('.log'))
+      .map(name => resolve(ctx.paths.logsDir, name))
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    if (entries.length === 0) return [];
+    const content = readFileSync(entries[0], 'utf-8');
+    return content.split('\n').filter(l => l.length > 0).slice(-n);
+  } catch {
+    return [];
+  }
+}
+
 function buildACPPanelLines(
   ctx: ProjectContext,
   slotName: string,
@@ -350,7 +366,12 @@ function buildACPPanelLines(
   const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
   const sessionState = session?.sessionState || slot.sessionState || 'offline';
   const worktree = shortenPath(slot.worktree || session?.cwd || '');
-  const rawLines = cleanScreenLines(session?.lastPaneText || '');
+  // For ACP-SDK: prefer log file tail over lastPaneText (more real-time)
+  const isAcpSdk = slot.transport === 'acp-sdk' || slot.mode === 'acp-sdk';
+  const paneText = session?.lastPaneText || '';
+  const rawLines = isAcpSdk && !paneText
+    ? tailAcpLogFile(ctx, session?.sessionName, 20)
+    : cleanScreenLines(paneText);
   const codexFacts = extractCodexScreenFacts(rawLines);
   const claudeFacts = extractClaudeScreenFacts(rawLines);
   const facts = tool === 'codex' ? codexFacts : claudeFacts;
