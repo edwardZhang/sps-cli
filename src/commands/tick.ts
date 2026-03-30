@@ -95,6 +95,9 @@ function createRunner(project: string): ProjectRunner | null {
     return null;
   }
 
+  // Rotate logs — each tick session gets a clean log file
+  fullLog.rotateLogs();
+
   // Create providers
   let taskBackend, workerProvider, repoBackend, notifier;
   let agentRuntime: ReturnType<typeof createAgentRuntime> | null = null;

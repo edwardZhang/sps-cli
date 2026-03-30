@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, existsSync } from 'node:fs';
+import { appendFileSync, renameSync, readdirSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const COLORS = {
@@ -86,6 +86,37 @@ export class Logger {
         resolve(this.logsDir, 'events.jsonl'),
         JSON.stringify(full)
       );
+    }
+  }
+
+  /**
+   * Rotate current log files on tick restart.
+   * Renames pipeline-*.log and error-*.log to *.<timestamp>.log
+   * so each tick session gets a clean log file.
+   */
+  rotateLogs(): void {
+    if (!this.logsDir) return;
+    if (!existsSync(this.logsDir)) return;
+
+    const now = new Date();
+    const suffix = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+
+    try {
+      const files = readdirSync(this.logsDir);
+      for (const file of files) {
+        // Rotate pipeline-YYYY-MM-DD.log → pipeline-YYYY-MM-DD.HHmmss.log
+        // Rotate error-YYYY-MM-DD.log → error-YYYY-MM-DD.HHmmss.log
+        if (/^(pipeline|error)-\d{4}-\d{2}-\d{2}\.log$/.test(file)) {
+          const base = file.replace('.log', '');
+          const rotated = `${base}.${suffix}.log`;
+          renameSync(
+            resolve(this.logsDir, file),
+            resolve(this.logsDir, rotated),
+          );
+        }
+      }
+    } catch {
+      // Rotation failure should never block tick startup
     }
   }
 
