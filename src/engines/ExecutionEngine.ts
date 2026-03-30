@@ -21,6 +21,8 @@ import { Logger } from '../core/logger.js';
 import type { WorkerManager, TaskRunRequest, TaskRunResponse } from '../manager/worker-manager.js';
 
 const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME'];
+/** All labels that should be cleaned when a card re-enters the pipeline */
+const CLEANUP_LABELS: string[] = [...SKIP_LABELS, 'CLAIMED'];
 
 export class ExecutionEngine {
   private log: Logger;
@@ -302,7 +304,7 @@ export class ExecutionEngine {
    * so stale labels from previous runs should not block it.
    */
   private async cleanAuxiliaryLabels(card: Card): Promise<void> {
-    for (const label of SKIP_LABELS) {
+    for (const label of CLEANUP_LABELS) {
       if (card.labels.includes(label)) {
         try {
           await this.taskBackend.removeLabel(card.seq, label);

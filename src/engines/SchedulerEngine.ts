@@ -119,6 +119,12 @@ export class SchedulerEngine {
           });
         } else {
           try {
+            // Clean stale labels from previous runs before promoting
+            for (const label of ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME', 'CLAIMED']) {
+              if (card.labels.includes(label)) {
+                try { await this.taskBackend.removeLabel(card.seq, label); } catch { /* best effort */ }
+              }
+            }
             await this.taskBackend.move(card.seq, 'Backlog');
             removeFromQueue(this.ctx.paths.pipelineOrderFile, seq);
             this.log.ok(`Moved seq ${seq} Planning → Backlog`);
