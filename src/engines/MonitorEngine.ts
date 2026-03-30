@@ -1,7 +1,6 @@
 import type { ProjectContext } from '../core/context.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
-import type { WorkerProvider } from '../interfaces/WorkerProvider.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { CommandResult, ActionRecord, CheckResult, RecommendedAction } from '../models/types.js';
 import type { ProcessSupervisor } from '../manager/supervisor.js';
@@ -17,10 +16,9 @@ import { Logger } from '../core/logger.js';
  *   1. Orphan slot cleanup (stale entries not tracked by Supervisor)
  *   2. Stale runtime detection (Inprogress cards with no worker)
  *   3. Timeout detection (INPROGRESS_TIMEOUT_HOURS)
- *   4. Waiting confirmation detection (interactive mode only)
- *   5. BLOCKED condition check
- *   6. State alignment (Supervisor vs state.json sync)
- *   7. Worker health (launch/idle timeouts for Supervisor-tracked workers)
+ *   4. BLOCKED condition check
+ *   5. State alignment (Supervisor vs state.json sync)
+ *   6. Worker health (launch/idle timeouts for Supervisor-tracked workers)
  */
 export class MonitorEngine {
   private log: Logger;
@@ -29,7 +27,6 @@ export class MonitorEngine {
   constructor(
     private ctx: ProjectContext,
     private taskBackend: TaskBackend,
-    private workerProvider: WorkerProvider,
     private repoBackend: RepoBackend,
     private notifier: Notifier | undefined,
     private supervisor: ProcessSupervisor,
@@ -445,64 +442,8 @@ export class MonitorEngine {
         continue;
       }
 
-      if (!slotState.tmuxSession) continue;
-      // Print mode workers use --dangerously-skip-permissions, never wait for input
-      if (slotState.mode === 'print') continue;
-
-      try {
-        const waitResult = await this.workerProvider.detectWaiting(slotState.tmuxSession);
-        if (!waitResult.waiting) continue;
-
-        const seq = slotState.seq != null ? String(slotState.seq) : slotName;
-
-        if (!waitResult.destructive) {
-          this.log.info(
-            `seq ${seq}: Worker waiting for non-destructive confirmation, auto-confirming`,
-          );
-          try {
-            await this.workerProvider.sendFix(slotState.tmuxSession, 'y');
-            actions.push({
-              action: 'auto-confirm',
-              entity: `seq:${seq}`,
-              result: 'ok',
-              message: `Auto-confirmed: ${waitResult.prompt}`,
-            });
-            this.logEvent('auto-confirm', seq, 'ok', { prompt: waitResult.prompt });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            this.log.warn(`Failed to auto-confirm for seq ${seq}: ${msg}`);
-            actions.push({
-              action: 'auto-confirm',
-              entity: `seq:${seq}`,
-              result: 'fail',
-              message: `Auto-confirm failed: ${msg}`,
-            });
-          }
-        } else {
-          this.log.warn(
-            `seq ${seq}: Worker waiting for destructive confirmation: ${waitResult.prompt}`,
-          );
-          if (slotState.seq != null) {
-            await this.addLabelSafe(String(slotState.seq), 'WAITING-CONFIRMATION');
-          }
-          await this.notifySafe(`👆 [${this.ctx.projectName}] seq:${seq} waiting for destructive confirmation: ${waitResult.prompt}`);
-          actions.push({
-            action: 'mark-waiting',
-            entity: `seq:${seq}`,
-            result: 'ok',
-            message: `Waiting for destructive confirmation: ${waitResult.prompt}`,
-          });
-          this.logEvent('waiting-confirmation', seq, 'ok', {
-            destructive: true,
-            prompt: waitResult.prompt,
-          });
-        }
-
-        waitingCount++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.log.debug(`Failed to detect waiting for ${slotName}: ${msg}`);
-      }
+      // Legacy tmux interactive mode code removed — ACP SDK handles
+      // permission requests via requestPermission callback in AcpSdkAdapter.
     }
 
     checks.push({

@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.25.2**
+**v0.26.0**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -12,16 +12,14 @@ SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool d
 Create cards -> Start pipeline -> Development worker completes branch work -> QA worker integrates branch -> Notify completion
 ```
 
-**v0.25.x highlights**:
+**v0.26.0 highlights**:
 
-- **Prompt lifecycle refactor (v0.25.0)**: Each engine generates its own phase prompt in-memory and passes via stdin. No cross-phase file dependencies. Integration prompt includes worktree checkout limitation instructions.
-- **False alarm elimination (v0.25.1)**: Monitor grace period (90s) prevents false STALE-RUNTIME labels. CompletionJudge checks branch push status before exit code in integration phase. Worktree cleanup deferred 30s for worker shutdown.
-- **sps reset command (v0.25.2)**: One-command reset for re-execution. Cleans state, worktrees, branches, moves cards to Planning.
-- **Unit test suite (v0.24.5+)**: 202 tests with Vitest, 9 core modules at 80%+ coverage.
-- **Notification emojis**: Per-event emoji (✅⚠️❌👆↔️▶️🎉) with consistent placement.
-- **Local timezone logging**: Console and log files use local time. Log rotation on tick restart.
+- **ACP SDK Transport**: Worker communication uses structured ACP JSON-RPC over stdio instead of terminal screen-scraping. Claude uses Anthropic's official `claude-agent-sdk`, Codex uses Zed's Rust native `codex-acp` binary. Deterministic state detection — no regex, no guessing.
+- **Unified adapter**: One `AcpSdkAdapter` replaces 6 legacy providers (ClaudePrint, CodexExec, ClaudeTmux, CodexTmux + tmux utilities). Adding new agents (Gemini, Cursor, etc.) requires only a registry entry.
+- **Real-time worker logs**: ACP events stream to `*-acp-*.log` files. `sps logs` and `sps worker dashboard` display worker output in real-time.
+- **Permission handling**: ACP `requestPermission` callback enables programmatic per-tool-call approval (default: auto-approve all).
 
-**Architecture**: Two-phase state machine (`Inprogress` = development, `QA` = integration/merge). WorkerManager ACP interface mediates all worker lifecycle. IntegrationQueue serializes merges. One-shot `proc` workers (`codex exec` / `claude -p`) are the main autonomous path.
+**Architecture**: Two-phase state machine (`Inprogress` = development, `QA` = integration/merge). WorkerManager ACP interface mediates all worker lifecycle. IntegrationQueue serializes merges. Default transport is `acp-sdk` (structured protocol); `proc` one-shot mode available as fallback via `WORKER_TRANSPORT=proc`.
 
 ## Table of Contents
 

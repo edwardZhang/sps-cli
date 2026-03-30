@@ -7,7 +7,7 @@ import { SchedulerEngine } from '../engines/SchedulerEngine.js';
 import { ExecutionEngine } from '../engines/ExecutionEngine.js';
 import { CloseoutEngine } from '../engines/CloseoutEngine.js';
 import { MonitorEngine } from '../engines/MonitorEngine.js';
-import { createTaskBackend, createWorkerProvider, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
+import { createTaskBackend, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
 import { ResourceLimiter } from '../manager/resource-limiter.js';
@@ -99,11 +99,10 @@ function createRunner(project: string): ProjectRunner | null {
   fullLog.rotateLogs();
 
   // Create providers
-  let taskBackend, workerProvider, repoBackend, notifier;
+  let taskBackend, repoBackend, notifier;
   let agentRuntime: ReturnType<typeof createAgentRuntime> | null = null;
   try {
     taskBackend = createTaskBackend(ctx.config);
-    workerProvider = createWorkerProvider(ctx.config);
     repoBackend = createRepoBackend(ctx.config);
     notifier = createNotifier(ctx.config);
     if (workflowUsesAgentRuntime(ctx.config)) {
@@ -154,7 +153,7 @@ function createRunner(project: string): ProjectRunner | null {
     scheduler: new SchedulerEngine(ctx, taskBackend, notifier),
     closeout: new CloseoutEngine(ctx, taskBackend, repoBackend, workerManager, notifier),
     execution: new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, notifier),
-    monitor: new MonitorEngine(ctx, taskBackend, workerProvider, repoBackend, notifier, supervisor),
+    monitor: new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor),
     done: false,
     fatalError: false,
     tickNum: 0,
