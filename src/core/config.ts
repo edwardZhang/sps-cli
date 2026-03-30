@@ -33,8 +33,7 @@ export interface ProjectConfig {
 
   // Worker
   WORKER_TOOL: 'claude' | 'codex';
-  WORKER_MODE: 'print' | 'interactive';
-  WORKER_TRANSPORT: 'proc' | 'acp' | 'acp-sdk' | 'pty';
+  WORKER_TRANSPORT: 'proc' | 'acp' | 'acp-sdk';
   MAX_CONCURRENT_WORKERS: number;
   WORKER_RESTART_LIMIT: number;
   AUTOFIX_ATTEMPTS: number;
@@ -75,14 +74,13 @@ export interface ProjectConfig {
  * Override via WORKER_TRANSPORT in project conf:
  *   - 'acp-sdk' (default): ACP SDK structured protocol
  *   - 'acp': maps to 'acp-sdk' (legacy alias)
- *   - 'proc': one-shot process spawn (legacy)
- *   - 'pty': pseudoterminal sessions (experimental)
+ *   - 'proc': one-shot process spawn (legacy fallback)
  */
 export function resolveWorkflowTransport(config: ProjectConfig): ProjectConfig['WORKER_TRANSPORT'] {
   const transport = config.raw.WORKER_TRANSPORT;
   if (!transport) return 'acp-sdk';
   if (transport === 'acp') return 'acp-sdk';
-  if (transport === 'proc' || transport === 'acp-sdk' || transport === 'pty') return transport;
+  if (transport === 'proc' || transport === 'acp-sdk') return transport;
   return 'acp-sdk';
 }
 
@@ -145,7 +143,6 @@ export function loadProjectConf(projectName: string): ProjectConfig {
     MR_MODE: (raw.MR_MODE as ProjectConfig['MR_MODE']) || 'none',
 
     WORKER_TOOL: (raw.WORKER_TOOL as ProjectConfig['WORKER_TOOL']) || 'claude',
-    WORKER_MODE: (raw.WORKER_MODE as ProjectConfig['WORKER_MODE']) || 'print',
     WORKER_TRANSPORT: (raw.WORKER_TRANSPORT as ProjectConfig['WORKER_TRANSPORT']) || 'proc',
     MAX_CONCURRENT_WORKERS: parseInt(raw.MAX_CONCURRENT_WORKERS || '3', 10),
     WORKER_RESTART_LIMIT: parseInt(raw.WORKER_RESTART_LIMIT || '2', 10),

@@ -47,7 +47,7 @@ export interface TaskRunRequest {
   branch: string;
   targetBranch: string;
   tool: 'claude' | 'codex';
-  transport: 'proc' | 'pty' | 'acp-sdk';
+  transport: 'proc' | 'acp-sdk';
   outputFile: string;
   timeoutSec?: number;
   maxRetries?: number;
@@ -64,7 +64,7 @@ export interface TaskResumeRequest {
   branch: string;
   targetBranch: string;
   tool: 'claude' | 'codex';
-  transport: 'proc' | 'pty' | 'acp-sdk';
+  transport: 'proc' | 'acp-sdk';
   outputFile: string;
   sessionId?: string;
 }
@@ -207,13 +207,13 @@ export interface WorkerManager {
 
   /**
    * Send text input to a worker waiting for stdin.
-   * Only supported for PTY transport; proc returns unsupported error.
+   * Only supported for ACP transport; proc returns unsupported error.
    */
   sendInput(request: TaskInputRequest): Promise<void>;
 
   /**
    * Confirm or reject a worker's confirmation prompt.
-   * Only supported for PTY transport.
+   * Only supported for ACP transport.
    */
   confirm(request: TaskConfirmRequest): Promise<void>;
 

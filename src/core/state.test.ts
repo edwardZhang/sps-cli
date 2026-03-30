@@ -151,7 +151,6 @@ describe('readState', () => {
           seq: 2,
           branch: 'feat-1',
           worktree: '/tmp/wt',
-          tmuxSession: null,
           claimedAt: '2026-01-01T00:00:00.000Z',
           lastHeartbeat: null,
           // No mode, transport, agent, pid, etc.

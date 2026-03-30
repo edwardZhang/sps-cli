@@ -72,7 +72,7 @@ const COMMANDS: Record<string, CommandInfo> = {
     launch: '启动 Worker 实例',
     dashboard: '展示 Worker 仪表板',
   }, examples: ['sps worker launch my-project 1', 'sps worker dashboard'] },
-  acp:       { desc: 'ACP 会话管理（PTY 诊断）', usage: 'sps acp <子命令> <project> [args...]', subs: {
+  acp:       { desc: 'ACP 会话管理', usage: 'sps acp <子命令> <project> [args...]', subs: {
     ensure: '确保 ACP 会话存在',
     run: '运行 ACP 命令',
     prompt: '发送 prompt 到会话',

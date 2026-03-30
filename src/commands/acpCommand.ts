@@ -1,5 +1,4 @@
 import { ProjectContext } from '../core/context.js';
-import { enqueuePTYResponse } from '../core/ptyControl.js';
 import { createAgentRuntime } from '../providers/registry.js';
 import { Logger } from '../core/logger.js';
 import type { ACPTool } from '../models/acp.js';
@@ -141,22 +140,8 @@ export async function executeAcpCommand(
       throw new Error('Usage: sps acp respond <project> <slot> "<response>"');
     }
 
-    // Try PTY first, then tmux ACP
-    const transport = ctx.config.raw.WORKER_TRANSPORT || 'acp';
-    if (transport === 'pty') {
-      enqueuePTYResponse(ctx, slot, response, 'acp-respond');
-    } else {
-      // For tmux ACP, use tmux send-keys as fallback
-      const { execFileSync } = await import('node:child_process');
-      const sessionName = `sps-acp-${project}-${slot.startsWith('worker-') ? slot : 'worker-' + slot}`;
-      try {
-        execFileSync('tmux', ['send-keys', '-t', sessionName, response, 'Enter'], {
-          timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
-        });
-      } catch (err) {
-        throw new Error(`Failed to send response to ${sessionName}: ${err}`);
-      }
-    }
+    // Send response via ACP runtime
+    await runtime.resumeRun(slot, response);
 
     if (jsonOutput) {
       console.log(JSON.stringify({ ok: true, project, slot, response }));

@@ -13,25 +13,12 @@ export function isProcessAlive(pid: number | null | undefined): boolean {
   }
 }
 
-export function isPTYBackedSlot(
-  slot: Pick<WorkerSlotState, 'transport' | 'mode'>,
-  session?: Pick<ACPSessionRecord, 'sessionId'> | null,
-): boolean {
-  return (
-    slot.transport === 'pty' ||
-    slot.mode === 'pty' ||
-    Boolean(session?.sessionId && session.sessionId.startsWith('pty-'))
-  );
-}
-
 export function isACPBackedSlot(slot: Pick<WorkerSlotState, 'transport' | 'mode'>): boolean {
   return (
     slot.transport === 'acp' ||
     slot.transport === 'acp-sdk' ||
-    slot.transport === 'pty' ||
     slot.mode === 'acp' ||
-    slot.mode === 'acp-sdk' ||
-    slot.mode === 'pty'
+    slot.mode === 'acp-sdk'
   );
 }
 
@@ -39,10 +26,7 @@ export function extractPersistedSessionPid(
   session?: Pick<ACPSessionRecord, 'pid' | 'sessionId'> | null,
 ): number | null {
   if (session?.pid && session.pid > 0) return session.pid;
-  const match = session?.sessionId?.match(/^pty-[^-]+-(\d+)-\d+$/);
-  if (!match) return null;
-  const pid = Number(match[1]);
-  return Number.isFinite(pid) && pid > 0 ? pid : null;
+  return null;
 }
 
 export function getPersistedRunStatus(
@@ -65,9 +49,9 @@ export function isPersistedSessionAlive(
 ): boolean {
   if (!session || session.sessionState === 'offline') return false;
 
-  if (isPTYBackedSlot(slot, session)) {
-    return isProcessAlive(extractPersistedSessionPid(session));
-  }
+  // Check if the backing process is alive
+  const pid = extractPersistedSessionPid(session);
+  if (pid) return isProcessAlive(pid);
 
   return true;
 }

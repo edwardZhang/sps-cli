@@ -8,13 +8,12 @@ export interface WorkerSlotState {
   seq: number | null;
   branch: string | null;
   worktree: string | null;
-  tmuxSession: string | null;
   claimedAt: string | null;
   lastHeartbeat: string | null;
   /** Worker execution mode — null for legacy state files */
-  mode?: 'print' | 'interactive' | 'acp' | 'acp-sdk' | 'pty' | null;
+  mode?: 'print' | 'acp' | 'acp-sdk' | null;
   /** Underlying worker transport */
-  transport?: 'proc' | 'acp' | 'acp-sdk' | 'pty' | null;
+  transport?: 'proc' | 'acp' | 'acp-sdk' | null;
   /** Worker tool currently bound to the slot */
   agent?: 'claude' | 'codex' | null;
   /** Claude/Codex session ID for resume chains (print mode) */
@@ -122,7 +121,7 @@ export interface IntegrationQueueEntry {
   branch: string;
   targetBranch: string;
   tool: 'claude' | 'codex';
-  transport: 'proc' | 'pty' | 'acp-sdk';
+  transport: 'proc' | 'acp-sdk';
   outputFile: string;
   enqueuedAt: string;
 }
@@ -142,7 +141,7 @@ export interface RuntimeState {
   leases: Record<string, TaskLease>;
   worktreeEvidence: Record<string, WorktreeEvidence>;
   worktreeCleanup: WorktreeCleanupEntry[];
-  /** ACP/PTY session records — merged from former acp-state.json */
+  /** ACP session records — merged from former acp-state.json */
   sessions: Record<string, ACPSessionRecord>;
   /** Per-project:targetBranch integration serialisation queues */
   integrationQueues: Record<string, IntegrationQueueState>;
@@ -156,7 +155,6 @@ export function createIdleWorkerSlot(): WorkerSlotState {
     seq: null,
     branch: null,
     worktree: null,
-    tmuxSession: null,
     claimedAt: null,
     lastHeartbeat: null,
     mode: null,

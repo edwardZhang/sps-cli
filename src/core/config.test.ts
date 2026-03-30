@@ -18,7 +18,6 @@ function makeConfig(overrides?: Partial<ProjectConfig>): ProjectConfig {
     CI_MODE: 'none',
     MR_MODE: 'none',
     WORKER_TOOL: 'claude',
-    WORKER_MODE: 'print',
     WORKER_TRANSPORT: 'proc',
     MAX_CONCURRENT_WORKERS: 3,
     WORKER_RESTART_LIMIT: 2,
@@ -111,10 +110,10 @@ describe('resolveWorkflowTransport', () => {
     expect(resolveWorkflowTransport(config)).toBe('proc');
   });
 
-  it('preserves pty when explicitly set', async () => {
+  it('maps unknown transport to acp-sdk', async () => {
     const { resolveWorkflowTransport } = await import('./config.js');
-    const config = makeConfig({ raw: { WORKER_TRANSPORT: 'pty' } as any });
-    expect(resolveWorkflowTransport(config)).toBe('pty');
+    const config = makeConfig({ raw: { WORKER_TRANSPORT: 'unknown' } as any });
+    expect(resolveWorkflowTransport(config)).toBe('acp-sdk');
   });
 });
 
@@ -211,7 +210,6 @@ describe('loadProjectConf', () => {
 
     const config = loadProjectConf('minimal');
     expect(config.WORKER_TOOL).toBe('claude');
-    expect(config.WORKER_MODE).toBe('print');
     expect(config.WORKER_TRANSPORT).toBe('proc');
     expect(config.MAX_CONCURRENT_WORKERS).toBe(3);
     expect(config.WORKER_RESTART_LIMIT).toBe(2);

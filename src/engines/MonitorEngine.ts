@@ -94,7 +94,7 @@ export class MonitorEngine {
       if (this.supervisor.get(workerId)) continue;
 
       if (
-        (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk' || slotState.mode === 'pty') &&
+        (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk') &&
         this.isAcpSessionAlive(state.sessions[slotName])
       ) {
         continue;
@@ -211,7 +211,7 @@ export class MonitorEngine {
 
       const slotState = runtime.slot;
 
-      if (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk' || slotState.mode === 'pty') {
+      if (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk') {
         const session = runtime.slotName ? state.sessions[runtime.slotName] : undefined;
         if (this.isAcpSessionAlive(session)) {
           continue;
@@ -416,10 +416,8 @@ export class MonitorEngine {
       const isAgentTransport =
         slotState.transport === 'acp' ||
         slotState.transport === 'acp-sdk' ||
-        slotState.transport === 'pty' ||
         slotState.mode === 'acp' ||
-        slotState.mode === 'acp-sdk' ||
-        slotState.mode === 'pty';
+        slotState.mode === 'acp-sdk';
 
       if (isAgentTransport) {
         const session = state.sessions[slotName];
@@ -442,8 +440,7 @@ export class MonitorEngine {
         continue;
       }
 
-      // Legacy tmux interactive mode code removed — ACP SDK handles
-      // permission requests via requestPermission callback in AcpSdkAdapter.
+      // ACP SDK handles permission requests via requestPermission callback in AcpSdkAdapter.
     }
 
     checks.push({
@@ -511,7 +508,7 @@ export class MonitorEngine {
         continue;
       }
 
-      if (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.transport === 'pty' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk' || slotState.mode === 'pty') {
+      if (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk') {
         const session = state.sessions[slotName];
         if (this.isAcpSessionAlive(session)) continue;
       }

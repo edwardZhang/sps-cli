@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
-import { enqueuePTYResponse } from '../core/ptyControl.js';
+// ACP SDK handles all worker interaction
 import { readState, type WorkerSlotState } from '../core/state.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import {
@@ -18,36 +18,6 @@ import { renderClaudeStreamLines, renderCodexStreamLines } from '../providers/st
 
 const HOME = process.env.HOME || '/home/coral';
 
-// ── tmux helpers ──────────────────────────────────────────────────────
-
-function tmux(args: string[]): string | null {
-  try {
-    return execFileSync('tmux', args, {
-      encoding: 'utf-8',
-      timeout: 5_000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch {
-    return null;
-  }
-}
-
-function listTmuxSessions(): string[] {
-  const out = tmux(['list-sessions', '-F', '#{session_name}']);
-  if (!out) return [];
-  return out.trim().split('\n').filter(Boolean);
-}
-
-function capturePaneText(session: string, lines: number): string {
-  return tmux(['capture-pane', '-t', session, '-p', '-S', `-${lines}`]) ?? '';
-}
-
-function getSessionDimensions(session: string): { cols: number; rows: number } {
-  const out = tmux(['display-message', '-t', session, '-p', '#{window_width},#{window_height}']);
-  if (!out) return { cols: 0, rows: 0 };
-  const [cols, rows] = out.trim().split(',').map(Number);
-  return { cols: cols || 0, rows: rows || 0 };
-}
 
 // ── ANSI helpers ──────────────────────────────────────────────────────
 
@@ -275,7 +245,7 @@ function latestWorkerLogAgeSec(ctx: ProjectContext, slotName: string): number | 
   try {
     const entries = readdirSync(ctx.paths.logsDir)
       .filter(name =>
-        (name.startsWith(`${slotName}-pty-`) || name.includes('-acp-')) &&
+        name.includes('-acp-') &&
         name.endsWith('.log'),
       )
       .map(name => resolve(ctx.paths.logsDir, name));
@@ -435,22 +405,8 @@ function buildPrintPanelLines(slot: WorkerSlotState, rawLines: string[]): string
   return lines.length > 0 ? lines : ['(worker running, no output yet)'];
 }
 
-function buildInteractivePanelLines(slot: WorkerSlotState, paneText: string): string[] {
-  const lines = cleanScreenLines(paneText);
-  const worktree = shortenPath(slot.worktree || '');
-  const summary: string[] = [
-    `${BOLD}mode:${RESET} interactive/tmux`,
-    `${BOLD}cwd:${RESET} ${worktree || '(unknown)'}`,
-  ];
-  const interesting = lines.slice(-4);
-  if (interesting.length === 0) summary.push('(no pane output)');
-  else summary.push(...interesting.map(line => `${DIM}${line}${RESET}`));
-  return summary;
-}
-
 function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[] {
   const panels: WorkerPanel[] = [];
-  const allSessions = new Set(listTmuxSessions());
 
   for (const projectName of projects) {
     const snapshot = snapshots.get(projectName);
@@ -458,10 +414,8 @@ function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[
     const { ctx, state } = snapshot;
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
-      const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
       const isPrintMode = slot.mode === 'print';
-      const isPtyMode = slot.transport === 'pty';
-      const isAcpMode = isPtyMode || slot.mode === 'acp' || slot.mode === 'acp-sdk' || slot.transport === 'acp' || slot.transport === 'acp-sdk';
+      const isAcpMode = slot.mode === 'acp' || slot.mode === 'acp-sdk' || slot.transport === 'acp' || slot.transport === 'acp-sdk';
 
       let sessionAlive: boolean;
       let paneLines: string[];
@@ -480,7 +434,7 @@ function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[
         if (slot.outputFile) {
           const rawLines = tailFile(slot.outputFile, 40).split('\n');
           // Render JSONL into human-readable lines
-          const rendered = slot.tmuxSession?.includes('codex')
+          const rendered = (slot.agent === 'codex')
             ? renderCodexStreamLines(rawLines)
             : renderClaudeStreamLines(rawLines);
           paneLines = buildPrintPanelLines(slot, rendered.length > 0 ? rendered : rawLines);
@@ -488,10 +442,9 @@ function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[
           paneLines = sessionAlive ? ['(worker running, no output yet)'] : ['(no output file)'];
         }
       } else {
-        // Interactive (tmux) mode
-        sessionAlive = allSessions.has(sessionName);
-        const paneText = sessionAlive ? capturePaneText(sessionName, 30) : '';
-        paneLines = buildInteractivePanelLines(slot, paneText);
+        // Fallback: no live output
+        sessionAlive = false;
+        paneLines = ['(no output)'];
       }
 
       // Skip idle slots with no live session/process
@@ -554,7 +507,7 @@ function renderPanel(panel: WorkerPanel, panelWidth: number, panelHeight: number
     : '';
   const modeInfo = panel.slot.mode === 'print'
     ? `pid:${panel.slot.pid || '?'}${panel.slot.exitCode != null ? ` exit:${panel.slot.exitCode}` : ''}`
-    : (panel.slot.mode === 'acp' || panel.slot.mode === 'acp-sdk' || panel.slot.mode === 'pty')
+    : (panel.slot.mode === 'acp' || panel.slot.mode === 'acp-sdk')
       ? `${panel.slot.mode}:${panel.slot.sessionState || 'unknown'}${panel.slot.remoteStatus ? `/${panel.slot.remoteStatus}` : ''}`
       : '';
   const timeLine = elapsed || heartbeat || modeInfo
@@ -715,7 +668,6 @@ interface DashboardJson {
       status: string;
       seq: number | null;
       branch: string | null;
-      tmuxSession: string | null;
       sessionAlive: boolean;
       claimedAt: string | null;
       lastHeartbeat: string | null;
@@ -727,15 +679,12 @@ interface DashboardJson {
     }[];
     activeCards: Record<string, unknown>;
   }[];
-  tmuxSessions: string[];
 }
 
 function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJson {
-  const allSessions = new Set(listTmuxSessions());
   const result: DashboardJson = {
     timestamp: new Date().toISOString(),
     projects: [],
-    tmuxSessions: [...allSessions].sort(),
   };
 
   for (const projectName of projects) {
@@ -745,21 +694,17 @@ function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJ
     const workers: DashboardJson['projects'][0]['workers'] = [];
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
-      const sessionName = slot.tmuxSession || `${projectName}-${slotName}`;
       const isPrintMode = slot.mode === 'print';
-      const isPtyMode = slot.transport === 'pty';
-      const isAcpMode = isPtyMode || slot.mode === 'acp' || slot.mode === 'acp-sdk' || slot.transport === 'acp' || slot.transport === 'acp-sdk';
+      const isAcpMode = slot.mode === 'acp' || slot.mode === 'acp-sdk' || slot.transport === 'acp' || slot.transport === 'acp-sdk';
       const acpSession = state.sessions[slotName];
       const sessionAlive = isAcpMode
         ? isPersistedSessionAlive(slot, acpSession)
         : isPrintMode
           ? !!(slot.pid && slot.pid > 0 && isProcessAlive(slot.pid))
-          : allSessions.has(sessionName);
+          : false;
       const panePreview = isAcpMode
         ? buildACPPanelLines(snapshot.ctx, slotName, slot, acpSession, sessionAlive).join(' | ')
-        : sessionAlive && !isPrintMode
-          ? buildInteractivePanelLines(slot, capturePaneText(sessionName, 5)).join(' | ')
-          : '';
+        : '';
       const diagnostics = isAcpMode
         ? analyzeACPSession(snapshot.ctx, slotName, slot, acpSession, sessionAlive)
         : null;
@@ -773,7 +718,6 @@ function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJ
         status: projectedStatus,
         seq: slot.seq,
         branch: slot.branch,
-        tmuxSession: slot.tmuxSession,
         sessionAlive,
         claimedAt: slot.claimedAt,
         lastHeartbeat: slot.lastHeartbeat,
@@ -832,27 +776,12 @@ function collectPendingInputs(projects: string[]): PendingItem[] {
 
 function sendResponse(item: PendingItem, response: string): boolean {
   try {
-    if (item.transport === 'pty') {
-      const ctx = ProjectContext.load(item.project);
-      enqueuePTYResponse(ctx, item.slot, response, 'worker-dashboard');
-    } else {
-      // tmux fallback
-      const num = parseInt(response, 10);
-      let keys: string[];
-      if (!isNaN(num) && num >= 1) {
-        keys = [];
-        for (let i = 1; i < num; i++) keys.push('Down');
-        keys.push('Enter');
-      } else {
-        keys = [response, 'Enter'];
-      }
-      for (const k of keys) {
-        execFileSync('tmux', ['send-keys', '-t', item.sessionName, k], {
-          timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
-        });
-      }
-    }
-
+    // Send response via ACP runtime
+    const ctx = ProjectContext.load(item.project);
+    const { createAgentRuntime } = require('../providers/registry.js');
+    const runtime = createAgentRuntime(ctx);
+    // Fire and forget — dashboard is synchronous UI
+    runtime.resumeRun(item.slot, response).catch(() => {});
     return true;
   } catch {
     return false;
@@ -1019,7 +948,7 @@ export async function executeWorkerDashboard(
 
   if (projects.length === 0) {
     if (jsonOutput) {
-      console.log(JSON.stringify({ timestamp: new Date().toISOString(), projects: [], tmuxSessions: [] }));
+      console.log(JSON.stringify({ timestamp: new Date().toISOString(), projects: [] }));
     } else {
       console.error('No projects found in ~/.coral/projects/');
     }

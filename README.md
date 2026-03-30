@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.26.0**
+**v0.26.1**
 
 SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
 
@@ -75,7 +75,7 @@ npx tsx src/main.ts --help
 | Node.js | 18+ | CLI runtime |
 | git | 2.x | Branch and worktree management |
 | Claude Code CLI or Codex CLI | Latest | AI Worker |
-| tmux | 3.x | Required only for legacy `WORKER_MODE=interactive` and tmux-backed `WORKER_TRANSPORT=acp` |
+| tmux | 3.x | No longer required (legacy dependency removed in v0.26.1) |
 
 ## Quick Start
 
@@ -136,7 +136,7 @@ Planning -> Backlog -> Todo -> Inprogress -> QA -> Done
 
 In this model, the development worker stops at “implementation complete and committed on the task branch”. The QA worker owns integration: it must inspect the current worktree, rebase/merge the task branch back into the target branch, resolve conflicts, and finish the integration. If a development worker merges early anyway, SPS absorbs that as an exception from git evidence and closes the task directly instead of forcing an extra QA run. See `docs/design/10-acp-worker-runtime-design.md` for the persistent Agent transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary. See `docs/design/11-runtime-state-authority-and-recovery-redesign.md` for the redesign that demotes `state.json` / `acp-state.json` to projections and re-centers recovery around PM state plus worktree/git evidence. See `docs/design/12-unified-runtime-state-machine.md` for the current unified state-machine model. See `docs/design/13-development-guardrails.md` for the non-negotiable development rules that prevent future features from reintroducing old state, merge, or prompt-model drift.
 
-The autonomous main path now uses one-shot child processes by default. `WORKER_TRANSPORT=proc` is the workflow transport for `tick`, `pipeline tick`, `qa tick`, `worker launch`, and `recovery`; workers run through `codex exec` or `claude -p`, finish a single task phase, and exit. PTY/ACP still exist, but only for `sps acp`, dashboard observability, and manual diagnostics. Their strong runtime contract (`waiting_input`, `needs_confirmation`, `running`, `completed`, plus `stalled_submit`) remains useful for those manual surfaces, but it is no longer the default autonomous execution path.
+The autonomous main path uses ACP SDK transport by default. `WORKER_TRANSPORT=acp-sdk` is the workflow transport for `tick`, `pipeline tick`, `qa tick`, `worker launch`, and `recovery`; workers communicate via structured ACP JSON-RPC over stdio. `proc` one-shot mode (`codex exec` / `claude -p`) is available as fallback via `WORKER_TRANSPORT=proc`. `sps acp` commands provide diagnostic and manual-control capabilities.
 
 ### MR_MODE=create (Optional)
 
@@ -276,7 +276,7 @@ Equivalent to `sps project doctor <project>`.
 | plane | Plane API connectivity (PM_TOOL=plane only) | -- |
 | pm-states / pm-lists | Whether PM state/list UUIDs are valid | Auto-create + write to conf |
 | worker-tool | Whether Claude Code / Codex CLI is in PATH | -- |
-| tmux | Whether tmux is available (WORKER_MODE=interactive only) | -- |
+| acp-runtime | Whether ACP agent binaries are available | -- |
 
 | Option | Description |
 |--------|-------------|
@@ -298,7 +298,7 @@ sps doctor my-project --fix
 #   ok  worker-rules      Generated and committed: CLAUDE.md, AGENTS.md
 #   ok  skill-profiles    DEFAULT_WORKER_SKILLS="senior" -- all profiles found
 #   ok  state-json        Initialized with 3 worker slots
-#   -   tmux              Not required (WORKER_MODE=print)
+#   ok  acp-runtime       claude-agent-acp and codex-acp available
 
 # JSON output
 sps doctor my-project --json
@@ -498,7 +498,7 @@ sps acp stop <project> <slot> [--json]
 
 Current behavior:
 
-- `ensure` starts or reuses a persistent PTY-backed local session when `WORKER_TRANSPORT=pty`, and falls back to the legacy tmux-backed gateway when the project still uses `WORKER_TRANSPORT=acp`
+- `ensure` starts or reuses an ACP SDK session for the specified worker slot
 - `run` submits a prompt onto the session and records a new run snapshot
 - `status` refreshes session and run state from the local gateway
 - `stop` terminates the persistent session and marks the slot `offline`
@@ -594,29 +594,32 @@ If the card is in Backlog state, it will automatically execute prepare first (cr
 3. Launch Worker process
 4. Push card to Inprogress
 
-**Worker execution modes (`WORKER_MODE`):**
+**Worker transport modes (`WORKER_TRANSPORT`):**
 
-| Mode | Default | Description |
-|------|---------|-------------|
-| `print` | **Yes** | One-shot execution, process exit = task complete, no tmux dependency |
-| `interactive` | No | Traditional tmux TUI interactive mode (fallback) |
+| Transport | Default | Description |
+|-----------|---------|-------------|
+| `acp-sdk` | **Yes** | ACP JSON-RPC over stdio — structured, deterministic state detection |
+| `proc` | No | One-shot execution (`claude -p` / `codex exec`), process exit = task complete |
 
-**Print mode (recommended):**
+**ACP SDK mode (default):**
 
-The Worker runs as a subprocess, prompt is passed via stdin, output is written to a JSONL file:
+Workers communicate via structured ACP JSON-RPC protocol over stdio. Claude uses `claude-agent-acp` (Anthropic's official SDK), Codex uses `codex-acp` (Zed's Rust native binary).
+
+Key advantages:
+- **Structured communication** -- JSON-RPC protocol, no terminal screen-scraping
+- **Deterministic state detection** -- No regex parsing, no guessing
+- **Permission handling** -- Programmatic per-tool-call approval via `requestPermission` callback
+- **Real-time logs** -- ACP events stream to `*-acp-*.log` files
+- **No external dependencies** -- Pure process management, suitable for CI/CD environments
+
+**Proc mode (fallback):**
+
+The Worker runs as a one-shot subprocess:
 
 ```
 Claude:  claude -p --output-format stream-json --dangerously-skip-permissions
 Codex:   codex exec - --json --sandbox danger-full-access
 ```
-
-Key advantages:
-- **Never gets stuck** -- No TUI interaction, process exit means completion
-- **No confirmation needed** -- Permission flags skip all confirmation dialogs
-- **Context continuation** -- Via `--resume <sessionId>` for cross-task context reuse (hits prompt cache, saves tokens)
-- **No tmux dependency** -- Pure process management, suitable for CI/CD environments
-
-When resuming an existing Codex session, SPS uses `codex exec resume <sessionId> - --json --sandbox danger-full-access`.
 
 **Session Resume chain:**
 
@@ -627,16 +630,6 @@ Task 1: claude -p "Implement feature"              -> session_id_1 (stored in st
 CI fix: claude -p "Fix CI" --resume sid             -> Inherits full context from task 1
 Conflict: claude -p "Resolve conflict" --resume sid -> Inherits all historical context
 ```
-
-**Interactive mode (fallback):**
-
-Set `WORKER_MODE=interactive` to fall back to tmux interactive mode. Reuse strategy in this mode:
-
-| Scenario | Behavior |
-|----------|----------|
-| Session exists + Claude running | Reuse: `/clear` + `cd worktree` |
-| Session exists + Claude not running | Reuse session: `cd` + launch Claude |
-| No session | Create new session + launch Claude |
 
 **Example:**
 
@@ -665,9 +658,8 @@ sps worker dashboard [project1] [project2] ... [--once] [--json]
 - Press `q` to quit, press `r` to force refresh
 - Uses alternate screen buffer (does not pollute terminal scrollback)
 - Adaptive grid layout, one panel per Worker
-- Print mode panels show: PID, exit code, JSONL-rendered human-readable output
-- PTY / ACP panels show: transport, session/run status, model, cwd, pending confirmation, and the latest structured summary line
-- Interactive tmux panels now show a sanitized summary instead of dumping the raw pane screen
+- Proc mode panels show: PID, exit code, JSONL-rendered human-readable output
+- ACP SDK panels show: transport, session/run status, model, cwd, pending confirmation, and the latest structured summary line
 
 **Example:**
 
@@ -813,10 +805,8 @@ sps monitor tick <project> [--json]
 
 | Check | Description |
 |-------|-------------|
-| Orphan slot cleanup | Process/tmux session is dead but slot is still marked active |
+| Orphan slot cleanup | Worker process is dead but slot is still marked active |
 | Timeout detection | Inprogress exceeds `INPROGRESS_TIMEOUT_HOURS` |
-| Awaiting confirmation detection | Worker waiting for user confirmation (interactive mode only; print mode has no confirmations) |
-| Block detection | Worker encountering error/fatal/stuck (interactive mode only) |
 | State alignment | Whether PM state and runtime state are consistent |
 
 **Example:**
@@ -972,15 +962,14 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `WORKER_TOOL` | No | `claude` | Worker type: `claude` / `codex` |
-| `WORKER_MODE` | No | `print` | Execution mode: `print` (one-shot process) / `interactive` (tmux TUI) |
-| `WORKER_TRANSPORT` | No | `proc` | Worker transport. `proc` is the autonomous workflow path. `acp` / `pty` are retained for `sps acp`, dashboard observability, and manual diagnostics, not as the default `tick` execution chain. |
+| `WORKER_TRANSPORT` | No | `acp-sdk` | Worker transport: `acp-sdk` (ACP JSON-RPC, default), `proc` (one-shot fallback) |
 | `ACP_GATEWAY_MODE` | No | `local` | ACP gateway deployment mode; current releases support `local` only |
 | `ACP_AGENT` | No | `WORKER_TOOL` | Default ACP tool when `sps acp` does not receive a tool override |
 | `ACP_SESSION_STRATEGY` | No | `per-slot` | Session allocation strategy; current releases support `per-slot` only |
 | `MAX_CONCURRENT_WORKERS` | No | `3` | Maximum parallel Workers (worker slot ceiling) |
 | `WORKER_RESTART_LIMIT` | No | `2` | Maximum restart count after Worker death |
 | `AUTOFIX_ATTEMPTS` | No | `2` | CI failure auto-fix attempt count |
-| `WORKER_SESSION_REUSE` | No | `true` | Whether to reuse tmux sessions (interactive mode only) |
+| `WORKER_SESSION_REUSE` | No | `true` | Whether to reuse ACP sessions across tasks |
 | `MAX_ACTIONS_PER_TICK` | No | `1` | Maximum launches per tick cycle; raise with `MAX_CONCURRENT_WORKERS` if one tick should fill all slots |
 
 #### Timeouts and Policies
@@ -1023,8 +1012,7 @@ PLANE_PROJECT_ID="project-uuid-here"
 
 # Worker
 WORKER_TOOL="claude"
-WORKER_MODE="print"              # print (recommended) or interactive (tmux fallback)
-WORKER_TRANSPORT="proc"          # proc (autonomous workflow default); acp/pty are manual diagnostic transports
+WORKER_TRANSPORT="acp-sdk"       # acp-sdk (default) or proc (one-shot fallback)
 ACP_GATEWAY_MODE="local"
 ACP_AGENT="claude"
 ACP_SESSION_STRATEGY="per-slot"
@@ -1134,21 +1122,18 @@ workflow-cli/
 │   │   └── recovery.ts         #   Post-restart PID scan recovery
 │   ├── interfaces/             # Abstract interfaces
 │   │   ├── TaskBackend.ts      #   PM backend interface
-│   │   ├── WorkerProvider.ts   #   Worker interface
 │   │   ├── RepoBackend.ts      #   Code repository interface
 │   │   ├── Notifier.ts         #   Notification interface
 │   │   └── HookProvider.ts     #   Hook interface
 │   ├── models/                 # Type definitions
 │   │   └── types.ts            #   Card, CommandResult, WorkerStatus, etc.
 │   └── providers/              # Concrete implementations
-│       ├── registry.ts         #   Provider factory (routes by WORKER_MODE x WORKER_TOOL)
+│       ├── registry.ts         #   Provider factory
 │       ├── PlaneTaskBackend.ts
 │       ├── TrelloTaskBackend.ts
 │       ├── MarkdownTaskBackend.ts
-│       ├── ClaudePrintProvider.ts   # claude -p one-shot execution (default)
-│       ├── CodexExecProvider.ts     # codex exec one-shot execution (default)
-│       ├── ClaudeTmuxProvider.ts    # tmux interactive mode (fallback)
-│       ├── CodexTmuxProvider.ts     # tmux interactive mode (fallback)
+│       ├── adapters/           #   ACP SDK adapters
+│       │   └── AcpSdkAdapter.ts #  Unified ACP adapter (JSON-RPC over stdio)
 │       ├── outputParser.ts      #   JSONL output parsing, process management utilities
 │       ├── streamRenderer.ts    #   JSONL -> human-readable text (for Dashboard)
 │       ├── GitLabRepoBackend.ts
@@ -1174,7 +1159,7 @@ v0.16.0 introduced the `src/manager/` directory, decoupling Worker process manag
 
 **Refactoring results:**
 - ExecutionEngine reduced from 1219 to 916 lines (removed attemptResume, completeAndRelease)
-- MonitorEngine reduced from 974 to 750 lines (removed direct PID/tmux detection)
+- MonitorEngine reduced from 974 to 750 lines (removed direct PID detection)
 - tick.ts added ~80 lines (initialize shared Manager modules, run Recovery on startup)
 
 ---

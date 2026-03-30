@@ -40,7 +40,7 @@ export interface WorkerManagerDeps {
 interface SpawnContext {
   taskId: string; cardId: string; project: string; phase: WorkerPhase;
   prompt: string; cwd: string; branch: string; targetBranch: string;
-  tool: 'claude' | 'codex'; transport: 'proc' | 'pty' | 'acp-sdk';
+  tool: 'claude' | 'codex'; transport: 'proc' | 'acp-sdk';
   outputFile: string; maxRetries: number; resumeSessionId?: string;
   customTimeoutSec?: number;
 }
@@ -197,13 +197,13 @@ export class WorkerManagerImpl implements WorkerManager {
   // ─── sendInput / confirm ─────────────────────────────────────
 
   async sendInput(request: TaskInputRequest): Promise<void> {
-    const slot = this.requirePtySlot(request.taskId, 'sendInput');
+    const slot = this.requireAgentSlot(request.taskId, 'sendInput');
     await this.agentRuntime!.resumeRun(slot, request.input);
     this.log(`Sent input to task ${request.taskId} in ${slot}`);
   }
 
   async confirm(request: TaskConfirmRequest): Promise<void> {
-    const slot = this.requirePtySlot(request.taskId, 'confirm');
+    const slot = this.requireAgentSlot(request.taskId, 'confirm');
     const input = request.action === 'confirm' ? (request.message ?? 'yes') : (request.message ?? 'no');
     await this.agentRuntime!.resumeRun(slot, input);
     this.log(`Confirmed (${request.action}) task ${request.taskId} in ${slot}`);
@@ -353,7 +353,7 @@ export class WorkerManagerImpl implements WorkerManager {
         });
         pid = handle.pid;
         sessionId = handle.sessionId ?? undefined;
-      } else if (transport === 'pty' || transport === 'acp-sdk') {
+      } else if (transport === 'acp-sdk') {
         if (!this.agentRuntime) {
           throw new Error(`${transport} transport requires agentRuntime`);
         }
@@ -363,7 +363,7 @@ export class WorkerManagerImpl implements WorkerManager {
         sessionId = session.sessionId;
         pid = session.pid ?? null;
 
-        // ACP/PTY completion monitor — polls inspectRun until terminal state
+        // ACP completion monitor — polls inspectRun until terminal state
         this.monitorAcpCompletion({
           workerId, taskId, cardId, project, phase, slot, branch, cwd,
           targetBranch, outputFile, tool, transport, maxRetries,
@@ -406,7 +406,7 @@ export class WorkerManagerImpl implements WorkerManager {
     workerId: string; taskId: string; cardId: string; project: string;
     phase: WorkerPhase; slot: string; branch: string; cwd: string;
     targetBranch: string; outputFile: string; tool: 'claude' | 'codex';
-    transport: 'proc' | 'pty' | 'acp-sdk'; exitCode: number; maxRetries: number;
+    transport: 'proc' | 'acp-sdk'; exitCode: number; maxRetries: number;
   }): Promise<void> {
     const { workerId, taskId, cardId, project, phase, slot, branch, cwd,
             targetBranch, outputFile, tool, transport, exitCode, maxRetries } = ctx;
@@ -458,7 +458,7 @@ export class WorkerManagerImpl implements WorkerManager {
     workerId: string; taskId: string; cardId: string; project: string;
     phase: WorkerPhase; slot: string; branch: string; cwd: string;
     targetBranch: string; outputFile: string; tool: 'claude' | 'codex';
-    transport: 'proc' | 'pty' | 'acp-sdk'; maxRetries: number;
+    transport: 'proc' | 'acp-sdk'; maxRetries: number;
     sessionName: string;
   }): void {
     if (!this.agentRuntime) return;
@@ -747,14 +747,14 @@ export class WorkerManagerImpl implements WorkerManager {
 
   private claimSlot(state: RuntimeState, slot: string, ctx: {
     seq: string; cardId: string; project: string; phase: WorkerPhase;
-    branch: string; cwd: string; tool: 'claude' | 'codex'; transport: 'proc' | 'pty' | 'acp-sdk';
+    branch: string; cwd: string; tool: 'claude' | 'codex'; transport: 'proc' | 'acp-sdk';
     outputFile: string; nowIso: string; targetBranch: string;
   }): void {
     const seqNum = parseInt(ctx.seq, 10) || 0;
     state.workers[slot] = {
       ...createIdleWorkerSlot(), status: 'active', seq: seqNum,
       branch: ctx.branch, worktree: ctx.cwd, claimedAt: ctx.nowIso, lastHeartbeat: ctx.nowIso,
-      mode: (ctx.transport === 'pty' || ctx.transport === 'acp-sdk') ? ctx.transport : 'print', transport: ctx.transport, agent: ctx.tool,
+      mode: ctx.transport === 'acp-sdk' ? 'acp-sdk' : 'print', transport: ctx.transport, agent: ctx.tool,
       outputFile: ctx.transport === 'proc' ? ctx.outputFile : null,
     };
     state.activeCards[ctx.seq] = {
@@ -790,13 +790,13 @@ export class WorkerManagerImpl implements WorkerManager {
     return 'running';
   }
 
-  private requirePtySlot(taskId: string, op: string): string {
+  private requireAgentSlot(taskId: string, op: string): string {
     const slot = this.taskSlotMap.get(taskId);
     if (!slot) throw new Error(`Task ${taskId} not found`);
-    if (!this.agentRuntime) throw new Error(`${op} requires PTY transport (agentRuntime not available)`);
+    if (!this.agentRuntime) throw new Error(`${op} requires agentRuntime (not available)`);
     const state = this.rd();
     const w = state.workers[slot];
-    if (!w || (w.transport !== 'pty' && w.mode !== 'pty')) {
+    if (!w || (w.transport !== 'acp-sdk' && w.mode !== 'acp-sdk' && w.mode !== 'acp')) {
       throw new Error(`${op} unsupported for transport=${w?.transport ?? 'unknown'}`);
     }
     return slot;

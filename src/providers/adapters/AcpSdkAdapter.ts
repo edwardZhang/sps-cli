@@ -1,7 +1,7 @@
 /**
  * AcpSdkAdapter — Implements ACPClient using real ACP JSON-RPC over stdio.
  *
- * Replaces ClaudeACPAdapter + CodexACPAdapter (tmux screen-scraping) with
+ * Replaces legacy adapters with
  * structured protocol communication via @agentclientprotocol/sdk.
  *
  * Architecture (aligned with OpenClaw/acpx):

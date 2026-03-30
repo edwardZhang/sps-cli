@@ -427,7 +427,7 @@ export class RuntimeCoordinator {
   private isLiveWorker(candidate: Candidate): boolean {
     if (!candidate.slot) return false;
 
-    if (candidate.slot.transport === 'acp' || candidate.slot.transport === 'acp-sdk' || candidate.slot.transport === 'pty' || candidate.slot.mode === 'acp' || candidate.slot.mode === 'acp-sdk' || candidate.slot.mode === 'pty') {
+    if (candidate.slot.transport === 'acp' || candidate.slot.transport === 'acp-sdk' || candidate.slot.mode === 'acp' || candidate.slot.mode === 'acp-sdk') {
       return hasPersistedActiveRun(candidate.slot, candidate.session);
     }
 

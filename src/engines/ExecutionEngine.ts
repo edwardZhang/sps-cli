@@ -502,7 +502,7 @@ export class ExecutionEngine {
       branch: branchName,
       targetBranch: this.ctx.mergeBranch,
       tool: this.ctx.config.WORKER_TOOL as 'claude' | 'codex',
-      transport: workflowTransport as 'proc' | 'pty' | 'acp-sdk',
+      transport: workflowTransport as 'proc' | 'acp-sdk',
       outputFile: resolve(logsDir, `${this.ctx.projectName}-worker-${card.seq}-${Date.now()}.jsonl`),
       timeoutSec: this.ctx.config.WORKER_LAUNCH_TIMEOUT_S,
       maxRetries: this.ctx.config.WORKER_RESTART_LIMIT,
@@ -607,7 +607,7 @@ export class ExecutionEngine {
     }
 
     if (snapshot && snapshot.state === 'completed') {
-      this.log.ok(`seq ${seq}: ACP/PTY run completed (via WM)`);
+      this.log.ok(`seq ${seq}: ACP run completed (via WM)`);
       return {
         action: 'complete',
         entity: `seq:${seq}`,
@@ -617,7 +617,7 @@ export class ExecutionEngine {
     }
 
     if (snapshot && snapshot.state === 'failed') {
-      this.log.info(`seq ${seq}: ACP/PTY run failed (via WM)`);
+      this.log.info(`seq ${seq}: ACP run failed (via WM)`);
       return {
         action: 'complete',
         entity: `seq:${seq}`,
@@ -686,7 +686,7 @@ export class ExecutionEngine {
    * The prompt file includes the project rules (from CLAUDE.md) followed by
    * the task-specific details. This ensures that when a session is reused
    * (WORKER_SESSION_REUSE=true), the worker always receives the latest
-   * project rules via tmux paste — even though /clear + cd does not
+   * project rules via the prompt — even though /clear + cd does not
    * trigger Claude/Codex to re-read CLAUDE.md from disk.
    */
   /**

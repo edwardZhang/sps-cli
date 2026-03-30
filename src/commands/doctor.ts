@@ -291,17 +291,9 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
     checks.push({ name: 'worker-tool', status: 'warn', message: `${tool} not found in PATH` });
   }
 
-  // 10. tmux (only required for WORKER_MODE=interactive)
-  if (ctx.config.WORKER_MODE === 'interactive') {
-    try {
-      execSync('which tmux', { encoding: 'utf-8', timeout: 5000 });
-      checks.push({ name: 'tmux', status: 'pass', message: 'tmux available (required for interactive mode)' });
-    } catch {
-      checks.push({ name: 'tmux', status: 'fail', message: 'tmux not found (required for WORKER_MODE=interactive)' });
-    }
-  } else {
-    checks.push({ name: 'tmux', status: 'skip', message: 'Not required (WORKER_MODE=print)' });
-  }
+  // 10. Worker transport check
+  const transport = ctx.config.WORKER_TRANSPORT;
+  checks.push({ name: 'worker-transport', status: 'pass', message: `WORKER_TRANSPORT=${transport}` });
 
   // ── State reset ────────────────────────────────────────────────
   if (flags['reset-state']) {
