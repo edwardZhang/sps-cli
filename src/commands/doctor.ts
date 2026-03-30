@@ -494,39 +494,52 @@ function checkWorkerRulesFiles(
   const repoDir = ctx.paths.repoDir;
   const claudeMd = resolve(repoDir, 'CLAUDE.md');
   const agentsMd = resolve(repoDir, 'AGENTS.md');
+  const workerTool = ctx.config.WORKER_TOOL;
 
-  // Check CLAUDE.md
   const hasClaudeMd = existsSync(claudeMd);
   const hasAgentsMd = existsSync(agentsMd);
 
-  if (hasClaudeMd && hasAgentsMd && !gitignoreModified) {
-    checks.push({ name: 'worker-rules', status: 'pass', message: 'CLAUDE.md and AGENTS.md present in repo' });
-  } else if (hasClaudeMd && hasAgentsMd && gitignoreModified && doFix) {
-    // Both rule files exist but .gitignore was modified — commit the .gitignore change
+  // Determine which rule file is required based on WORKER_TOOL
+  const requiredFile = workerTool === 'codex' ? 'AGENTS.md' : 'CLAUDE.md';
+  const hasRequired = workerTool === 'codex' ? hasAgentsMd : hasClaudeMd;
+  const presentFiles = [hasClaudeMd && 'CLAUDE.md', hasAgentsMd && 'AGENTS.md'].filter(Boolean);
+
+  if (hasRequired && !gitignoreModified) {
+    checks.push({ name: 'worker-rules', status: 'pass', message: `${presentFiles.join(' and ')} present in repo` });
+  } else if (hasRequired && gitignoreModified && doFix) {
     try {
       execSync('git add .gitignore', { cwd: repoDir, timeout: 5000 });
       execSync(
         'git commit -m "chore: add .sps/ to .gitignore"',
         { cwd: repoDir, timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] },
       );
-      checks.push({ name: 'worker-rules', status: 'pass', message: 'CLAUDE.md and AGENTS.md present; committed .gitignore update' });
+      checks.push({ name: 'worker-rules', status: 'pass', message: `${presentFiles.join(' and ')} present; committed .gitignore update` });
     } catch {
-      checks.push({ name: 'worker-rules', status: 'pass', message: 'CLAUDE.md and AGENTS.md present (.gitignore update needs manual commit)' });
+      checks.push({ name: 'worker-rules', status: 'pass', message: `${presentFiles.join(' and ')} present (.gitignore update needs manual commit)` });
     }
   } else if (doFix) {
     const content = generateWorkerRules(ctx);
     const created: string[] = [];
 
-    if (!hasClaudeMd) {
+    // Generate the required file for the configured worker tool
+    if (workerTool === 'codex' && !hasAgentsMd) {
+      writeFileSync(agentsMd, content);
+      created.push('AGENTS.md');
+    }
+    if (workerTool !== 'codex' && !hasClaudeMd) {
       writeFileSync(claudeMd, content);
       created.push('CLAUDE.md');
     }
-    if (!hasAgentsMd) {
+    // Also generate the other file if missing (nice to have for tool switching)
+    if (!hasClaudeMd && !created.includes('CLAUDE.md')) {
+      writeFileSync(claudeMd, content);
+      created.push('CLAUDE.md');
+    }
+    if (!hasAgentsMd && !created.includes('AGENTS.md')) {
       writeFileSync(agentsMd, content);
       created.push('AGENTS.md');
     }
 
-    // Git add + commit (include .gitignore if it was modified by gitignore-sps check)
     if (created.length > 0 || gitignoreModified) {
       try {
         const filesToAdd = [...created];
@@ -547,11 +560,10 @@ function checkWorkerRulesFiles(
       }
     }
   } else {
-    const missing = [!hasClaudeMd && 'CLAUDE.md', !hasAgentsMd && 'AGENTS.md'].filter(Boolean);
     checks.push({
       name: 'worker-rules',
       status: 'warn',
-      message: `Missing ${missing.join(', ')} in repo (use --fix to generate)`,
+      message: `Missing ${requiredFile} in repo (use --fix to generate)`,
     });
   }
 }

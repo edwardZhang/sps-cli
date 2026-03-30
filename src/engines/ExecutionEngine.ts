@@ -698,18 +698,21 @@ export class ExecutionEngine {
     // ── 1. Skill Profiles (label-driven) ──
     const skillContent = this.loadSkillProfiles(card);
 
-    // ── 2. Project Rules (CLAUDE.md + AGENTS.md) ──
+    // ── 2. Project Rules (CLAUDE.md for claude, AGENTS.md for codex) ──
     const claudeMdPath = resolve(worktreePath, 'CLAUDE.md');
     const agentsMdPath = resolve(worktreePath, 'AGENTS.md');
+    const workerTool = this.ctx.config.WORKER_TOOL;
     let projectRules = '';
     if (existsSync(claudeMdPath)) {
       projectRules = readFileSync(claudeMdPath, 'utf-8').trim();
-    } else {
-      this.log.warn(`CLAUDE.md not found in worktree — run: sps doctor ${this.ctx.projectName} --fix`);
     }
     if (existsSync(agentsMdPath)) {
       const agentsRules = readFileSync(agentsMdPath, 'utf-8').trim();
       projectRules = projectRules ? `${projectRules}\n\n${agentsRules}` : agentsRules;
+    }
+    if (!projectRules) {
+      const expectedFile = workerTool === 'codex' ? 'AGENTS.md' : 'CLAUDE.md';
+      this.log.warn(`${expectedFile} not found in worktree — run: sps doctor ${this.ctx.projectName} --fix`);
     }
 
     // ── 3. Project Knowledge (truncated) ──
