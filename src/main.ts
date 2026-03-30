@@ -36,6 +36,7 @@ import { executeSetup } from './commands/setup.js';
 import { executeWorkerDashboard } from './commands/workerDashboard.js';
 import { executeLogs } from './commands/logs.js';
 import { executeStop } from './commands/stop.js';
+import { executeReset } from './commands/reset.js';
 import { executeStatus } from './commands/status.js';
 import { executeAcpCommand } from './commands/acpCommand.js';
 
@@ -100,6 +101,8 @@ const COMMANDS: Record<string, CommandInfo> = {
     examples: ['sps logs', 'sps logs my-project', 'sps logs my-project --err --lines 50'] },
   stop:      { desc: '停止运行中的 tick 进程', usage: 'sps stop <project> [--all]',
     examples: ['sps stop my-project', 'sps stop --all'] },
+  reset:     { desc: '重置卡片状态，清理 worktree 和 branch，准备重跑', usage: 'sps reset <project> [--all] [--card N,N,N]',
+    examples: ['sps reset my-project', 'sps reset my-project --all', 'sps reset my-project --card 5,6,7'] },
   status:    { desc: '显示所有项目运行状态', usage: 'sps status [--json]',
     examples: ['sps status', 'sps status --json'] },
 };
@@ -279,6 +282,18 @@ async function main() {
     if (args.project) projects.push(args.project);
     projects.push(...args.positionals);
     await executeStop(projects, args.flags);
+    return;
+  }
+
+  // ─── reset ─────────────────────────────────────────────────────
+  if (args.command === 'reset') {
+    const project = requireProject(args, 'sps reset <project> [--all] [--card N,N]');
+    // --card value: parse from raw argv since flags parser is boolean-only
+    const rawCardIdx = process.argv.indexOf('--card');
+    const cardArg = rawCardIdx >= 0 && rawCardIdx + 1 < process.argv.length
+      ? process.argv[rawCardIdx + 1]
+      : undefined;
+    await executeReset(project, args.flags, cardArg);
     return;
   }
 
