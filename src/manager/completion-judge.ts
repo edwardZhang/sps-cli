@@ -71,6 +71,13 @@ export class CompletionJudge {
         return { status: 'completed', reason: 'already_merged' };
       }
       this.log(`Branch ${branch} is ancestor of ${baseBranch} but has no artifacts — not a real merge`);
+      // For integration phase: fast-forward push (git push origin feature:main)
+      // makes branch an ancestor of base without traditional merge artifacts.
+      // If exitCode is 0, the worker succeeded — treat as completed.
+      if (phase === 'integration' && exitCode === 0) {
+        this.log(`Integration phase: branch is ancestor of ${baseBranch} with exitCode 0 — treating as fast-forward merge`);
+        return { status: 'completed', reason: 'fast_forward_merged' };
+      }
     }
 
     if (phase === 'integration') {
