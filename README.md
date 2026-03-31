@@ -1,59 +1,136 @@
-# SPS CLI — AI-Driven Fully Automated Development Pipeline
+# SPS CLI — AI Agent Harness & Development Pipeline
 
 [![npm](https://img.shields.io/npm/v/@coralai/sps-cli)](https://www.npmjs.com/package/@coralai/sps-cli)
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.27.0**
+**v0.28.x**
 
 SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Two modes:
 
-- **Harness mode** (`sps agent`): Zero-config, direct agent interaction with multi-turn chat
+- **Harness mode** (`sps agent`): Zero-config agent interaction — one-shot, multi-turn chat, persistent sessions
 - **Pipeline mode** (`sps pipeline`): Fully automated card-driven development workflow
 
 ```bash
 # Harness mode — talk to any agent instantly
 sps agent "Explain this repo"
-sps agent --chat                    # multi-turn REPL
-sps agent --tool codex "Fix tests"  # choose agent
+sps agent --chat                              # multi-turn REPL (daemon-backed)
+sps agent --tool codex "Fix the failing tests"
+sps agent --profile reviewer --context src/auth.ts "Review this module"
+sps agent --verbose --output report.md "Security audit"
 
 # Pipeline mode — automated development workflow
-sps pipeline start my-project       # or: sps tick my-project
+sps pipeline start my-project                 # or: sps tick my-project
+sps pipeline workers my-project               # worker dashboard
+sps pipeline board my-project                 # card board
 ```
 
-**v0.27.0 highlights**:
+## Harness Mode (`sps agent`)
 
-- **Harness mode**: `sps agent` for zero-config agent interaction. One-shot and multi-turn chat with context retention. Supports Claude, Codex, and Gemini.
-- **Two-mode architecture**: Harness (`sps agent`) and Pipeline (`sps pipeline`) share the ACP SDK transport but are fully independent — different state files, different lifecycles.
-- **Pipeline command group**: `sps pipeline start/stop/status/reset/workers/board/logs`. Old commands (`sps tick`, `sps stop`, etc.) preserved as aliases.
-- **ACP SDK Transport** (v0.26.0): Structured JSON-RPC over stdio. Claude via official `claude-agent-sdk`, Codex via Rust native binary, Gemini via native `--acp` mode.
+Zero-config direct agent interaction. No project setup, PM tools, or Git required.
 
-**Architecture**: ACP SDK adapter communicates with agents via structured protocol (no terminal scraping). Pipeline mode uses WorkerManager + CompletionJudge for card flow automation. Harness mode talks directly to ACPWorkerRuntime, bypassing card logic entirely.
+### One-shot
+
+```bash
+sps agent "What does this codebase do?"
+sps agent --tool codex "Fix the bug in auth.ts"
+sps agent --output summary.md "Summarize this repo"
+```
+
+### Multi-turn Chat (Persistent)
+
+Sessions survive terminal closures via background daemon:
+
+```bash
+sps agent --chat                          # start chat (daemon auto-starts)
+> Analyze the auth module
+> Now refactor it to use bcrypt
+> /exit                                   # detach (session stays alive)
+
+sps agent --chat                          # reconnect — agent remembers context
+> What did we do last time?
+```
+
+### Advanced Flags
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--tool <agent>` | Choose agent | `--tool codex`, `--tool gemini` |
+| `--chat` | Multi-turn REPL mode | `sps agent --chat` |
+| `--name <name>` | Named session | `--name backend` |
+| `--verbose` / `-v` | Show tool calls | Shows Read, Edit, Bash in yellow |
+| `--context <file>` | Attach file content | `--context src/main.ts` (multiple OK) |
+| `--system "<text>"` | System instruction | `--system "Reply in Chinese"` |
+| `--profile <name>` | Load role profile | `--profile reviewer`, `--profile security` |
+| `--output <file>` | Save output to file | `--output report.md` |
+
+### Session Management
+
+```bash
+sps agent status                  # list active sessions
+sps agent close --name backend    # close a session
+sps agent daemon start            # start background daemon manually
+sps agent daemon stop             # stop daemon (kills all sessions)
+sps agent daemon status           # check daemon status
+```
+
+### Custom Agents
+
+```bash
+sps agent add cursor cursor-agent acp     # register custom ACP agent
+sps agent add my-bot ./bin/my-server      # register local agent
+sps agent list                            # show all available agents
+sps agent --tool cursor "Review this PR"  # use custom agent
+```
+
+Available built-in agents: `claude` (default), `codex`, `gemini`
+
+## Pipeline Mode (`sps pipeline`)
+
+Fully automated card-driven development workflow. Requires project configuration.
+
+```bash
+sps pipeline start my-project     # start continuous pipeline (= sps tick)
+sps pipeline stop my-project      # stop pipeline
+sps pipeline status               # show all projects
+sps pipeline reset my-project     # reset cards for re-execution
+sps pipeline workers my-project   # worker dashboard
+sps pipeline board my-project     # card board
+sps pipeline logs my-project      # log viewer
+```
+
+All old commands still work as aliases: `sps tick`, `sps stop`, `sps status`, `sps reset`, `sps logs`, `sps worker dashboard`, `sps card dashboard`.
+
+## Architecture
+
+```
+SPS CLI
+├── Harness Mode (sps agent)
+│   ├── SessionDaemon (Unix socket, background persistent)
+│   ├── DaemonClient (NDJSON RPC)
+│   └── AcpSdkAdapter
+│        ├── claude-agent-acp (Anthropic official SDK)
+│        ├── codex-acp (Zed Rust binary)
+│        └── gemini --acp (native)
+│
+└── Pipeline Mode (sps pipeline)
+    ├── WorkerManager + CompletionJudge
+    ├── 4-Engine Tick Loop (Scheduler → Closeout → Execution → Monitor)
+    └── AcpSdkAdapter (shared with harness)
+```
+
+ACP SDK transport: structured JSON-RPC over stdio. No terminal scraping. Deterministic state detection via protocol events.
 
 ## Table of Contents
 
 - [Installation](#installation)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Harness Mode](#harness-mode-sps-agent)
+- [Pipeline Mode](#pipeline-mode-sps-pipeline)
+- [Architecture](#architecture)
 - [State Machine](#state-machine)
 - [Command Reference](#command-reference)
-  - [sps setup](#sps-setup)
-  - [sps project init](#sps-project-init)
-  - [sps doctor](#sps-doctor)
-  - [sps card add](#sps-card-add)
-  - [sps card dashboard](#sps-card-dashboard)
-  - [sps tick](#sps-tick)
-  - [sps status](#sps-status)
-  - [sps acp](#sps-acp)
-  - [sps scheduler tick](#sps-scheduler-tick)
-  - [sps pipeline tick](#sps-pipeline-tick)
-  - [sps worker](#sps-worker)
-  - [sps pm](#sps-pm)
-  - [sps qa tick](#sps-qa-tick)
-  - [sps monitor tick](#sps-monitor-tick)
-  - [sps stop](#sps-stop)
-  - [sps reset](#sps-reset)
-  - [sps logs](#sps-logs)
 - [Worker Rule Files](#worker-rule-files)
 - [Project Configuration](#project-configuration)
 - [Multi-Project Parallel Execution](#multi-project-parallel-execution)
