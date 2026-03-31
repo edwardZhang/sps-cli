@@ -34,6 +34,7 @@ import { TerminalManager } from './acp-terminal-manager.js';
 const ACP_ADAPTER_REGISTRY: Record<string, { command: string; args: string[] }> = {
   claude: { command: 'npx', args: ['-y', '@agentclientprotocol/claude-agent-acp'] },
   codex: { command: 'npx', args: ['-y', '@zed-industries/codex-acp'] },
+  gemini: { command: 'gemini', args: ['--acp'] },
 };
 
 interface ActiveSession {

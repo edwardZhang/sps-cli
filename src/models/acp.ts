@@ -1,4 +1,4 @@
-export type ACPTool = 'claude' | 'codex';
+export type ACPTool = 'claude' | 'codex' | 'gemini';
 
 export type ACPSlotStatus =
   | 'idle'
