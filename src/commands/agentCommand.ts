@@ -111,15 +111,30 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
       process.exitCode = 1;
     }
   } finally {
-    try { await runtime.stopSession(slot); } catch { /* cleanup */ }
-    // Clean up ephemeral session from state
+    // Get PID before cleaning state
+    let sessionPid: number | null = null;
     try {
       const state = readState(ctx.paths.stateFile, 0);
+      sessionPid = state.sessions?.[slot]?.pid ?? null;
       if (state.sessions?.[slot]) {
         delete state.sessions[slot];
         writeState(ctx.paths.stateFile, state, 'agent-oneshot-cleanup');
       }
     } catch { /* best effort */ }
+    // Kill process tree by PID, then exit
+    if (sessionPid) {
+      try {
+        const { execFileSync } = await import('node:child_process');
+        // Kill all descendants first
+        try {
+          const children = execFileSync('pgrep', ['-P', String(sessionPid)], { encoding: 'utf-8', timeout: 2000 })
+            .trim().split('\n').filter(Boolean).map(Number);
+          for (const p of children) { try { process.kill(p, 'SIGKILL'); } catch { /* noop */ } }
+        } catch { /* no children */ }
+        try { process.kill(sessionPid, 'SIGKILL'); } catch { /* already dead */ }
+      } catch { /* noop */ }
+    }
+    process.exit(process.exitCode ?? 0);
   }
 }
 
