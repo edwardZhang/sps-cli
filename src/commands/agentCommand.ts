@@ -279,17 +279,12 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
 // ── Named one-shot (via daemon, session persists) ───────────────
 
 async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
-  process.stderr.write(`${DIM}[debug] agentNamedOneShot: entering, SPS_DAEMON_SOCKET=${process.env.SPS_DAEMON_SOCKET || 'unset'}${RESET}\n`);
   const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
   const { DaemonClient } = await import('../daemon/daemonClient.js');
   const { ensureDaemon } = await import('./agentDaemon.js');
   const client = new DaemonClient();
 
-  process.stderr.write(`${DIM}[debug] checking daemon...${RESET}\n`);
-  const running = await client.isRunning();
-  process.stderr.write(`${DIM}[debug] daemon running: ${running}${RESET}\n`);
-
-  if (!running) {
+  if (!(await client.isRunning())) {
     if (process.env.SPS_DAEMON_SOCKET) {
       process.stderr.write(`${RED}Cannot connect to remote daemon at ${process.env.SPS_DAEMON_SOCKET}${RESET}\n`);
       process.exit(1);
@@ -300,11 +295,11 @@ async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promi
   const slot = `session-${args.name}`;
   const stateFile = ctx.paths.stateFile;
 
-  process.stderr.write(`${DIM}[debug] calling client.ensureSession...${RESET}\n`);
-  await client.ensureSession(slot, args.tool, args.cwd);
-  process.stderr.write(`${DIM}[debug] ensureSession done, calling startRun...${RESET}\n`);
+  // Remote mode: don't send local cwd — let daemon use its own cwd
+  const remoteCwd = process.env.SPS_DAEMON_SOCKET ? undefined : args.cwd;
+  await client.ensureSession(slot, args.tool, remoteCwd);
   const prompt = buildPrompt(args.prompt, args.context, args.system, args.profile);
-  await client.startRun(slot, prompt, args.tool, args.cwd);
+  await client.startRun(slot, prompt, args.tool, remoteCwd);
 
   const result = await waitAndStream(
     { inspect: (s?: string) => client.inspect(s) } as any,
