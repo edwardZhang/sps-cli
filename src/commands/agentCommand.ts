@@ -285,6 +285,11 @@ async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promi
   const client = new DaemonClient();
 
   if (!(await client.isRunning())) {
+    if (process.env.SPS_DAEMON_SOCKET) {
+      // Remote mode — don't auto-start local daemon
+      process.stderr.write(`${RED}Cannot connect to remote daemon at ${process.env.SPS_DAEMON_SOCKET}${RESET}\n`);
+      process.exit(1);
+    }
     await ensureDaemon();
   }
 
@@ -329,7 +334,10 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
   let useDaemon = await client.isRunning();
 
   if (!useDaemon) {
-    // Auto-start daemon for chat mode
+    if (process.env.SPS_DAEMON_SOCKET) {
+      process.stderr.write(`${RED}Cannot connect to remote daemon at ${process.env.SPS_DAEMON_SOCKET}${RESET}\n`);
+      process.exit(1);
+    }
     useDaemon = await ensureDaemon();
   }
 
