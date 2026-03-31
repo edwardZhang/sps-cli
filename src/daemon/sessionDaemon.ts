@@ -177,7 +177,19 @@ export class SessionDaemon {
 
   private async pollSessions(): Promise<void> {
     try {
-      await this.runtime.inspect();
+      const state = await this.runtime.inspect();
+      // TTL cleanup: stop sessions idle longer than SESSION_TTL_MS
+      const ttlMs = parseInt(process.env.SPS_SESSION_TTL_HOURS || '4', 10) * 3_600_000;
+      const now = Date.now();
+      for (const [slot, session] of Object.entries(state.sessions)) {
+        if (!session.currentRun && session.lastSeenAt) {
+          const idleMs = now - Date.parse(session.lastSeenAt);
+          if (idleMs > ttlMs) {
+            this.log(`TTL expired for ${slot} (idle ${Math.round(idleMs / 60000)}min) — stopping`);
+            try { await this.runtime.stopSession(slot); } catch { /* best effort */ }
+          }
+        }
+      }
     } catch (err) {
       this.log(`Poll error: ${err instanceof Error ? err.message : String(err)}`);
     }

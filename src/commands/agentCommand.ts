@@ -23,6 +23,7 @@ const DIM = '\x1b[90m';
 const RESET = '\x1b[0m';
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
+const CYAN = '\x1b[36m';
 const RED = '\x1b[31m';
 
 function parseAgentArgs(argv: string[]): {
@@ -38,6 +39,7 @@ function parseAgentArgs(argv: string[]): {
   profile: string;
   output: string;
   mcp: string[];
+  attach: boolean;
 } {
   const flags: Record<string, string> = {};
   const positionals: string[] = [];
@@ -46,7 +48,9 @@ function parseAgentArgs(argv: string[]): {
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--mcp' && i + 1 < argv.length) {
+    if (arg === '--attach') {
+      flags.attach = 'true';
+    } else if (arg === '--mcp' && i + 1 < argv.length) {
       mcpServers.push(argv[++i]);
     } else if (arg === '--chat') {
       flags.chat = 'true';
@@ -87,6 +91,7 @@ function parseAgentArgs(argv: string[]): {
     profile: flags.profile || '',
     output: flags.output || '',
     mcp: mcpServers,
+    attach: flags.attach === 'true',
   };
 
   if (first === 'status') {
@@ -233,6 +238,10 @@ export async function executeAgentCommand(argv: string[]): Promise<void> {
     agentAdd(args);
     return;
   }
+  if (args.attach) {
+    await agentAttach(args);
+    return;
+  }
   if (args.subcommand === 'run') {
     await agentOneShot(args);
     return;
@@ -263,13 +272,24 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
       stateFile: ctx.paths.stateFile,
       verbose: args.verbose,
       logsDir: ctx.paths.logsDir,
+      quiet: args.json,  // suppress streaming in JSON mode
     });
-    process.stdout.write('\n');
+
+    if (args.json) {
+      console.log(JSON.stringify({
+        status: result.status,
+        output: result.output.trim(),
+        agent: args.tool,
+        prompt: args.prompt,
+      }));
+    } else {
+      process.stdout.write('\n');
+    }
 
     // Write output to file if --output specified
     if (args.output && result.output) {
       writeFileSync(resolve(args.output), result.output, 'utf-8');
-      process.stderr.write(`${DIM}Output saved to ${args.output}${RESET}\n`);
+      if (!args.json) process.stderr.write(`${DIM}Output saved to ${args.output}${RESET}\n`);
     }
 
     if (result.status !== 'completed') {
@@ -486,6 +506,68 @@ async function runTurn(
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`${RED}Error: ${msg}${RESET}\n`);
   }
+}
+
+// ── Attach (read-only session viewer) ────────────────────────────
+
+async function agentAttach(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
+  const { DaemonClient } = await import('../daemon/daemonClient.js');
+  const client = new DaemonClient();
+
+  if (!(await client.isRunning())) {
+    process.stderr.write(`${RED}Daemon not running. Start with: sps agent daemon start${RESET}\n`);
+    process.exit(1);
+  }
+
+  const slot = `session-${args.name}`;
+  process.stderr.write(`${DIM}Attached to session "${args.name}" (read-only, Ctrl+C to detach)${RESET}\n\n`);
+
+  // Show existing output first
+  try {
+    const state = await client.inspect(slot);
+    const session = state.sessions?.[slot];
+    if (!session) {
+      process.stderr.write(`${RED}Session "${args.name}" not found${RESET}\n`);
+      process.exit(1);
+    }
+    if (session.lastPaneText) {
+      process.stderr.write(`${CYAN}▶ Agent (history)${RESET}\n`);
+      process.stdout.write(session.lastPaneText);
+      process.stdout.write('\n');
+    }
+    process.stderr.write(`${DIM}--- live ---${RESET}\n`);
+  } catch { /* no history */ }
+
+  // Follow new output
+  let lastLen = 0;
+  const follow = async () => {
+    while (true) {
+      try {
+        const state = await client.inspect(slot);
+        const session = state.sessions?.[slot];
+        if (!session) break;
+
+        const text = session.lastPaneText || '';
+        if (text.length > lastLen) {
+          process.stdout.write(text.slice(lastLen));
+          lastLen = text.length;
+        }
+
+        const runStatus = session.currentRun?.status;
+        if (runStatus === 'completed' || runStatus === 'failed' || runStatus === 'cancelled') {
+          process.stderr.write(`\n${DIM}(${runStatus})${RESET}\n`);
+        }
+      } catch { /* daemon disconnected */ break; }
+      await new Promise(r => setTimeout(r, 1_000));
+    }
+  };
+
+  process.on('SIGINT', () => {
+    process.stderr.write(`\n${DIM}Detached.${RESET}\n`);
+    process.exit(0);
+  });
+
+  await follow();
 }
 
 // ── Status ──────────────────────────────────────────────────────

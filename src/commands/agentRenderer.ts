@@ -24,6 +24,7 @@ export interface WaitAndStreamOpts {
   stateFile?: string;
   verbose?: boolean;
   logsDir?: string;
+  quiet?: boolean;
 }
 
 export async function waitAndStream(
@@ -38,6 +39,7 @@ export async function waitAndStream(
   let spinnerIdx = 0;
   let hasOutput = false;
   const verbose = opts?.verbose ?? false;
+  const quiet = opts?.quiet ?? false;
 
   // Find latest ACP log file for verbose mode
   let logFile: string | null = null;
@@ -46,10 +48,10 @@ export async function waitAndStream(
   }
 
   // Print newline before spinner (separate from user input line)
-  process.stderr.write('\n');
+  if (!quiet) process.stderr.write('\n');
 
-  // Start spinner
-  const spinnerInterval = setInterval(() => {
+  // Start spinner (suppressed in quiet/json mode)
+  const spinnerInterval = quiet ? null : setInterval(() => {
     if (!hasOutput) {
       const frame = SPINNER[spinnerIdx % SPINNER.length];
       process.stderr.write(`\r${DIM}${frame} thinking...${RESET}`);
@@ -58,8 +60,8 @@ export async function waitAndStream(
   }, 80);
 
   const clearSpinner = () => {
-    clearInterval(spinnerInterval);
-    if (!hasOutput) {
+    if (spinnerInterval) clearInterval(spinnerInterval);
+    if (!hasOutput && !quiet) {
       process.stderr.write('\r\x1b[K');
     }
   };
@@ -113,11 +115,11 @@ export async function waitAndStream(
         if (paneText.length > lastTextLen) {
           if (!hasOutput) {
             clearSpinner();
-            process.stderr.write(`${CYAN}▶ Agent${RESET}\n`);
+            if (!quiet) process.stderr.write(`${CYAN}▶ Agent${RESET}\n`);
             hasOutput = true;
           }
           const newText = paneText.slice(lastTextLen);
-          process.stdout.write(newText);
+          if (!quiet) process.stdout.write(newText);
           fullOutput += newText;
           lastTextLen = paneText.length;
         }
@@ -145,7 +147,7 @@ export async function waitAndStream(
       await new Promise((r) => setTimeout(r, pollMs));
     }
   } finally {
-    clearInterval(spinnerInterval);
+    if (spinnerInterval) clearInterval(spinnerInterval);
   }
 }
 
