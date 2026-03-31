@@ -10,6 +10,10 @@ export interface StreamResult {
   output: string;
 }
 
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const DIM = '\x1b[90m';
+const RESET = '\x1b[0m';
+
 export async function waitAndStream(
   runtime: AgentRuntime,
   slot: string,
@@ -18,44 +22,75 @@ export async function waitAndStream(
   const pollMs = opts?.pollMs ?? 2_000;
   let lastLen = 0;
   let fullOutput = '';
+  let spinnerIdx = 0;
+  let hasOutput = false;
 
-  while (true) {
-    if (opts?.signal?.aborted) {
-      return { status: 'cancelled', output: fullOutput };
+  // Start spinner
+  const spinnerInterval = setInterval(() => {
+    if (!hasOutput) {
+      const frame = SPINNER[spinnerIdx % SPINNER.length];
+      process.stderr.write(`\r${DIM}${frame} thinking...${RESET}`);
+      spinnerIdx++;
     }
+  }, 80);
 
-    const state = await runtime.inspect(slot);
-    const session = state.sessions[slot];
-    if (!session) {
-      return { status: 'lost', output: fullOutput };
+  const clearSpinner = () => {
+    clearInterval(spinnerInterval);
+    if (!hasOutput) {
+      process.stderr.write('\r\x1b[K'); // clear spinner line
     }
+  };
 
-    // Stream incremental output
-    const paneText = session.lastPaneText || '';
-    if (paneText.length > lastLen) {
-      const newText = paneText.slice(lastLen);
-      process.stdout.write(newText);
-      fullOutput += newText;
-      lastLen = paneText.length;
-    }
+  try {
+    while (true) {
+      if (opts?.signal?.aborted) {
+        clearSpinner();
+        return { status: 'cancelled', output: fullOutput };
+      }
 
-    // Check run status
-    const runStatus = session.currentRun?.status;
-    if (runStatus === 'completed') {
-      if (opts?.stateFile) clearRunInState(opts.stateFile, slot);
-      return { status: 'completed', output: fullOutput };
-    }
-    if (runStatus === 'failed' || runStatus === 'cancelled' || runStatus === 'lost') {
-      if (opts?.stateFile) clearRunInState(opts.stateFile, slot);
-      return { status: runStatus, output: fullOutput };
-    }
+      const state = await runtime.inspect(slot);
+      const session = state.sessions[slot];
+      if (!session) {
+        clearSpinner();
+        return { status: 'lost', output: fullOutput };
+      }
 
-    // Session offline with no active run
-    if (session.sessionState === 'offline' && !session.currentRun) {
-      return { status: 'lost', output: fullOutput };
-    }
+      // Stream incremental output
+      const paneText = session.lastPaneText || '';
+      if (paneText.length > lastLen) {
+        if (!hasOutput) {
+          clearSpinner();
+          hasOutput = true;
+        }
+        const newText = paneText.slice(lastLen);
+        process.stdout.write(newText);
+        fullOutput += newText;
+        lastLen = paneText.length;
+      }
 
-    await new Promise((r) => setTimeout(r, pollMs));
+      // Check run status
+      const runStatus = session.currentRun?.status;
+      if (runStatus === 'completed') {
+        clearSpinner();
+        if (opts?.stateFile) clearRunInState(opts.stateFile, slot);
+        return { status: 'completed', output: fullOutput };
+      }
+      if (runStatus === 'failed' || runStatus === 'cancelled' || runStatus === 'lost') {
+        clearSpinner();
+        if (opts?.stateFile) clearRunInState(opts.stateFile, slot);
+        return { status: runStatus, output: fullOutput };
+      }
+
+      // Session offline with no active run
+      if (session.sessionState === 'offline' && !session.currentRun) {
+        clearSpinner();
+        return { status: 'lost', output: fullOutput };
+      }
+
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+  } finally {
+    clearInterval(spinnerInterval);
   }
 }
 
