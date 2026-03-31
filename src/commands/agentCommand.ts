@@ -279,6 +279,7 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
 // ── Named one-shot (via daemon, session persists) ───────────────
 
 async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
+  process.stderr.write(`${DIM}[debug] agentNamedOneShot: entering${RESET}\n`);
   const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
   const { DaemonClient } = await import('../daemon/daemonClient.js');
   const { ensureDaemon } = await import('./agentDaemon.js');
