@@ -217,6 +217,11 @@ export async function executeAgentCommand(argv: string[]): Promise<void> {
 // ── One-shot mode ───────────────────────────────────────────────
 
 async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
+  // Named sessions route through daemon for cross-invocation persistence
+  if (args.name !== 'default') {
+    return agentNamedOneShot(args);
+  }
+
   const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
   const runtime = createSessionRuntime(ctx);
   const slot = `session-oneshot-${Date.now()}`;
@@ -269,6 +274,45 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
     }
     process.exit(process.exitCode ?? 0);
   }
+}
+
+// ── Named one-shot (via daemon, session persists) ───────────────
+
+async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
+  const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
+  const { DaemonClient } = await import('../daemon/daemonClient.js');
+  const { ensureDaemon } = await import('./agentDaemon.js');
+  const client = new DaemonClient();
+
+  if (!(await client.isRunning())) {
+    await ensureDaemon();
+  }
+
+  const slot = `session-${args.name}`;
+  const stateFile = ctx.paths.stateFile;
+
+  await client.ensureSession(slot, args.tool, args.cwd);
+  const prompt = buildPrompt(args.prompt, args.context, args.system, args.profile);
+  await client.startRun(slot, prompt, args.tool, args.cwd);
+
+  const result = await waitAndStream(
+    { inspect: (s?: string) => client.inspect(s) } as any,
+    slot,
+    { stateFile, verbose: args.verbose, logsDir: ctx.paths.logsDir },
+  );
+  process.stdout.write('\n');
+
+  if (args.output && result.output) {
+    writeFileSync(resolve(args.output), result.output, 'utf-8');
+    process.stderr.write(`${DIM}Output saved to ${args.output}${RESET}\n`);
+  }
+
+  if (result.status !== 'completed') {
+    process.stderr.write(`${RED}Agent ${result.status}${RESET}\n`);
+    process.exitCode = 1;
+  }
+  // Don't stop session — daemon keeps it for future calls
+  process.exit(process.exitCode ?? 0);
 }
 
 // ── Chat REPL mode ──────────────────────────────────────────────
