@@ -26,6 +26,9 @@ export async function waitAndStream(
   let spinnerIdx = 0;
   let hasOutput = false;
 
+  // Print newline before spinner (separate from user input line)
+  process.stderr.write('\n');
+
   // Start spinner
   const spinnerInterval = setInterval(() => {
     if (!hasOutput) {
@@ -61,7 +64,7 @@ export async function waitAndStream(
       if (paneText.length > lastLen) {
         if (!hasOutput) {
           clearSpinner();
-          process.stdout.write(`\n${CYAN}▶${RESET} `);
+          process.stderr.write(`${CYAN}▶ Agent${RESET}\n`);
           hasOutput = true;
         }
         const newText = paneText.slice(lastLen);
