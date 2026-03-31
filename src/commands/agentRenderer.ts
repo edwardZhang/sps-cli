@@ -2,6 +2,8 @@
  * Agent output renderer — polls AgentRuntime.inspect() and streams
  * incremental output to stdout. Shared by sps agent (one-shot + chat).
  */
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import { readState, writeState } from '../core/state.js';
 
@@ -13,18 +15,35 @@ export interface StreamResult {
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const DIM = '\x1b[90m';
 const CYAN = '\x1b[36m';
+const YELLOW = '\x1b[33m';
 const RESET = '\x1b[0m';
+
+export interface WaitAndStreamOpts {
+  pollMs?: number;
+  signal?: AbortSignal;
+  stateFile?: string;
+  verbose?: boolean;
+  logsDir?: string;
+}
 
 export async function waitAndStream(
   runtime: AgentRuntime,
   slot: string,
-  opts?: { pollMs?: number; signal?: AbortSignal; stateFile?: string },
+  opts?: WaitAndStreamOpts,
 ): Promise<StreamResult> {
   const pollMs = opts?.pollMs ?? 2_000;
-  let lastLen = 0;
+  let lastTextLen = 0;
+  let lastLogLen = 0;
   let fullOutput = '';
   let spinnerIdx = 0;
   let hasOutput = false;
+  const verbose = opts?.verbose ?? false;
+
+  // Find latest ACP log file for verbose mode
+  let logFile: string | null = null;
+  if (verbose && opts?.logsDir) {
+    logFile = findLatestAcpLog(opts.logsDir);
+  }
 
   // Print newline before spinner (separate from user input line)
   process.stderr.write('\n');
@@ -41,7 +60,7 @@ export async function waitAndStream(
   const clearSpinner = () => {
     clearInterval(spinnerInterval);
     if (!hasOutput) {
-      process.stderr.write('\r\x1b[K'); // clear spinner line
+      process.stderr.write('\r\x1b[K');
     }
   };
 
@@ -59,18 +78,45 @@ export async function waitAndStream(
         return { status: 'lost', output: fullOutput };
       }
 
-      // Stream incremental output
-      const paneText = session.lastPaneText || '';
-      if (paneText.length > lastLen) {
-        if (!hasOutput) {
-          clearSpinner();
-          process.stderr.write(`${CYAN}▶ Agent${RESET}\n`);
-          hasOutput = true;
+      // Verbose mode: stream tool calls from ACP log file
+      if (verbose && opts?.logsDir) {
+        if (!logFile) logFile = findLatestAcpLog(opts.logsDir);
+        if (logFile) {
+          const newLines = readLogIncrement(logFile, lastLogLen);
+          if (newLines.content.length > 0) {
+            if (!hasOutput) {
+              clearSpinner();
+              process.stderr.write(`${CYAN}▶ Agent${RESET}\n`);
+              hasOutput = true;
+            }
+            for (const line of newLines.lines) {
+              if (line.includes('[tool:') || line.includes('[tool_update]')) {
+                process.stderr.write(`${YELLOW}  ${line}${RESET}\n`);
+              } else if (line.includes('[assistant]')) {
+                const text = line.replace(/^\S+\s+\[assistant\]\s*/, '');
+                process.stdout.write(text);
+                fullOutput += text;
+              } else if (line.includes('[usage]')) {
+                process.stderr.write(`${DIM}  ${line}${RESET}\n`);
+              }
+            }
+            lastLogLen = newLines.offset;
+          }
         }
-        const newText = paneText.slice(lastLen);
-        process.stdout.write(newText);
-        fullOutput += newText;
-        lastLen = paneText.length;
+      } else {
+        // Normal mode: stream text from lastPaneText
+        const paneText = session.lastPaneText || '';
+        if (paneText.length > lastTextLen) {
+          if (!hasOutput) {
+            clearSpinner();
+            process.stderr.write(`${CYAN}▶ Agent${RESET}\n`);
+            hasOutput = true;
+          }
+          const newText = paneText.slice(lastTextLen);
+          process.stdout.write(newText);
+          fullOutput += newText;
+          lastTextLen = paneText.length;
+        }
       }
 
       // Check run status
@@ -96,6 +142,35 @@ export async function waitAndStream(
     }
   } finally {
     clearInterval(spinnerInterval);
+  }
+}
+
+/** Find the most recent *-acp-*.log file in a directory. */
+function findLatestAcpLog(logsDir: string): string | null {
+  try {
+    const files = readdirSync(logsDir)
+      .filter(f => f.includes('-acp-') && f.endsWith('.log'))
+      .map(f => resolve(logsDir, f))
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    return files[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read new lines from a log file starting at byte offset. */
+function readLogIncrement(file: string, fromOffset: number): { lines: string[]; content: string; offset: number } {
+  try {
+    const content = readFileSync(file, 'utf-8');
+    if (content.length <= fromOffset) return { lines: [], content: '', offset: fromOffset };
+    const newContent = content.slice(fromOffset);
+    return {
+      lines: newContent.split('\n').filter(l => l.length > 0),
+      content: newContent,
+      offset: content.length,
+    };
+  } catch {
+    return { lines: [], content: '', offset: fromOffset };
   }
 }
 

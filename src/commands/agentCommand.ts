@@ -10,6 +10,8 @@
  *   sps agent close [--name NAME]           # close session
  */
 import * as readline from 'node:readline/promises';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createSessionContext } from '../core/sessionContext.js';
 import { readState, writeState } from '../core/state.js';
 import { createSessionRuntime } from '../providers/registry.js';
@@ -28,9 +30,13 @@ function parseAgentArgs(argv: string[]): {
   tool: ACPTool;
   cwd: string;
   json: boolean;
+  verbose: boolean;
+  context: string[];
+  system: string;
 } {
   const flags: Record<string, string> = {};
   const positionals: string[] = [];
+  const contextFiles: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -38,6 +44,8 @@ function parseAgentArgs(argv: string[]): {
       flags.chat = 'true';
     } else if (arg === '--json') {
       flags.json = 'true';
+    } else if (arg === '--verbose' || arg === '-v') {
+      flags.verbose = 'true';
     } else if (arg === '--tool' && i + 1 < argv.length) {
       flags.tool = argv[++i];
     } else if (arg === '--name' && i + 1 < argv.length) {
@@ -46,6 +54,12 @@ function parseAgentArgs(argv: string[]): {
       flags.name = argv[++i];
     } else if (arg === '--cwd' && i + 1 < argv.length) {
       flags.cwd = argv[++i];
+    } else if (arg === '--context' && i + 1 < argv.length) {
+      contextFiles.push(argv[++i]);
+    } else if (arg === '--system' && i + 1 < argv.length) {
+      flags.system = argv[++i];
+    } else if (arg === '--profile' && i + 1 < argv.length) {
+      flags.profile = argv[++i];
     } else if (!arg.startsWith('-')) {
       positionals.push(arg);
     }
@@ -53,11 +67,20 @@ function parseAgentArgs(argv: string[]): {
 
   // Detect subcommand
   const first = positionals[0];
+  const common = {
+    name: flags.name || 'default',
+    tool: (flags.tool || 'claude') as ACPTool,
+    cwd: flags.cwd || process.cwd(),
+    verbose: flags.verbose === 'true',
+    context: contextFiles,
+    system: flags.system || '',
+  };
+
   if (first === 'status') {
-    return { subcommand: 'status', prompt: '', name: flags.name || 'default', tool: (flags.tool || 'claude') as ACPTool, cwd: flags.cwd || process.cwd(), json: flags.json === 'true' };
+    return { subcommand: 'status', prompt: '', json: flags.json === 'true', ...common };
   }
   if (first === 'close') {
-    return { subcommand: 'close', prompt: '', name: flags.name || 'default', tool: (flags.tool || 'claude') as ACPTool, cwd: flags.cwd || process.cwd(), json: false };
+    return { subcommand: 'close', prompt: '', json: false, ...common };
   }
 
   const prompt = positionals.join(' ');
@@ -66,11 +89,33 @@ function parseAgentArgs(argv: string[]): {
   return {
     subcommand: isChat ? 'chat' : 'run',
     prompt,
-    name: flags.name || 'default',
-    tool: (flags.tool || 'claude') as ACPTool,
-    cwd: flags.cwd || process.cwd(),
     json: flags.json === 'true',
+    ...common,
   };
+}
+
+/** Build final prompt with optional system instruction and file context. */
+function buildPrompt(userPrompt: string, contextFiles: string[], system: string): string {
+  const parts: string[] = [];
+
+  if (system) {
+    parts.push(`[System instruction] ${system}\n`);
+  }
+
+  if (contextFiles.length > 0) {
+    for (const file of contextFiles) {
+      try {
+        const filePath = resolve(file);
+        const content = readFileSync(filePath, 'utf-8');
+        parts.push(`[File: ${file}]\n\`\`\`\n${content}\n\`\`\`\n`);
+      } catch {
+        parts.push(`[File: ${file}] (could not read)\n`);
+      }
+    }
+  }
+
+  parts.push(userPrompt);
+  return parts.join('\n');
 }
 
 export async function executeAgentCommand(argv: string[]): Promise<void> {
@@ -101,9 +146,14 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
 
   try {
     await runtime.ensureSession(slot, args.tool, args.cwd);
-    await runtime.startRun(slot, args.prompt, args.tool, args.cwd);
+    const prompt = buildPrompt(args.prompt, args.context, args.system);
+    await runtime.startRun(slot, prompt, args.tool, args.cwd);
 
-    const result = await waitAndStream(runtime, slot, { stateFile: ctx.paths.stateFile });
+    const result = await waitAndStream(runtime, slot, {
+      stateFile: ctx.paths.stateFile,
+      verbose: args.verbose,
+      logsDir: ctx.paths.logsDir,
+    });
     process.stdout.write('\n');
 
     if (result.status !== 'completed') {
@@ -152,7 +202,7 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
 
   // If initial prompt provided, run it first
   if (args.prompt) {
-    await runTurn(runtime, slot, args, stateFile);
+    await runTurn(runtime, slot, args, stateFile, ctx.paths.logsDir);
   }
 
   // REPL loop
@@ -183,7 +233,7 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
       return;
     }
 
-    await runTurn(runtime, slot, { ...args, prompt: input }, stateFile);
+    await runTurn(runtime, slot, { ...args, prompt: input }, stateFile, ctx.paths.logsDir);
     rl.prompt();
   }
 
@@ -195,10 +245,14 @@ async function runTurn(
   slot: string,
   args: ReturnType<typeof parseAgentArgs>,
   stateFile?: string,
+  logsDir?: string,
 ): Promise<void> {
   try {
-    await runtime.startRun(slot, args.prompt, args.tool, args.cwd);
-    const result = await waitAndStream(runtime, slot, { stateFile });
+    const prompt = buildPrompt(args.prompt, args.context, args.system);
+    await runtime.startRun(slot, prompt, args.tool, args.cwd);
+    const result = await waitAndStream(runtime, slot, {
+      stateFile, verbose: args.verbose, logsDir,
+    });
     process.stdout.write('\n\n');
 
     if (result.status !== 'completed') {
