@@ -31,11 +31,34 @@ import { resolvePermission, type PermissionMode } from './acp-permissions.js';
 import { FileSystemHandlers } from './acp-fs-handlers.js';
 import { TerminalManager } from './acp-terminal-manager.js';
 
-const ACP_ADAPTER_REGISTRY: Record<string, { command: string; args: string[] }> = {
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+export interface AgentRegistryEntry { command: string; args: string[] }
+
+const BUILTIN_AGENTS: Record<string, AgentRegistryEntry> = {
   claude: { command: 'npx', args: ['-y', '@agentclientprotocol/claude-agent-acp'] },
   codex: { command: 'npx', args: ['-y', '@zed-industries/codex-acp'] },
   gemini: { command: 'gemini', args: ['--acp'] },
 };
+
+/** Load custom agents from ~/.coral/agents.json, merge with builtins. */
+export function loadAgentRegistry(): Record<string, AgentRegistryEntry> {
+  const registry = { ...BUILTIN_AGENTS };
+  try {
+    const home = process.env.HOME || '/home/coral';
+    const custom = JSON.parse(readFileSync(resolve(home, '.coral', 'agents.json'), 'utf-8'));
+    if (custom && typeof custom === 'object') {
+      for (const [name, entry] of Object.entries(custom)) {
+        const e = entry as { command?: string; args?: string[] };
+        if (e.command) {
+          registry[name] = { command: e.command, args: e.args ?? [] };
+        }
+      }
+    }
+  } catch { /* no custom agents file */ }
+  return registry;
+}
 
 interface ActiveSession {
   tool: ACPTool;
@@ -87,7 +110,8 @@ export class AcpSdkAdapter implements ACPClient {
     }
 
     // Resolve adapter command
-    const registry = ACP_ADAPTER_REGISTRY[input.tool];
+    const allAgents = loadAgentRegistry();
+    const registry = allAgents[input.tool];
     if (!registry) throw new Error(`Unknown ACP tool: ${input.tool}`);
 
     // Spawn ACP adapter child process

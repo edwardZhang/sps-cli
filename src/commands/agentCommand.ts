@@ -10,12 +10,13 @@
  *   sps agent close [--name NAME]           # close session
  */
 import * as readline from 'node:readline/promises';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createSessionContext } from '../core/sessionContext.js';
 import { readState, writeState } from '../core/state.js';
 import { createSessionRuntime } from '../providers/registry.js';
 import { waitAndStream } from './agentRenderer.js';
+import { loadAgentRegistry } from '../providers/adapters/AcpSdkAdapter.js';
 import type { ACPTool } from '../models/acp.js';
 
 const DIM = '\x1b[90m';
@@ -24,7 +25,7 @@ const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
 
 function parseAgentArgs(argv: string[]): {
-  subcommand: 'run' | 'chat' | 'status' | 'close';
+  subcommand: 'run' | 'chat' | 'status' | 'close' | 'list' | 'add';
   prompt: string;
   name: string;
   tool: ACPTool;
@@ -82,6 +83,13 @@ function parseAgentArgs(argv: string[]): {
   if (first === 'close') {
     return { subcommand: 'close', prompt: '', json: false, ...common };
   }
+  if (first === 'list') {
+    return { subcommand: 'list', prompt: '', json: flags.json === 'true', ...common };
+  }
+  if (first === 'add') {
+    // sps agent add <name> <command> [args...]
+    return { subcommand: 'add', prompt: positionals.slice(1).join(' '), json: false, ...common };
+  }
 
   const prompt = positionals.join(' ');
   const isChat = flags.chat === 'true' || !prompt;
@@ -127,6 +135,14 @@ export async function executeAgentCommand(argv: string[]): Promise<void> {
   }
   if (args.subcommand === 'close') {
     await agentClose(args);
+    return;
+  }
+  if (args.subcommand === 'list') {
+    agentList(args);
+    return;
+  }
+  if (args.subcommand === 'add') {
+    agentAdd(args);
     return;
   }
   if (args.subcommand === 'run') {
@@ -318,4 +334,55 @@ async function agentClose(args: ReturnType<typeof parseAgentArgs>): Promise<void
     console.error(`${RED}${msg}${RESET}`);
     process.exitCode = 1;
   }
+}
+
+// ── List ─────────────────────────────────────────────────────────
+
+function agentList(args: ReturnType<typeof parseAgentArgs>): void {
+  const registry = loadAgentRegistry();
+
+  if (args.json) {
+    console.log(JSON.stringify(registry, null, 2));
+    return;
+  }
+
+  console.log(`\n  Available agents:\n`);
+  for (const [name, entry] of Object.entries(registry)) {
+    const cmd = `${entry.command} ${entry.args.join(' ')}`.trim();
+    const isBuiltin = ['claude', 'codex', 'gemini'].includes(name);
+    const tag = isBuiltin ? DIM + '(builtin)' + RESET : GREEN + '(custom)' + RESET;
+    console.log(`  ${name.padEnd(12)} ${cmd}  ${tag}`);
+  }
+  console.log('');
+}
+
+// ── Add ──────────────────────────────────────────────────────────
+
+function agentAdd(args: ReturnType<typeof parseAgentArgs>): void {
+  // prompt contains: "<name> <command> [args...]"
+  const parts = args.prompt.split(/\s+/);
+  const name = parts[0];
+  const command = parts[1];
+  const cmdArgs = parts.slice(2);
+
+  if (!name || !command) {
+    console.error('Usage: sps agent add <name> <command> [args...]');
+    console.error('Example: sps agent add cursor "cursor-agent" acp');
+    process.exitCode = 1;
+    return;
+  }
+
+  const home = process.env.HOME || '/home/coral';
+  const agentsFile = resolve(home, '.coral', 'agents.json');
+
+  let existing: Record<string, { command: string; args: string[] }> = {};
+  try {
+    existing = JSON.parse(readFileSync(agentsFile, 'utf-8'));
+  } catch { /* new file */ }
+
+  existing[name] = { command, args: cmdArgs };
+
+  mkdirSync(resolve(home, '.coral'), { recursive: true });
+  writeFileSync(agentsFile, JSON.stringify(existing, null, 2) + '\n');
+  console.log(`${GREEN}Agent "${name}" registered: ${command} ${cmdArgs.join(' ')}${RESET}`);
 }
