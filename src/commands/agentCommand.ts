@@ -11,6 +11,7 @@
  */
 import * as readline from 'node:readline/promises';
 import { createSessionContext } from '../core/sessionContext.js';
+import { readState, writeState } from '../core/state.js';
 import { createSessionRuntime } from '../providers/registry.js';
 import { waitAndStream } from './agentRenderer.js';
 import type { ACPTool } from '../models/acp.js';
@@ -111,6 +112,14 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
     }
   } finally {
     try { await runtime.stopSession(slot); } catch { /* cleanup */ }
+    // Clean up ephemeral session from state
+    try {
+      const state = readState(ctx.paths.stateFile, 0);
+      if (state.sessions?.[slot]) {
+        delete state.sessions[slot];
+        writeState(ctx.paths.stateFile, state, 'agent-oneshot-cleanup');
+      }
+    } catch { /* best effort */ }
   }
 }
 
@@ -225,6 +234,15 @@ async function agentClose(args: ReturnType<typeof parseAgentArgs>): Promise<void
 
   try {
     await runtime.stopSession(slot);
+  } catch { /* session may not exist in runtime */ }
+
+  // Remove from state.json
+  try {
+    const state = readState(ctx.paths.stateFile, 0);
+    if (state.sessions?.[slot]) {
+      delete state.sessions[slot];
+      writeState(ctx.paths.stateFile, state, 'agent-close');
+    }
     console.log(`${GREEN}Session "${args.name}" closed${RESET}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
