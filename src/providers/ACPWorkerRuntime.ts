@@ -36,7 +36,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
     this.runtimeStore = new RuntimeStore(ctx);
   }
 
-  async ensureSession(slot: string, tool?: ACPTool, cwdOverride?: string): Promise<ACPSessionRecord> {
+  async ensureSession(slot: string, tool?: ACPTool, cwdOverride?: string, opts?: { mcpServers?: import('../interfaces/ACPClient.js').McpServerConfig[] }): Promise<ACPSessionRecord> {
     const state = this.runtimeStore.readACPState();
     const normalizedSlot = this.normalizeSlot(slot);
     const selectedTool = tool || this.defaultTool();
@@ -52,6 +52,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
       cwd,
       resetExisting,
       logsDir: this.ctx.paths.logsDir,
+      mcpServers: opts?.mcpServers,
     });
 
     const session = this.upsertSession(state, normalizedSlot, {

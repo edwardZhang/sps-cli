@@ -194,7 +194,12 @@ export class AcpSdkAdapter implements ACPClient {
     // Create new session
     const sessionResult = await conn.newSession({
       cwd: input.cwd,
-      mcpServers: [],
+      mcpServers: (input.mcpServers ?? []).map(s => ({
+        name: s.name,
+        command: s.command,
+        args: s.args ?? [],
+        env: s.env ?? [],
+      })),
     });
 
     const session: ActiveSession = {

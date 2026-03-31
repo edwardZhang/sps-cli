@@ -1,5 +1,12 @@
 import type { ACPSessionStatus, ACPRunStatus, ACPTool } from '../models/acp.js';
 
+export interface McpServerConfig {
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Array<{ name: string; value: string }>;
+}
+
 export interface EnsureSessionInput {
   sessionName: string;
   tool: ACPTool;
@@ -7,6 +14,8 @@ export interface EnsureSessionInput {
   resetExisting?: boolean;
   /** Directory for worker output logs (enables sps logs) */
   logsDir?: string;
+  /** MCP servers to attach to this session */
+  mcpServers?: McpServerConfig[];
 }
 
 export interface EnsureSessionResult {

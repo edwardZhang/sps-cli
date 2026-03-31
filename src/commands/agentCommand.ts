@@ -37,14 +37,18 @@ function parseAgentArgs(argv: string[]): {
   system: string;
   profile: string;
   output: string;
+  mcp: string[];
 } {
   const flags: Record<string, string> = {};
   const positionals: string[] = [];
   const contextFiles: string[] = [];
+  const mcpServers: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--chat') {
+    if (arg === '--mcp' && i + 1 < argv.length) {
+      mcpServers.push(argv[++i]);
+    } else if (arg === '--chat') {
       flags.chat = 'true';
     } else if (arg === '--json') {
       flags.json = 'true';
@@ -82,6 +86,7 @@ function parseAgentArgs(argv: string[]): {
     system: flags.system || '',
     profile: flags.profile || '',
     output: flags.output || '',
+    mcp: mcpServers,
   };
 
   if (first === 'status') {
@@ -119,6 +124,28 @@ function parseAgentArgs(argv: string[]): {
     json: flags.json === 'true',
     ...common,
   };
+}
+
+/** Resolve MCP server shorthand to full config. */
+function resolveMcpServers(names: string[]): Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }> {
+  const KNOWN_MCP: Record<string, { command: string; args: string[] }> = {
+    filesystem: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', process.cwd()] },
+    postgres: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-postgres'] },
+    sqlite: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-sqlite'] },
+    github: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] },
+    memory: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'] },
+    fetch: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-fetch'] },
+  };
+
+  return names.map(name => {
+    const known = KNOWN_MCP[name];
+    if (known) {
+      return { name, ...known, env: [] };
+    }
+    // Custom: treat as command (e.g., "--mcp ./my-server")
+    const parts = name.split(/\s+/);
+    return { name: parts[0], command: parts[0], args: parts.slice(1), env: [] };
+  });
 }
 
 /** Simple Levenshtein distance for typo detection. */
@@ -227,7 +254,8 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
   const slot = `session-oneshot-${Date.now()}`;
 
   try {
-    await runtime.ensureSession(slot, args.tool, args.cwd);
+    const mcpConfigs = resolveMcpServers(args.mcp);
+    await runtime.ensureSession(slot, args.tool, args.cwd, mcpConfigs.length ? { mcpServers: mcpConfigs } : undefined);
     const prompt = buildPrompt(args.prompt, args.context, args.system, args.profile);
     await runtime.startRun(slot, prompt, args.tool, args.cwd);
 
@@ -328,6 +356,7 @@ async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promi
 
 async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
   const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
+  const mcpConfigs = resolveMcpServers(args.mcp);
   const slot = `session-${args.name}`;
   const stateFile = ctx.paths.stateFile;
 
@@ -352,7 +381,7 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
     process.stderr.write(`${DIM}Session "${args.name}" started via daemon (${args.tool}) — type your messages, Ctrl+C to exit${RESET}\n\n`);
   } else {
     runtime = createSessionRuntime(ctx);
-    await runtime.ensureSession(slot, args.tool, args.cwd);
+    await runtime.ensureSession(slot, args.tool, args.cwd, mcpConfigs.length ? { mcpServers: mcpConfigs } : undefined);
     process.stderr.write(`${DIM}Session "${args.name}" started (${args.tool}) — type your messages, Ctrl+C to exit${RESET}\n\n`);
   }
 
