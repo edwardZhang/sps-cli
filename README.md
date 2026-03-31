@@ -4,22 +4,31 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.26.1**
+**v0.27.0**
 
-SPS (Smart Pipeline System) is a fully automated development pipeline CLI tool driven by AI Agents. From task card creation to code merging, the entire process runs unattended.
+SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Two modes:
 
+- **Harness mode** (`sps agent`): Zero-config, direct agent interaction with multi-turn chat
+- **Pipeline mode** (`sps pipeline`): Fully automated card-driven development workflow
+
+```bash
+# Harness mode — talk to any agent instantly
+sps agent "Explain this repo"
+sps agent --chat                    # multi-turn REPL
+sps agent --tool codex "Fix tests"  # choose agent
+
+# Pipeline mode — automated development workflow
+sps pipeline start my-project       # or: sps tick my-project
 ```
-Create cards -> Start pipeline -> Development worker completes branch work -> QA worker integrates branch -> Notify completion
-```
 
-**v0.26.0 highlights**:
+**v0.27.0 highlights**:
 
-- **ACP SDK Transport**: Worker communication uses structured ACP JSON-RPC over stdio instead of terminal screen-scraping. Claude uses Anthropic's official `claude-agent-sdk`, Codex uses Zed's Rust native `codex-acp` binary. Deterministic state detection — no regex, no guessing.
-- **Unified adapter**: One `AcpSdkAdapter` replaces 6 legacy providers (ClaudePrint, CodexExec, ClaudeTmux, CodexTmux + tmux utilities). Adding new agents (Gemini, Cursor, etc.) requires only a registry entry.
-- **Real-time worker logs**: ACP events stream to `*-acp-*.log` files. `sps logs` and `sps worker dashboard` display worker output in real-time.
-- **Permission handling**: ACP `requestPermission` callback enables programmatic per-tool-call approval (default: auto-approve all).
+- **Harness mode**: `sps agent` for zero-config agent interaction. One-shot and multi-turn chat with context retention. Supports Claude, Codex, and Gemini.
+- **Two-mode architecture**: Harness (`sps agent`) and Pipeline (`sps pipeline`) share the ACP SDK transport but are fully independent — different state files, different lifecycles.
+- **Pipeline command group**: `sps pipeline start/stop/status/reset/workers/board/logs`. Old commands (`sps tick`, `sps stop`, etc.) preserved as aliases.
+- **ACP SDK Transport** (v0.26.0): Structured JSON-RPC over stdio. Claude via official `claude-agent-sdk`, Codex via Rust native binary, Gemini via native `--acp` mode.
 
-**Architecture**: Two-phase state machine (`Inprogress` = development, `QA` = integration/merge). WorkerManager ACP interface mediates all worker lifecycle. IntegrationQueue serializes merges. Default transport is `acp-sdk` (structured protocol); `proc` one-shot mode available as fallback via `WORKER_TRANSPORT=proc`.
+**Architecture**: ACP SDK adapter communicates with agents via structured protocol (no terminal scraping). Pipeline mode uses WorkerManager + CompletionJudge for card flow automation. Harness mode talks directly to ACPWorkerRuntime, bypassing card logic entirely.
 
 ## Table of Contents
 
