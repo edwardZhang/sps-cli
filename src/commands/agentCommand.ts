@@ -208,17 +208,54 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
 
 async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
   const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
-  const runtime = createSessionRuntime(ctx);
   const slot = `session-${args.name}`;
-
-  await runtime.ensureSession(slot, args.tool, args.cwd);
-  process.stderr.write(`${DIM}Session "${args.name}" started (${args.tool}) — type your messages, Ctrl+C to exit${RESET}\n\n`);
-
   const stateFile = ctx.paths.stateFile;
+
+  // Try daemon mode: auto-start daemon if not running
+  const { DaemonClient } = await import('../daemon/daemonClient.js');
+  const { ensureDaemon } = await import('./agentDaemon.js');
+  const client = new DaemonClient();
+  let useDaemon = await client.isRunning();
+
+  if (!useDaemon) {
+    // Auto-start daemon for chat mode
+    useDaemon = await ensureDaemon();
+  }
+
+  // Create session (daemon or local)
+  let runtime: Awaited<ReturnType<typeof createSessionRuntime>> | null = null;
+  if (useDaemon) {
+    await client.ensureSession(slot, args.tool, args.cwd);
+    process.stderr.write(`${DIM}Session "${args.name}" started via daemon (${args.tool}) — type your messages, Ctrl+C to exit${RESET}\n\n`);
+  } else {
+    runtime = createSessionRuntime(ctx);
+    await runtime.ensureSession(slot, args.tool, args.cwd);
+    process.stderr.write(`${DIM}Session "${args.name}" started (${args.tool}) — type your messages, Ctrl+C to exit${RESET}\n\n`);
+  }
+
+  // Unified turn runner
+  const turn = async (prompt: string) => {
+    const fullPrompt = buildPrompt(prompt, args.context, args.system);
+    if (useDaemon) {
+      await client.startRun(slot, fullPrompt, args.tool, args.cwd);
+      // Poll daemon's state.json for output
+      await waitAndStream(
+        { inspect: (s?: string) => client.inspect(s) } as any,
+        slot,
+        { stateFile, verbose: args.verbose, logsDir: ctx.paths.logsDir },
+      );
+    } else {
+      await runtime!.startRun(slot, fullPrompt, args.tool, args.cwd);
+      await waitAndStream(runtime!, slot, {
+        stateFile, verbose: args.verbose, logsDir: ctx.paths.logsDir,
+      });
+    }
+    process.stdout.write('\n\n');
+  };
 
   // If initial prompt provided, run it first
   if (args.prompt) {
-    await runTurn(runtime, slot, args, stateFile, ctx.paths.logsDir);
+    await turn(args.prompt);
   }
 
   // REPL loop
@@ -230,8 +267,12 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
 
   const cleanup = async () => {
     rl.close();
-    process.stderr.write(`\n${DIM}Closing session...${RESET}\n`);
-    try { await runtime.stopSession(slot); } catch { /* cleanup */ }
+    process.stderr.write(`\n${DIM}Detaching from session (daemon keeps it alive)...${RESET}\n`);
+    // Don't stop session — daemon keeps it alive
+    // Only stop if running locally (no daemon)
+    if (!useDaemon && runtime) {
+      try { await runtime.stopSession(slot); } catch { /* cleanup */ }
+    }
     process.exit(0);
   };
 
@@ -248,8 +289,23 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
       await cleanup();
       return;
     }
+    if (input === '/close') {
+      // Explicitly close session
+      if (useDaemon) {
+        try { await client.stopSession(slot); } catch { /* noop */ }
+      } else if (runtime) {
+        try { await runtime.stopSession(slot); } catch { /* noop */ }
+      }
+      process.stderr.write(`${DIM}Session closed.${RESET}\n`);
+      process.exit(0);
+    }
 
-    await runTurn(runtime, slot, { ...args, prompt: input }, stateFile, ctx.paths.logsDir);
+    try {
+      await turn(input);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`${RED}Error: ${msg}${RESET}\n`);
+    }
     rl.prompt();
   }
 

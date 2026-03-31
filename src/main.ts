@@ -256,8 +256,14 @@ async function main() {
 
   // ─── agent (harness mode — custom arg parsing) ──────────────
   if (args.command === 'agent') {
-    // Pass raw argv after 'agent' — agentCommand parses its own flags
-    await executeAgentCommand(process.argv.slice(3));
+    const agentArgs = process.argv.slice(3);
+    // Handle daemon subcommand
+    if (agentArgs[0] === 'daemon') {
+      const { executeDaemonCommand } = await import('./commands/agentDaemon.js');
+      await executeDaemonCommand(agentArgs[1] || '');
+      return;
+    }
+    await executeAgentCommand(agentArgs);
     return;
   }
 
