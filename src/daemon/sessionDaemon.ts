@@ -19,7 +19,7 @@ import type { ACPTool } from '../models/acp.js';
 
 export interface DaemonRequest {
   id?: number;
-  method: 'ensureSession' | 'startRun' | 'inspect' | 'stopSession' | 'shutdown';
+  method: 'ensureSession' | 'startRun' | 'inspect' | 'stopSession' | 'clearRun' | 'shutdown';
   params: Record<string, unknown>;
 }
 
@@ -150,6 +150,18 @@ export class SessionDaemon {
 
       case 'stopSession': {
         await this.runtime.stopSession(p.slot as string);
+        return { ok: true };
+      }
+
+      case 'clearRun': {
+        const { readState, writeState } = await import('../core/state.js');
+        const state = readState(this.ctx.paths.stateFile, 0);
+        const s = state.sessions?.[p.slot as string];
+        if (s?.currentRun) {
+          s.currentRun = null;
+          s.status = 'idle';
+          writeState(this.ctx.paths.stateFile, state, 'daemon-clear-run');
+        }
         return { ok: true };
       }
 

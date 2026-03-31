@@ -301,11 +301,14 @@ async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promi
   const prompt = buildPrompt(args.prompt, args.context, args.system, args.profile);
   await client.startRun(slot, prompt, args.tool, remoteCwd);
 
+  const isRemote = !!process.env.SPS_DAEMON_SOCKET;
   const result = await waitAndStream(
     { inspect: (s?: string) => client.inspect(s) } as any,
     slot,
-    { stateFile, verbose: args.verbose, logsDir: ctx.paths.logsDir },
+    { stateFile: isRemote ? undefined : stateFile, verbose: args.verbose, logsDir: isRemote ? undefined : ctx.paths.logsDir },
   );
+  // Clear run in daemon (remote or local) so slot is reusable
+  try { await client.clearRun(slot); } catch { /* best effort */ }
   process.stdout.write('\n');
 
   if (args.output && result.output) {

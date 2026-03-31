@@ -42,6 +42,10 @@ export class DaemonClient {
     await this.request('stopSession', { slot });
   }
 
+  async clearRun(slot: string): Promise<void> {
+    await this.request('clearRun', { slot });
+  }
+
   async shutdown(): Promise<void> {
     try { await this.request('shutdown', {}); } catch { /* daemon exits */ }
   }
