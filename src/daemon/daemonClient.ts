@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
 import type { DaemonRequest, DaemonResponse } from './sessionDaemon.js';
 import type { ACPState, ACPSessionRecord, ACPTool } from '../models/acp.js';
 
-const DEFAULT_SOCKET = resolve(process.env.HOME || '/home/coral', '.coral', 'sessions', 'daemon.sock');
+const DEFAULT_SOCKET = process.env.SPS_DAEMON_SOCKET || resolve(process.env.HOME || '/home/coral', '.coral', 'sessions', 'daemon.sock');
 
 export class DaemonClient {
   constructor(private socketPath = DEFAULT_SOCKET) {}
