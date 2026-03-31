@@ -279,15 +279,18 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
 // ── Named one-shot (via daemon, session persists) ───────────────
 
 async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
-  process.stderr.write(`${DIM}[debug] agentNamedOneShot: entering${RESET}\n`);
+  process.stderr.write(`${DIM}[debug] agentNamedOneShot: entering, SPS_DAEMON_SOCKET=${process.env.SPS_DAEMON_SOCKET || 'unset'}${RESET}\n`);
   const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
   const { DaemonClient } = await import('../daemon/daemonClient.js');
   const { ensureDaemon } = await import('./agentDaemon.js');
   const client = new DaemonClient();
 
-  if (!(await client.isRunning())) {
+  process.stderr.write(`${DIM}[debug] checking daemon...${RESET}\n`);
+  const running = await client.isRunning();
+  process.stderr.write(`${DIM}[debug] daemon running: ${running}${RESET}\n`);
+
+  if (!running) {
     if (process.env.SPS_DAEMON_SOCKET) {
-      // Remote mode — don't auto-start local daemon
       process.stderr.write(`${RED}Cannot connect to remote daemon at ${process.env.SPS_DAEMON_SOCKET}${RESET}\n`);
       process.exit(1);
     }
@@ -297,7 +300,9 @@ async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promi
   const slot = `session-${args.name}`;
   const stateFile = ctx.paths.stateFile;
 
+  process.stderr.write(`${DIM}[debug] calling client.ensureSession...${RESET}\n`);
   await client.ensureSession(slot, args.tool, args.cwd);
+  process.stderr.write(`${DIM}[debug] ensureSession done, calling startRun...${RESET}\n`);
   const prompt = buildPrompt(args.prompt, args.context, args.system, args.profile);
   await client.startRun(slot, prompt, args.tool, args.cwd);
 
