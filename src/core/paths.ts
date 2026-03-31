@@ -73,6 +73,24 @@ export function resolveWorkerCardFile(projectName: string, slot: number): string
   return resolve(HOME, '.coral', 'projects', projectName, `worker-${slot}.card`);
 }
 
+export interface SessionPaths {
+  /** ~/.coral/sessions/ */
+  stateDir: string;
+  /** ~/.coral/sessions/logs/ */
+  logsDir: string;
+  /** ~/.coral/sessions/state.json */
+  stateFile: string;
+}
+
+export function resolveSessionPaths(): SessionPaths {
+  const stateDir = resolve(HOME, '.coral', 'sessions');
+  return {
+    stateDir,
+    logsDir: resolve(stateDir, 'logs'),
+    stateFile: resolve(stateDir, 'state.json'),
+  };
+}
+
 export function checkPathExists(path: string): boolean {
   return existsSync(path);
 }

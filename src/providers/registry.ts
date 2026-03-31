@@ -31,3 +31,12 @@ export function createNotifier(config: ProjectConfig): Notifier {
 export function createAgentRuntime(ctx: ProjectContext): AgentRuntime {
   return new ACPWorkerRuntime(ctx);
 }
+
+/** Create AgentRuntime for harness mode (sps agent) — no project config required. */
+export function createSessionRuntime(sessionCtx: {
+  projectName: string;
+  paths: { repoDir: string; logsDir: string; stateFile: string; acpStateFile?: string };
+  config: { ACP_AGENT?: string; WORKER_TOOL: string; raw: Record<string, string> };
+}): AgentRuntime {
+  return new ACPWorkerRuntime(sessionCtx as any);
+}

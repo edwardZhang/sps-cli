@@ -208,7 +208,8 @@ export class ACPWorkerRuntime implements AgentRuntime {
   private normalizeSlot(slot: string): string {
     if (/^worker-\d+$/.test(slot)) return slot;
     if (/^\d+$/.test(slot)) return `worker-${slot}`;
-    throw new Error(`Invalid slot: ${slot}. Use worker-N or N`);
+    if (/^session-/.test(slot)) return slot;  // harness mode session namespace
+    throw new Error(`Invalid slot: ${slot}. Use worker-N, N, or session-<name>`);
   }
 
   private defaultTool(): ACPTool {
@@ -216,6 +217,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
   }
 
   private buildSessionName(slot: string): string {
+    if (slot.startsWith('session-')) return `sps-${slot}`;
     return `sps-acp-${this.ctx.projectName}-${slot}`;
   }
 

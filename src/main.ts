@@ -39,6 +39,7 @@ import { executeStop } from './commands/stop.js';
 import { executeReset } from './commands/reset.js';
 import { executeStatus } from './commands/status.js';
 import { executeAcpCommand } from './commands/acpCommand.js';
+import { executeAgentCommand } from './commands/agentCommand.js';
 
 import { createRequire } from 'node:module';
 const _require = createRequire(import.meta.url);
@@ -52,6 +53,8 @@ interface CommandInfo {
 }
 
 const COMMANDS: Record<string, CommandInfo> = {
+  agent:     { desc: 'Agent 交互（零配置，支持多轮对话）', usage: 'sps agent "<prompt>" | sps agent --chat',
+    examples: ['sps agent "Explain this repo"', 'sps agent --chat', 'sps agent --tool codex "Fix tests"', 'sps agent status'] },
   setup:     { desc: '初始环境配置（凭证、目录、配置文件）', usage: 'sps setup [--force]',
     examples: ['sps setup', 'sps setup --force'] },
   tick:      { desc: '运行持续流水线', usage: 'sps tick <project> [--json]',
@@ -65,9 +68,16 @@ const COMMANDS: Record<string, CommandInfo> = {
   scheduler: { desc: '调度器：Planning → Backlog 晋升', usage: 'sps scheduler <子命令> <project>', subs: {
     tick: '执行一次调度 tick',
   }, examples: ['sps scheduler tick my-project'] },
-  pipeline:  { desc: '执行链：Backlog → Todo → Inprogress', usage: 'sps pipeline <子命令> <project>', subs: {
+  pipeline:  { desc: '流水线管理（启动、停止、状态、看板）', usage: 'sps pipeline <子命令> <project>', subs: {
+    start: '启动持续流水线（= sps tick）',
+    stop: '停止流水线（= sps stop）',
+    status: '查看状态（= sps status）',
+    reset: '重置卡片（= sps reset）',
+    workers: 'Worker 仪表板（= sps worker dashboard）',
+    board: '卡片看板（= sps card dashboard）',
+    logs: '日志查看（= sps logs）',
     tick: '执行一次流水线 tick',
-  }, examples: ['sps pipeline tick my-project'] },
+  }, examples: ['sps pipeline start my-project', 'sps pipeline workers my-project', 'sps pipeline board my-project'] },
   worker:    { desc: 'Worker 生命周期管理', usage: 'sps worker <子命令> <project> [seq]', subs: {
     launch: '启动 Worker 实例',
     dashboard: '展示 Worker 仪表板',
@@ -241,6 +251,80 @@ async function main() {
   // ─── setup ─────────────────────────────────────────────────
   if (args.command === 'setup') {
     await executeSetup(args.flags);
+    return;
+  }
+
+  // ─── agent (harness mode — custom arg parsing) ──────────────
+  if (args.command === 'agent') {
+    // Pass raw argv after 'agent' — agentCommand parses its own flags
+    await executeAgentCommand(process.argv.slice(3));
+    return;
+  }
+
+  // ─── pipeline (aliases for tick/stop/status/reset/workers/board/card/logs)
+  if (args.command === 'pipeline') {
+    const sub = args.subcommand;
+    if (sub === 'start') {
+      const projects: string[] = [];
+      if (args.project) projects.push(args.project);
+      projects.push(...args.positionals);
+      if (projects.length === 0) { console.error('Usage: sps pipeline start <project>'); process.exit(2); }
+      await executeTick(projects, args.flags);
+      return;
+    }
+    if (sub === 'stop') {
+      const projects: string[] = [];
+      if (args.project) projects.push(args.project);
+      projects.push(...args.positionals);
+      await executeStop(projects, args.flags);
+      return;
+    }
+    if (sub === 'status') {
+      await executeStatus(args.flags);
+      return;
+    }
+    if (sub === 'reset') {
+      const project = args.project;
+      if (!project) { console.error('Usage: sps pipeline reset <project>'); process.exit(2); }
+      await executeReset(project, args.flags);
+      return;
+    }
+    if (sub === 'workers') {
+      const projects: string[] = [];
+      if (args.project) projects.push(args.project);
+      projects.push(...args.positionals);
+      await executeWorkerDashboard(projects, args.flags);
+      return;
+    }
+    if (sub === 'board') {
+      const projects: string[] = [];
+      if (args.project) projects.push(args.project);
+      projects.push(...args.positionals);
+      await executeCardDashboard(projects, args.flags);
+      return;
+    }
+    if (sub === 'card' && args.project === 'add') {
+      const project = args.positionals[0];
+      if (!project) { console.error('Usage: sps pipeline card add <project> "<title>"'); process.exit(2); }
+      await executeCardAdd(project, args.positionals.slice(1), args.flags);
+      return;
+    }
+    if (sub === 'logs') {
+      const projects: string[] = [];
+      if (args.project) projects.push(args.project);
+      projects.push(...args.positionals);
+      await executeLogs(projects, args.flags, 30);
+      return;
+    }
+    console.error('Usage: sps pipeline <start|stop|status|reset|workers|board|card|logs> [project]');
+    process.exit(2);
+  }
+
+  // ─── init (alias for project init) ──────────────────────────
+  if (args.command === 'init') {
+    const project = args.project || args.positionals[0];
+    if (!project) { console.error('Usage: sps init <project>'); process.exit(2); }
+    await executeProjectInit(project, args.flags);
     return;
   }
 
