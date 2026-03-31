@@ -9,7 +9,7 @@
  *   Claude: npx @agentclientprotocol/claude-agent-acp (Anthropic official SDK)
  *   Codex:  npx @zed-industries/codex-acp (Rust native binary)
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 import type * as schema from '@agentclientprotocol/sdk';
@@ -315,10 +315,21 @@ export class AcpSdkAdapter implements ACPClient {
   }
 
   private async destroySession(session: ActiveSession): Promise<void> {
+    const pid = session.child.pid;
+    // Kill child + try to kill descendant processes
     try { session.child.kill('SIGTERM'); } catch { /* noop */ }
+    if (pid) {
+      // Kill descendants spawned by npx (sh → node child tree)
+      try { process.kill(pid, 'SIGTERM'); } catch { /* noop */ }
+      this.killDescendants(pid, 'SIGTERM');
+    }
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
         try { session.child.kill('SIGKILL'); } catch { /* noop */ }
+        if (pid) {
+          try { process.kill(pid, 'SIGKILL'); } catch { /* noop */ }
+          this.killDescendants(pid, 'SIGKILL');
+        }
         resolve();
       }, 3_000);
       session.child.once('exit', () => {
@@ -326,5 +337,19 @@ export class AcpSdkAdapter implements ACPClient {
         resolve();
       });
     });
+  }
+
+  /** Kill all child processes of a given PID (Linux: pgrep -P). */
+  private killDescendants(parentPid: number, signal: NodeJS.Signals): void {
+    try {
+      const out = execFileSync('pgrep', ['-P', String(parentPid)], { encoding: 'utf-8', timeout: 2000 });
+      for (const line of out.trim().split('\n')) {
+        const childPid = parseInt(line, 10);
+        if (childPid > 0) {
+          try { process.kill(childPid, signal); } catch { /* noop */ }
+          this.killDescendants(childPid, signal); // recursive
+        }
+      }
+    } catch { /* pgrep not found or no children */ }
   }
 }
