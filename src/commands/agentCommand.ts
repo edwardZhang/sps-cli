@@ -22,6 +22,7 @@ import type { ACPTool } from '../models/acp.js';
 const DIM = '\x1b[90m';
 const RESET = '\x1b[0m';
 const GREEN = '\x1b[32m';
+const YELLOW = '\x1b[33m';
 const RED = '\x1b[31m';
 
 function parseAgentArgs(argv: string[]): {
@@ -34,6 +35,8 @@ function parseAgentArgs(argv: string[]): {
   verbose: boolean;
   context: string[];
   system: string;
+  profile: string;
+  output: string;
 } {
   const flags: Record<string, string> = {};
   const positionals: string[] = [];
@@ -61,6 +64,8 @@ function parseAgentArgs(argv: string[]): {
       flags.system = argv[++i];
     } else if (arg === '--profile' && i + 1 < argv.length) {
       flags.profile = argv[++i];
+    } else if ((arg === '--output' || arg === '-o') && i + 1 < argv.length) {
+      flags.output = argv[++i];
     } else if (!arg.startsWith('-')) {
       positionals.push(arg);
     }
@@ -75,6 +80,8 @@ function parseAgentArgs(argv: string[]): {
     verbose: flags.verbose === 'true',
     context: contextFiles,
     system: flags.system || '',
+    profile: flags.profile || '',
+    output: flags.output || '',
   };
 
   if (first === 'status') {
@@ -91,6 +98,18 @@ function parseAgentArgs(argv: string[]): {
     return { subcommand: 'add', prompt: positionals.slice(1).join(' '), json: false, ...common };
   }
 
+  // Typo protection: if first word looks like a misspelled subcommand, warn
+  const KNOWN_SUBS = ['status', 'close', 'list', 'add', 'daemon'];
+  if (first && !first.includes(' ') && first.length < 12) {
+    for (const sub of KNOWN_SUBS) {
+      if (first !== sub && levenshtein(first, sub) <= 2) {
+        process.stderr.write(`${YELLOW}Did you mean: sps agent ${sub}?${RESET}\n`);
+        process.stderr.write(`${DIM}("${first}" was treated as a prompt. Use Ctrl+C to cancel.)${RESET}\n\n`);
+        break;
+      }
+    }
+  }
+
   const prompt = positionals.join(' ');
   const isChat = flags.chat === 'true' || !prompt;
 
@@ -102,9 +121,51 @@ function parseAgentArgs(argv: string[]): {
   };
 }
 
-/** Build final prompt with optional system instruction and file context. */
-function buildPrompt(userPrompt: string, contextFiles: string[], system: string): string {
+/** Simple Levenshtein distance for typo detection. */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) => [i]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+/** Load a profile from profiles/ directory. Searches dist/profiles/ then cwd. */
+function loadProfile(name: string): string | null {
+  const candidates = [
+    // Installed package profiles
+    resolve(import.meta.url.replace('file://', '').replace(/\/commands\/agentCommand\.js$/, ''), '..', 'profiles', `${name}.md`),
+    // CWD profiles
+    resolve(process.cwd(), 'profiles', `${name}.md`),
+    // Direct path
+    name,
+  ];
+  for (const p of candidates) {
+    try {
+      return readFileSync(p, 'utf-8');
+    } catch { /* try next */ }
+  }
+  process.stderr.write(`${DIM}Warning: profile "${name}" not found${RESET}\n`);
+  return null;
+}
+
+/** Build final prompt with optional system instruction, profile, and file context. */
+function buildPrompt(userPrompt: string, contextFiles: string[], system: string, profile?: string): string {
   const parts: string[] = [];
+
+  // Load profile as system prompt
+  if (profile) {
+    const profileContent = loadProfile(profile);
+    if (profileContent) {
+      parts.push(`[System instruction from profile: ${profile}]\n${profileContent}\n`);
+    }
+  }
 
   if (system) {
     parts.push(`[System instruction] ${system}\n`);
@@ -162,7 +223,7 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
 
   try {
     await runtime.ensureSession(slot, args.tool, args.cwd);
-    const prompt = buildPrompt(args.prompt, args.context, args.system);
+    const prompt = buildPrompt(args.prompt, args.context, args.system, args.profile);
     await runtime.startRun(slot, prompt, args.tool, args.cwd);
 
     const result = await waitAndStream(runtime, slot, {
@@ -171,6 +232,12 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
       logsDir: ctx.paths.logsDir,
     });
     process.stdout.write('\n');
+
+    // Write output to file if --output specified
+    if (args.output && result.output) {
+      writeFileSync(resolve(args.output), result.output, 'utf-8');
+      process.stderr.write(`${DIM}Output saved to ${args.output}${RESET}\n`);
+    }
 
     if (result.status !== 'completed') {
       process.stderr.write(`${RED}Agent ${result.status}${RESET}\n`);
@@ -235,7 +302,7 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
 
   // Unified turn runner
   const turn = async (prompt: string) => {
-    const fullPrompt = buildPrompt(prompt, args.context, args.system);
+    const fullPrompt = buildPrompt(prompt, args.context, args.system, args.profile);
     if (useDaemon) {
       await client.startRun(slot, fullPrompt, args.tool, args.cwd);
       // Poll daemon's state.json for output
@@ -320,7 +387,7 @@ async function runTurn(
   logsDir?: string,
 ): Promise<void> {
   try {
-    const prompt = buildPrompt(args.prompt, args.context, args.system);
+    const prompt = buildPrompt(args.prompt, args.context, args.system, args.profile);
     await runtime.startRun(slot, prompt, args.tool, args.cwd);
     const result = await waitAndStream(runtime, slot, {
       stateFile, verbose: args.verbose, logsDir,
