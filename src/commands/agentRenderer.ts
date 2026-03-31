@@ -3,6 +3,7 @@
  * incremental output to stdout. Shared by sps agent (one-shot + chat).
  */
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
+import { readState, writeState } from '../core/state.js';
 
 export interface StreamResult {
   status: 'completed' | 'failed' | 'cancelled' | 'lost';
@@ -12,7 +13,7 @@ export interface StreamResult {
 export async function waitAndStream(
   runtime: AgentRuntime,
   slot: string,
-  opts?: { pollMs?: number; signal?: AbortSignal },
+  opts?: { pollMs?: number; signal?: AbortSignal; stateFile?: string },
 ): Promise<StreamResult> {
   const pollMs = opts?.pollMs ?? 2_000;
   let lastLen = 0;
@@ -24,7 +25,7 @@ export async function waitAndStream(
     }
 
     const state = await runtime.inspect(slot);
-    const session = Object.values(state.sessions)[0];
+    const session = state.sessions[slot];
     if (!session) {
       return { status: 'lost', output: fullOutput };
     }
@@ -41,9 +42,11 @@ export async function waitAndStream(
     // Check run status
     const runStatus = session.currentRun?.status;
     if (runStatus === 'completed') {
+      if (opts?.stateFile) clearRunInState(opts.stateFile, slot);
       return { status: 'completed', output: fullOutput };
     }
     if (runStatus === 'failed' || runStatus === 'cancelled' || runStatus === 'lost') {
+      if (opts?.stateFile) clearRunInState(opts.stateFile, slot);
       return { status: runStatus, output: fullOutput };
     }
 
@@ -53,5 +56,19 @@ export async function waitAndStream(
     }
 
     await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
+/** Clear currentRun from session state so the slot can accept the next prompt. */
+function clearRunInState(stateFile: string, slot: string): void {
+  try {
+    const state = readState(stateFile, 0);
+    if (state.sessions?.[slot]?.currentRun) {
+      state.sessions[slot].currentRun = null;
+      state.sessions[slot].status = 'idle';
+      writeState(stateFile, state, 'agent-clear-run');
+    }
+  } catch {
+    // Best effort
   }
 }

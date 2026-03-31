@@ -102,7 +102,7 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
     await runtime.ensureSession(slot, args.tool, args.cwd);
     await runtime.startRun(slot, args.prompt, args.tool, args.cwd);
 
-    const result = await waitAndStream(runtime, slot);
+    const result = await waitAndStream(runtime, slot, { stateFile: ctx.paths.stateFile });
     process.stdout.write('\n');
 
     if (result.status !== 'completed') {
@@ -124,9 +124,11 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
   await runtime.ensureSession(slot, args.tool, args.cwd);
   process.stderr.write(`${DIM}Session "${args.name}" started (${args.tool}) — type your messages, Ctrl+C to exit${RESET}\n\n`);
 
+  const stateFile = ctx.paths.stateFile;
+
   // If initial prompt provided, run it first
   if (args.prompt) {
-    await runTurn(runtime, slot, args);
+    await runTurn(runtime, slot, args, stateFile);
   }
 
   // REPL loop
@@ -157,7 +159,7 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
       return;
     }
 
-    await runTurn(runtime, slot, { ...args, prompt: input });
+    await runTurn(runtime, slot, { ...args, prompt: input }, stateFile);
     rl.prompt();
   }
 
@@ -168,10 +170,11 @@ async function runTurn(
   runtime: Awaited<ReturnType<typeof createSessionRuntime>>,
   slot: string,
   args: ReturnType<typeof parseAgentArgs>,
+  stateFile?: string,
 ): Promise<void> {
   try {
     await runtime.startRun(slot, args.prompt, args.tool, args.cwd);
-    const result = await waitAndStream(runtime, slot);
+    const result = await waitAndStream(runtime, slot, { stateFile });
     process.stdout.write('\n\n');
 
     if (result.status !== 'completed') {
