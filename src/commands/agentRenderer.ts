@@ -93,11 +93,15 @@ export async function waitAndStream(
               if (line.includes('[tool:') || line.includes('[tool_update]')) {
                 process.stderr.write(`${YELLOW}  ${line}${RESET}\n`);
               } else if (line.includes('[assistant]')) {
-                const text = line.replace(/^\S+\s+\[assistant\]\s*/, '');
+                const text = line.replace(/^\S+ \[assistant\] /, '');
                 process.stdout.write(text);
                 fullOutput += text;
               } else if (line.includes('[usage]')) {
                 process.stderr.write(`${DIM}  ${line}${RESET}\n`);
+              } else if (!line.match(/^\S+ \[/)) {
+                // Continuation text (multi-line assistant output without tag)
+                process.stdout.write(line);
+                fullOutput += line;
               }
             }
             lastLogLen = newLines.offset;
