@@ -10,6 +10,7 @@
  *   sps agent close [--name NAME]           # close session
  */
 import * as readline from 'node:readline/promises';
+import * as childProcess from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createSessionContext } from '../core/sessionContext.js';
@@ -40,15 +41,19 @@ function parseAgentArgs(argv: string[]): {
   output: string;
   mcp: string[];
   attach: boolean;
+  hooks: string[];
 } {
   const flags: Record<string, string> = {};
   const positionals: string[] = [];
   const contextFiles: string[] = [];
   const mcpServers: string[] = [];
+  const hooks: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--attach') {
+    if (arg === '--hook' && i + 1 < argv.length) {
+      hooks.push(argv[++i]);
+    } else if (arg === '--attach') {
       flags.attach = 'true';
     } else if (arg === '--mcp' && i + 1 < argv.length) {
       mcpServers.push(argv[++i]);
@@ -92,6 +97,7 @@ function parseAgentArgs(argv: string[]): {
     output: flags.output || '',
     mcp: mcpServers,
     attach: flags.attach === 'true',
+    hooks,
   };
 
   if (first === 'status') {
@@ -152,6 +158,24 @@ function resolveMcpServers(names: string[]): Array<{ name: string; command: stri
     return { name: parts[0], command: parts[0], args: parts.slice(1), env: [] };
   });
 }
+
+/** Run post-prompt hooks. Returns null if all pass, or failure message if any fail. */
+function runHooks(hooks: string[], cwd: string): { passed: boolean; output: string } {
+  const { execSync } = childProcess;
+  for (const hook of hooks) {
+    try {
+      const output = execSync(hook, { cwd, encoding: 'utf-8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
+      process.stderr.write(`${GREEN}  hook passed: ${hook}${RESET}\n`);
+    } catch (err: any) {
+      const output = (err.stdout || '') + (err.stderr || '');
+      process.stderr.write(`${RED}  hook failed: ${hook}${RESET}\n`);
+      return { passed: false, output: `Hook "${hook}" failed (exit ${err.status}):\n${output.slice(0, 2000)}` };
+    }
+  }
+  return { passed: true, output: '' };
+}
+
+const MAX_HOOK_RETRIES = 5;
 
 /** Simple Levenshtein distance for typo detection. */
 function levenshtein(a: string, b: string): number {
@@ -268,12 +292,43 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
     const prompt = buildPrompt(args.prompt, args.context, args.system, args.profile);
     await runtime.startRun(slot, prompt, args.tool, args.cwd);
 
-    const result = await waitAndStream(runtime, slot, {
+    let result = await waitAndStream(runtime, slot, {
       stateFile: ctx.paths.stateFile,
       verbose: args.verbose,
       logsDir: ctx.paths.logsDir,
-      quiet: args.json,  // suppress streaming in JSON mode
+      quiet: args.json,
     });
+
+    if (!args.json) process.stdout.write('\n');
+
+    // Hook feedback loop
+    if (args.hooks.length > 0 && result.status === 'completed') {
+      for (let attempt = 1; attempt <= MAX_HOOK_RETRIES; attempt++) {
+        process.stderr.write(`${DIM}Running hooks (attempt ${attempt}/${MAX_HOOK_RETRIES})...${RESET}\n`);
+        const hookResult = runHooks(args.hooks, args.cwd);
+        if (hookResult.passed) {
+          process.stderr.write(`${GREEN}All hooks passed${RESET}\n`);
+          break;
+        }
+        if (attempt >= MAX_HOOK_RETRIES) {
+          process.stderr.write(`${RED}Hooks failed after ${MAX_HOOK_RETRIES} attempts${RESET}\n`);
+          process.exitCode = 1;
+          break;
+        }
+        // Feed failure back to agent
+        process.stderr.write(`${YELLOW}Feeding hook failure back to agent...${RESET}\n`);
+        const fixPrompt = `The following check failed after your changes. Please fix the issue and try again:\n\n${hookResult.output}`;
+        await runtime.startRun(slot, fixPrompt, args.tool, args.cwd);
+        result = await waitAndStream(runtime, slot, {
+          stateFile: ctx.paths.stateFile,
+          verbose: args.verbose,
+          logsDir: ctx.paths.logsDir,
+          quiet: args.json,
+        });
+        if (!args.json) process.stdout.write('\n');
+        if (result.status !== 'completed') break;
+      }
+    }
 
     if (args.json) {
       console.log(JSON.stringify({
@@ -282,11 +337,8 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
         agent: args.tool,
         prompt: args.prompt,
       }));
-    } else {
-      process.stdout.write('\n');
     }
 
-    // Write output to file if --output specified
     if (args.output && result.output) {
       writeFileSync(resolve(args.output), result.output, 'utf-8');
       if (!args.json) process.stderr.write(`${DIM}Output saved to ${args.output}${RESET}\n`);
