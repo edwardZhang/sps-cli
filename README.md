@@ -106,6 +106,44 @@ sps agent daemon stop             # stop daemon (kills all sessions)
 sps agent daemon status           # check daemon status
 ```
 
+### Cross-Server Remote Sessions
+
+Access a remote server's daemon via SSH tunnel:
+
+```bash
+# Remote server: start daemon
+sps agent daemon start
+
+# Remote server: bridge socket to TCP (run once)
+node -e "
+const net = require('net');
+const server = net.createServer(c => {
+  const d = net.createConnection('/home/user/.coral/sessions/daemon.sock');
+  c.pipe(d); d.pipe(c);
+  c.on('error', () => d.destroy()); d.on('error', () => c.destroy());
+});
+server.listen(19876, '127.0.0.1', () => console.log('Bridge ready'));
+" &
+
+# Local machine: SSH tunnel
+ssh -L 19876:127.0.0.1:19876 user@server -N &
+
+# Local machine: bridge TCP back to socket
+node -e "
+const net = require('net');
+try { require('fs').unlinkSync('/tmp/sps-remote.sock'); } catch {}
+const server = net.createServer(c => {
+  const r = net.createConnection(19876, '127.0.0.1');
+  c.pipe(r); r.pipe(c);
+  c.on('error', () => r.destroy()); r.on('error', () => c.destroy());
+});
+server.listen('/tmp/sps-remote.sock', () => console.log('Local bridge ready'));
+" &
+
+# Local machine: use remote daemon
+SPS_DAEMON_SOCKET=/tmp/sps-remote.sock sps agent --name work "Analyze the codebase"
+```
+
 ### Custom Agents
 
 ```bash
