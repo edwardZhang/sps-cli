@@ -12,6 +12,7 @@ export interface StreamResult {
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const DIM = '\x1b[90m';
+const CYAN = '\x1b[36m';
 const RESET = '\x1b[0m';
 
 export async function waitAndStream(
@@ -60,6 +61,7 @@ export async function waitAndStream(
       if (paneText.length > lastLen) {
         if (!hasOutput) {
           clearSpinner();
+          process.stdout.write(`\n${CYAN}▶${RESET} `);
           hasOutput = true;
         }
         const newText = paneText.slice(lastLen);
