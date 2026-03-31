@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.28.x**
+**v0.29.0**
 
 SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Two modes:
 
@@ -57,18 +57,50 @@ sps agent --chat                          # reconnect — agent remembers contex
 |------|-------------|---------|
 | `--tool <agent>` | Choose agent | `--tool codex`, `--tool gemini` |
 | `--chat` | Multi-turn REPL mode | `sps agent --chat` |
-| `--name <name>` | Named session | `--name backend` |
+| `--name <name>` | Named session (persistent) | `--name backend` |
 | `--verbose` / `-v` | Show tool calls | Shows Read, Edit, Bash in yellow |
 | `--context <file>` | Attach file content | `--context src/main.ts` (multiple OK) |
 | `--system "<text>"` | System instruction | `--system "Reply in Chinese"` |
 | `--profile <name>` | Load role profile | `--profile reviewer`, `--profile security` |
 | `--output <file>` | Save output to file | `--output report.md` |
+| `--json` | JSON output for scripting | `sps agent --json "2+2"` |
+| `--hook <cmd>` | Post-prompt feedback loop | `--hook "npm test"` (multiple OK) |
+| `--mcp <server>` | Attach MCP server | `--mcp postgres`, `--mcp github` |
+| `--attach` | Read-only session viewer | `--attach --name backend` |
+
+### Hook Feedback Loop
+
+Agent completes → hooks run → if any fail → failure fed back to agent → agent fixes → retry (max 5):
+
+```bash
+# Auto-fix until tests pass
+sps agent --hook "npm test" "Fix the failing auth test"
+
+# Multi-hook: lint + typecheck
+sps agent --hook "npm run lint" --hook "npm run typecheck" "Refactor utils"
+
+# Multi-agent: writer + reviewer loop
+sps agent --hook "sps agent --json --profile reviewer 'Review. Reply PASS or FAIL.'" "Write auth module"
+```
+
+### MCP Server Integration
+
+Attach MCP servers to give the agent additional tools:
+
+```bash
+sps agent --mcp postgres "Show all tables and row counts"
+sps agent --mcp github "List open issues in this repo"
+sps agent --mcp filesystem --mcp fetch "Download the API spec and save it locally"
+```
+
+Built-in: `filesystem`, `postgres`, `sqlite`, `github`, `memory`, `fetch`. Custom: any command path.
 
 ### Session Management
 
 ```bash
 sps agent status                  # list active sessions
 sps agent close --name backend    # close a session
+sps agent --attach --name backend # read-only view of session output
 sps agent daemon start            # start background daemon manually
 sps agent daemon stop             # stop daemon (kills all sessions)
 sps agent daemon status           # check daemon status
