@@ -7,7 +7,7 @@
  *
  * Engines use this adapter instead of hardcoded string literals.
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ProjectConfig } from './config.js';
@@ -187,13 +187,49 @@ export class ProjectPipelineAdapter {
 
 // ─── YAML Loading ───────────────────────────────────────────────
 
+/** Path to the active pipeline marker file */
+function activePipelinePath(projectDir: string): string {
+  return resolve(projectDir, '.sps', 'active-pipeline');
+}
+
+/** Read the active pipeline name from .sps/active-pipeline */
+export function getActivePipelineName(projectDir: string): string | null {
+  try {
+    const marker = readFileSync(activePipelinePath(projectDir), 'utf-8').trim();
+    return marker || null;
+  } catch { return null; }
+}
+
+/** Set the active pipeline name */
+export function setActivePipeline(projectDir: string, name: string): void {
+  const spsDir = resolve(projectDir, '.sps');
+  if (!existsSync(spsDir)) {
+    mkdirSync(spsDir, { recursive: true });
+  }
+  writeFileSync(activePipelinePath(projectDir), name + '\n');
+}
+
 function loadProjectPipelineYaml(projectDir?: string): any | null {
   if (!projectDir) return null;
 
   const pipelinesDir = resolve(projectDir, '.sps', 'pipelines');
   if (!existsSync(pipelinesDir)) return null;
 
-  // Find first mode:project YAML
+  // Check for explicitly activated pipeline
+  const activeName = getActivePipelineName(projectDir);
+  if (activeName) {
+    for (const ext of ['.yaml', '.yml']) {
+      const filePath = resolve(pipelinesDir, activeName + ext);
+      if (existsSync(filePath)) {
+        try {
+          const parsed = parseYaml(readFileSync(filePath, 'utf-8'));
+          if (parsed?.mode === 'project') return parsed;
+        } catch { /* skip unparseable */ }
+      }
+    }
+  }
+
+  // Fallback: find first mode:project YAML
   try {
     const files = readdirSync(pipelinesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
     for (const file of files) {

@@ -31,6 +31,8 @@ if (typeof globalThis.fetch === 'undefined') {
   }
 }
 
+import { existsSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { executeDoctor } from './commands/doctor.js';
 import { executeTick } from './commands/tick.js';
 import { executeSchedulerTick } from './commands/schedulerTick.js';
@@ -90,7 +92,8 @@ const COMMANDS: Record<string, CommandInfo> = {
     tick: '执行一次流水线 tick',
     list: '列出所有自定义管线',
     run: '执行自定义管线',
-  }, examples: ['sps pipeline start my-project', 'sps pipeline list', 'sps pipeline run discuss "微服务vs单体"'] },
+    use: '切换项目的活动管线',
+  }, examples: ['sps pipeline start my-project', 'sps pipeline list', 'sps pipeline use my-project develop'] },
   worker:    { desc: 'Worker 生命周期管理', usage: 'sps worker <子命令> <project> [seq]', subs: {
     ps: '查看 Worker 进程状态',
     kill: '终止指定 Worker',
@@ -350,6 +353,32 @@ async function main() {
         }
         console.log('');
       }
+      return;
+    }
+    if (sub === 'use') {
+      const project = args.project;
+      const pipelineName = args.positionals[0];
+      if (!project || !pipelineName) {
+        console.error('Usage: sps pipeline use <project> <pipeline-name>');
+        process.exit(2);
+      }
+      const { ProjectContext } = await import('./core/context.js');
+      const { setActivePipeline, getActivePipelineName } = await import('./core/projectPipelineAdapter.js');
+      const ctx = ProjectContext.load(project);
+      const pipelinesDir = resolve(ctx.paths.repoDir, '.sps', 'pipelines');
+      // Verify the pipeline file exists
+      const found = ['.yaml', '.yml'].some(ext => existsSync(resolve(pipelinesDir, pipelineName + ext)));
+      if (!found) {
+        console.error(`Pipeline "${pipelineName}" not found in ${pipelinesDir}/`);
+        const files = readdirSync(pipelinesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+        if (files.length > 0) {
+          console.error(`Available: ${files.map(f => f.replace(/\.ya?ml$/, '')).join(', ')}`);
+        }
+        process.exit(1);
+      }
+      setActivePipeline(ctx.paths.repoDir, pipelineName);
+      const prev = getActivePipelineName(ctx.paths.repoDir);
+      console.log(`  ✓ Active pipeline for ${project}: ${pipelineName}`);
       return;
     }
     if (sub === 'run') {
