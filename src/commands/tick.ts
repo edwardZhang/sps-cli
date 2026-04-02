@@ -3,6 +3,7 @@ import { workflowUsesAgentRuntime } from '../core/config.js';
 import { acquireTickLock, releaseTickLock } from '../core/lock.js';
 import { readState } from '../core/state.js';
 import { Logger } from '../core/logger.js';
+import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 import { SchedulerEngine } from '../engines/SchedulerEngine.js';
 import { ExecutionEngine } from '../engines/ExecutionEngine.js';
 import { CloseoutEngine } from '../engines/CloseoutEngine.js';
@@ -59,6 +60,7 @@ function getSharedModules() {
 interface ProjectRunner {
   project: string;
   ctx: ProjectContext;
+  pipelineAdapter: ProjectPipelineAdapter;
   log: Logger;
   taskBackend: TaskBackend;
   notifier: Notifier;
@@ -142,9 +144,13 @@ function createRunner(project: string): ProjectRunner | null {
   });
   workerManager.onEvent((event) => eventHandler.handle(event));
 
+  // Pipeline adapter: reads YAML config or returns defaults
+  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+
   return {
     project,
     ctx,
+    pipelineAdapter,
     log: fullLog,
     taskBackend,
     notifier,
@@ -296,7 +302,7 @@ export async function executeTick(
         }
       }
 
-      const allDone = await checkAllDone(runner.ctx, runner.taskBackend);
+      const allDone = await checkAllDone(runner.ctx, runner.taskBackend, runner.pipelineAdapter);
       if (allDone) {
         runner.log.ok('All cards done, no active workers — project complete.');
         await runner.notifier.send(`🎉 [${runner.project}] Pipeline complete — all cards done.`).catch(() => {});
@@ -382,14 +388,15 @@ async function runOneTick(
 async function checkAllDone(
   ctx: ProjectContext,
   taskBackend: TaskBackend,
+  pipelineAdapter: ProjectPipelineAdapter,
 ): Promise<boolean> {
   const pipelineLabel = ctx.config.PIPELINE_LABEL || 'AI-PIPELINE';
   const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
   if (Object.values(state.workers).some((w) => w.status !== 'idle')) return false;
 
-  for (const cardState of ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA'] as const) {
+  for (const cardState of pipelineAdapter.activeStates) {
     try {
-      const cards = await taskBackend.listByState(cardState);
+      const cards = await taskBackend.listByState(cardState as any);
       if (cards.some((c) => c.labels.includes(pipelineLabel))) return false;
     } catch {
       return false;
