@@ -6,18 +6,32 @@ import type { Card, CardState } from '../models/types.js';
 import type { TaskLease, WorktreeEvidence } from '../core/state.js';
 import { loadRuntimeSnapshot } from '../core/runtimeSnapshot.js';
 import { createTaskBackend } from '../providers/registry.js';
+import { ProjectPipelineAdapter, type CardStates } from '../core/projectPipelineAdapter.js';
 
 const HOME = process.env.HOME || '/home/coral';
 
-const STATES: CardState[] = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA', 'Done'];
-const STATE_LABELS: Record<CardState, string> = {
-  Planning: 'Planning',
-  Backlog: 'Backlog',
-  Todo: 'Todo',
-  Inprogress: 'In Progress',
-  QA: 'QA',
-  Done: 'Done',
-};
+/** Default states (used when no adapter available, e.g. error path) */
+const DEFAULT_STATES: CardState[] = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA', 'Done'];
+
+/** Build ordered state list from adapter */
+function buildStateList(adapterStates?: CardStates): CardState[] {
+  if (!adapterStates) return DEFAULT_STATES;
+  return [
+    adapterStates.planning,
+    adapterStates.backlog,
+    adapterStates.ready,
+    adapterStates.active,
+    adapterStates.review,
+    adapterStates.done,
+  ];
+}
+
+/** Build display labels from state names */
+function buildStateLabels(states: CardState[]): Record<string, string> {
+  const labels: Record<string, string> = {};
+  for (const s of states) labels[s] = s;
+  return labels;
+}
 
 const RESET = '\x1b[0m';
 const BOLD = '\x1b[1m';
@@ -52,6 +66,7 @@ interface ProjectBoardSnapshot {
   displayName: string;
   cards: CardSnapshot[];
   counts: Record<CardState, number>;
+  states: CardState[];
   activeWorkers: number;
   mergingWorkers: number;
   staleWorkers: number;
@@ -110,16 +125,12 @@ function centerText(text: string, width: number): string {
   return ' '.repeat(left) + text + ' '.repeat(width - len - left);
 }
 
-function stateColor(state: CardState): string {
-  switch (state) {
-    case 'Planning': return FG.gray;
-    case 'Backlog': return FG.blue;
-    case 'Todo': return FG.cyan;
-    case 'Inprogress': return FG.green;
-    case 'QA': return FG.yellow;
-    case 'Done': return FG.white;
-    default: return FG.white;
-  }
+/** State colors by position: [planning, backlog, ready, active, review, done] */
+const STATE_COLORS = [FG.gray, FG.blue, FG.cyan, FG.green, FG.yellow, FG.white];
+
+function stateColor(state: CardState, states: CardState[] = DEFAULT_STATES): string {
+  const idx = states.indexOf(state);
+  return idx >= 0 && idx < STATE_COLORS.length ? STATE_COLORS[idx] : FG.white;
 }
 
 function discoverProjects(): string[] {
@@ -226,8 +237,13 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
       };
     }).sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10));
 
-    const counts = Object.fromEntries(STATES.map(stateName => [stateName, 0])) as Record<CardState, number>;
-    for (const card of snapshots) counts[card.state] += 1;
+    const adapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+    const projectStates = buildStateList(adapter.states);
+    const counts = Object.fromEntries(projectStates.map(s => [s, 0])) as Record<CardState, number>;
+    for (const card of snapshots) {
+      if (counts[card.state] !== undefined) counts[card.state] += 1;
+      else counts[card.state] = 1; // custom state not in standard list
+    }
 
     const workerSummary = summarizeWorkerRuntime(state);
 
@@ -239,6 +255,7 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
       displayName: ctx.config.PROJECT_NAME || projectName,
       cards: snapshots,
       counts,
+      states: projectStates,
       activeWorkers: workerSummary.active,
       mergingWorkers: workerSummary.merging,
       staleWorkers: workerSummary.stale,
@@ -248,12 +265,13 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const counts = Object.fromEntries(STATES.map(state => [state, 0])) as Record<CardState, number>;
+    const counts = Object.fromEntries(DEFAULT_STATES.map(s => [s, 0])) as Record<CardState, number>;
     return {
       project: projectName,
       displayName: projectName,
       cards: [],
       counts,
+      states: DEFAULT_STATES,
       activeWorkers: 0,
       mergingWorkers: 0,
       staleWorkers: 0,
@@ -318,7 +336,7 @@ function renderCardTile(card: CardSnapshot, width: number): string[] {
 }
 
 function renderColumn(board: ProjectBoardSnapshot, state: CardState, width: number, height: number): string[] {
-  const title = `${stateColor(state)}${STATE_LABELS[state]} (${board.counts[state]})${RESET}`;
+  const title = `${stateColor(state, board.states)}${state} (${board.counts[state] ?? 0})${RESET}`;
   const lines: string[] = [
     `${FG.gray}┌${'─'.repeat(width - 2)}┐${RESET}`,
     `${FG.gray}│${RESET}${padOrTruncate(title, width - 2)}${FG.gray}│${RESET}`,
@@ -360,7 +378,8 @@ function renderSingleProject(board: ProjectBoardSnapshot, termWidth: number, ter
   output.push('');
 
   const gridCols = termWidth >= 150 ? 6 : 3;
-  const rows = Math.ceil(STATES.length / gridCols);
+  const boardStates = board.states;
+  const rows = Math.ceil(boardStates.length / gridCols);
   const colWidth = Math.max(22, Math.floor((termWidth - (gridCols - 1)) / gridCols));
   const availableRows = Math.max(12, termHeight - output.length - 2);
   const panelHeight = Math.max(10, Math.floor(availableRows / rows));
@@ -369,8 +388,8 @@ function renderSingleProject(board: ProjectBoardSnapshot, termWidth: number, ter
     const rowColumns: string[][] = [];
     for (let col = 0; col < gridCols; col++) {
       const idx = row * gridCols + col;
-      if (idx < STATES.length) {
-        rowColumns.push(renderColumn(board, STATES[idx], colWidth, panelHeight));
+      if (idx < boardStates.length) {
+        rowColumns.push(renderColumn(board, boardStates[idx], colWidth, panelHeight));
       } else {
         rowColumns.push(Array(panelHeight).fill(' '.repeat(colWidth)));
       }
@@ -386,9 +405,9 @@ function renderSingleProject(board: ProjectBoardSnapshot, termWidth: number, ter
   return output.join('\n');
 }
 
-function compactStateRow(board: ProjectBoardSnapshot, states: CardState[]): string {
+function compactStateRow(board: ProjectBoardSnapshot, states: CardState[], allStates: CardState[]): string {
   return states
-    .map(state => `${stateColor(state)}${STATE_LABELS[state].replace('In Progress', 'Progress')}:${board.counts[state]}${RESET}`)
+    .map(state => `${stateColor(state, allStates)}${state}:${board.counts[state] ?? 0}${RESET}`)
     .join(` ${DIM}│${RESET} `);
 }
 
@@ -408,8 +427,10 @@ function renderMiniProject(board: ProjectBoardSnapshot, width: number, height: n
       `${FG.cyan}${board.cards.length} cards${RESET}`,
     ].join(` ${DIM}│${RESET} `);
     lines.push(`${FG.gray}│${RESET}${padOrTruncate(summary, width - 2)}${FG.gray}│${RESET}`);
-    lines.push(`${FG.gray}│${RESET}${padOrTruncate(compactStateRow(board, ['Planning', 'Backlog', 'Todo']), width - 2)}${FG.gray}│${RESET}`);
-    lines.push(`${FG.gray}│${RESET}${padOrTruncate(compactStateRow(board, ['Inprogress', 'QA', 'Done']), width - 2)}${FG.gray}│${RESET}`);
+    const bs = board.states;
+    const half = Math.ceil(bs.length / 2);
+    lines.push(`${FG.gray}│${RESET}${padOrTruncate(compactStateRow(board, bs.slice(0, half), bs), width - 2)}${FG.gray}│${RESET}`);
+    lines.push(`${FG.gray}│${RESET}${padOrTruncate(compactStateRow(board, bs.slice(half), bs), width - 2)}${FG.gray}│${RESET}`);
     const hotCards = board.cards
       .filter(card => card.blockedReason || ['running', 'waiting_input', 'needs_confirmation', 'stalled_submit'].includes(card.runtimeStatus || ''))
       .slice(0, 2)
