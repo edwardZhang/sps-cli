@@ -84,12 +84,18 @@ export async function executeWorkerPs(
     const existing = workers.find(w => w.slot === slotName);
     if (!existing) continue;
 
-    if (session.pid && !existing.pid) {
-      existing.pid = session.pid;
+    // Enrich with session pid if worker slot doesn't have one
+    const sessionPid = session.pid ?? null;
+    if (sessionPid && !existing.pid) {
+      existing.pid = sessionPid;
     }
-    // Check if session process is actually alive
+    // Check liveness
     if (existing.pid) {
       try { process.kill(existing.pid, 0); existing.alive = true; } catch { existing.alive = false; }
+    }
+    // Dead process on idle slot → clear pid (stale data)
+    if (!existing.alive && existing.status === 'idle') {
+      existing.pid = null;
     }
     // Only show session status if process is alive
     if (existing.alive && session.status && existing.status === 'idle'
