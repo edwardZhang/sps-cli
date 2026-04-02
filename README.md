@@ -4,12 +4,12 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.29.0**
+**v0.32.0**
 
 SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Two modes:
 
 - **Harness mode** (`sps agent`): Zero-config agent interaction — one-shot, multi-turn chat, persistent sessions
-- **Pipeline mode** (`sps pipeline`): Fully automated card-driven development workflow
+- **Pipeline mode** (`sps pipeline`): Fully automated card-driven development workflow with YAML-configurable stages
 
 ```bash
 # Harness mode — talk to any agent instantly
@@ -170,6 +170,75 @@ sps pipeline logs my-project      # log viewer
 ```
 
 All old commands still work as aliases: `sps tick`, `sps stop`, `sps status`, `sps reset`, `sps logs`, `sps worker dashboard`, `sps card dashboard`.
+
+### Pipeline YAML Configuration
+
+Create `.sps/pipelines/<name>.yaml` in your project to customize the pipeline:
+
+```yaml
+mode: project
+
+pm:
+  card_states:
+    planning: Planning
+    backlog: Backlog
+    ready: Todo
+    active: Inprogress
+    review: QA
+    done: Done
+
+stages:
+  - name: develop
+    trigger: "card_enters 'Todo'"
+    card_state: Inprogress
+    agent: claude              # per-stage agent (claude/codex/gemini)
+    profile: phaser,typescript # skill profiles to load
+    completion: git-evidence   # git-evidence | fast-forward-merge | exit-code
+    on_complete: "move_card QA"
+    on_fail:
+      action: "label NEEDS-FIX"
+      comment: "Development failed."
+
+  - name: integrate
+    trigger: "card_enters 'QA'"
+    card_state: QA
+    agent: codex               # use different agent for integration
+    completion: fast-forward-merge
+    on_complete: "move_card Done"
+    queue: fifo
+```
+
+Switch between multiple pipelines:
+
+```bash
+sps pipeline use my-project develop   # activate develop.yaml
+sps pipeline use my-project docs      # switch to docs.yaml
+```
+
+### Worker Management
+
+```bash
+sps worker ps my-project              # show worker status, pid, runtime
+sps worker kill my-project 42         # kill specific worker by seq
+```
+
+### Skill Management
+
+Skills are loaded from `~/.coral/skills/` via symlink to agent directories:
+
+```bash
+sps skill sync                        # sync skills to ~/.claude/skills/ + ~/.codex/skills/
+```
+
+### Global Configuration
+
+Set default agent in `~/.coral/env`:
+
+```bash
+export DEFAULT_AGENT="claude"         # or "codex"
+```
+
+`sps agent` priority: `--tool` flag > `DEFAULT_AGENT` env > `'claude'`
 
 ## Architecture
 
