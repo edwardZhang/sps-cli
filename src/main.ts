@@ -44,6 +44,7 @@ import { executeCardAdd } from './commands/cardAdd.js';
 import { executeCardDashboard } from './commands/cardDashboard.js';
 import { executeSetup } from './commands/setup.js';
 import { executeWorkerDashboard } from './commands/workerDashboard.js';
+import { executeWorkerPs, executeWorkerKill } from './commands/workerPs.js';
 import { executeLogs } from './commands/logs.js';
 import { executeStop } from './commands/stop.js';
 import { executeReset } from './commands/reset.js';
@@ -91,9 +92,11 @@ const COMMANDS: Record<string, CommandInfo> = {
     run: '执行自定义管线',
   }, examples: ['sps pipeline start my-project', 'sps pipeline list', 'sps pipeline run discuss "微服务vs单体"'] },
   worker:    { desc: 'Worker 生命周期管理', usage: 'sps worker <子命令> <project> [seq]', subs: {
+    ps: '查看 Worker 进程状态',
+    kill: '终止指定 Worker',
     launch: '启动 Worker 实例',
     dashboard: '展示 Worker 仪表板',
-  }, examples: ['sps worker launch my-project 1', 'sps worker dashboard'] },
+  }, examples: ['sps worker ps my-project', 'sps worker kill my-project 1', 'sps worker launch my-project 1'] },
   acp:       { desc: 'ACP 会话管理', usage: 'sps acp <子命令> <project> [args...]', subs: {
     ensure: '确保 ACP 会话存在',
     run: '运行 ACP 命令',
@@ -484,6 +487,23 @@ async function main() {
 
   // ─── worker ──────────────────────────────────────────────────
   if (args.command === 'worker') {
+    if (args.subcommand === 'ps') {
+      if (!args.project) {
+        console.error('Usage: sps worker ps <project>');
+        process.exit(2);
+      }
+      await executeWorkerPs(args.project, args.flags);
+      return;
+    }
+    if (args.subcommand === 'kill') {
+      if (!args.project) {
+        console.error('Usage: sps worker kill <project> <seq>');
+        process.exit(2);
+      }
+      const seq = args.positionals[0] || '';
+      await executeWorkerKill(args.project, seq, args.flags);
+      return;
+    }
     if (args.subcommand === 'launch') {
       if (!args.project) {
         console.error('Usage: sps worker launch <project> <seq>');
