@@ -491,8 +491,6 @@ export class WorkerManagerImpl implements WorkerManager {
     const abortController = new AbortController();
     this.acpMonitorAborts.set(ctx.slot, abortController);
 
-    const maxPollMs = 30 * 60 * 1000; // 30 minutes max poll duration
-    const startedAt = Date.now();
     let pendingTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const poll = async () => {
@@ -501,13 +499,9 @@ export class WorkerManagerImpl implements WorkerManager {
         return;
       }
 
-      // Max poll duration guard — process may be hung, fall back to git evidence
-      if (Date.now() - startedAt > maxPollMs) {
-        this.log(`ACP monitor: ${ctx.taskId} exceeded max poll duration (${maxPollMs / 60000}min) — falling back to CompletionJudge`);
-        this.acpMonitorAborts.delete(ctx.slot);
-        await this.handleExit({ ...ctx, exitCode: 1 });
-        return;
-      }
+      // No max poll duration — ACP monitor polls until terminal state.
+      // If the process dies, inspect returns 'lost'. Artificial timeouts
+      // risk killing workers legitimately working on long tasks.
 
       try {
         const state = await runtime.inspect(ctx.slot.replace(/^worker-/, ''));
