@@ -8,6 +8,7 @@ import { ResourceLimiter } from '../manager/resource-limiter.js';
 import { WorkerManagerImpl } from '../manager/worker-manager-impl.js';
 import { SPSEventHandler } from '../engines/EventHandler.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
+import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 import { Logger } from '../core/logger.js';
 
 export async function executePipelineTick(
@@ -47,13 +48,14 @@ export async function executePipelineTick(
     agentRuntime: agentRuntime ?? null,
     stateFile: ctx.paths.stateFile, maxWorkers: ctx.maxWorkers,
   });
+  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
   const runtimeStore = new RuntimeStore({ paths: { stateFile: ctx.paths.stateFile }, maxWorkers: ctx.maxWorkers });
   const raw = ctx.config.raw;
   const eventHandler = new SPSEventHandler({
-    taskBackend, notifier, runtimeStore, project,
+    taskBackend, notifier, runtimeStore, project, pipelineAdapter,
   });
   workerManager.onEvent((event) => eventHandler.handle(event));
-  const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, notifier);
+  const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, pipelineAdapter, notifier);
   const result = await engine.tick({ dryRun });
 
   if (jsonOutput) {

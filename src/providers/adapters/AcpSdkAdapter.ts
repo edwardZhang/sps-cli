@@ -121,22 +121,48 @@ export class AcpSdkAdapter implements ACPClient {
       env: { ...process.env },
     });
 
-    // Drain stderr (adapter debug output)
-    child.stderr?.on('data', () => { /* discard */ });
+    // Capture stderr to log file for crash diagnosis
+    const stderrLogFile = input.logsDir
+      ? resolve(input.logsDir, `acp-stderr-${input.tool}-${Date.now()}.log`)
+      : null;
+    let stderrFd: number | null = null;
+    if (stderrLogFile) {
+      try {
+        const { openSync, writeSync, closeSync } = await import('node:fs');
+        stderrFd = openSync(stderrLogFile, 'a');
+        child.stderr?.on('data', (chunk: Buffer) => {
+          try { writeSync(stderrFd!, chunk); } catch { /* non-fatal */ }
+        });
+        child.once('exit', (code, signal) => {
+          const exitInfo = `\n[acp-stderr] Process exited: code=${code}, signal=${signal}, pid=${child.pid}\n`;
+          try { writeSync(stderrFd!, Buffer.from(exitInfo)); } catch { /* non-fatal */ }
+          if (stderrFd != null) try { closeSync(stderrFd); } catch { /* noop */ }
+        });
+      } catch {
+        // Fallback: discard stderr if log file can't be opened
+        child.stderr?.on('data', () => { /* discard */ });
+      }
+    } else {
+      child.stderr?.on('data', () => { /* discard */ });
+    }
 
     // Spawn with 60s timeout to prevent indefinite hang if adapter binary is stuck
-    await Promise.race([
-      new Promise<void>((resolve, reject) => {
+    const spawnTimeout = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* noop */ }
+    }, 60_000);
+    spawnTimeout.unref();
+
+    try {
+      await new Promise<void>((resolve, reject) => {
         child.once('spawn', () => resolve());
         child.once('error', (err) => reject(new Error(`Failed to spawn ${input.tool} ACP adapter: ${err.message}`)));
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => {
-          try { child.kill('SIGKILL'); } catch { /* noop */ }
-          reject(new Error(`ACP adapter spawn timed out after 60s (${input.tool})`));
-        }, 60_000).unref(),
-      ),
-    ]);
+      });
+    } catch (err) {
+      clearTimeout(spawnTimeout);
+      throw err;
+    }
+    // Spawn succeeded — clear the timeout so it doesn't kill the daemon later
+    clearTimeout(spawnTimeout);
 
     // Establish JSON-RPC connection over stdio
     const stream = ndJsonStream(

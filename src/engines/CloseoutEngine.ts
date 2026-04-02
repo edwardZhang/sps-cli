@@ -10,9 +10,11 @@ import type { CommandResult, ActionRecord, Card, RecommendedAction } from '../mo
 import type { WorkerManager, TaskRunRequest } from '../manager/worker-manager.js';
 import { IntegrationQueue } from '../manager/integration-queue.js';
 import { buildPhasePrompt, INTEGRATION_PROMPT_FILE } from '../core/taskPrompts.js';
+import { branchPushed, branchCommitsAhead } from '../providers/outputParser.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveWorktreePath } from '../core/paths.js';
 import { Logger } from '../core/logger.js';
+import type { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 
 /**
  * CloseoutEngine handles the QA → Done pipeline.
@@ -31,6 +33,7 @@ export class CloseoutEngine {
     private taskBackend: TaskBackend,
     private repoBackend: RepoBackend,
     private workerManager: WorkerManager,
+    private pipelineAdapter: ProjectPipelineAdapter,
     private notifier?: Notifier,
   ) {
     this.log = new Logger('qa', ctx.projectName, ctx.paths.logsDir);
@@ -51,7 +54,7 @@ export class CloseoutEngine {
     };
 
     try {
-      const qaCards = await this.taskBackend.listByState('QA');
+      const qaCards = await this.taskBackend.listByState(this.pipelineAdapter.states.review);
       if (qaCards.length === 0) {
         this.log.info('No QA cards to process');
         result.details = { reason: 'no_qa_cards' };
@@ -299,7 +302,7 @@ export class CloseoutEngine {
     this.runtimeStore.updateState('closeout-launch-integration', (draft) => {
       draft.activeCards[seq] = {
         seq: parseInt(seq, 10),
-        state: 'QA',
+        state: this.pipelineAdapter.states.review,
         worker: slotName,
         mrUrl: draft.activeCards[seq]?.mrUrl || null,
         conflictDomains: draft.activeCards[seq]?.conflictDomains || [],
@@ -309,7 +312,7 @@ export class CloseoutEngine {
 
       draft.leases[seq] = {
         seq: parseInt(seq, 10),
-        pmStateObserved: 'QA',
+        pmStateObserved: this.pipelineAdapter.states.review,
         phase: 'merging',
         slot: slotName,
         branch: branchName,
@@ -348,10 +351,22 @@ export class CloseoutEngine {
     const seq = card.seq;
     const errors: string[] = [];
 
+    // Step 0: Clean auxiliary labels (NEEDS-FIX, STALE-RUNTIME, etc.)
+    // These may have been set by EventHandler during transient failures
+    // but the card is now successfully merged — labels should not persist.
+    for (const label of this.pipelineAdapter.auxiliaryLabels) {
+      if (card.labels.includes(label)) {
+        try {
+          await this.taskBackend.removeLabel(seq, label);
+          this.log.ok(`seq ${seq}: Removed residual label "${label}"`);
+        } catch { /* best effort */ }
+      }
+    }
+
     // Step 1: Move card to Done
     try {
-      await this.taskBackend.move(seq, 'Done');
-      this.log.ok(`seq ${seq}: Moved to Done`);
+      await this.taskBackend.move(seq, this.pipelineAdapter.states.done);
+      this.log.ok(`seq ${seq}: Moved to ${this.pipelineAdapter.states.done}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.error(`seq ${seq}: Failed to move to Done: ${msg}`);
@@ -640,6 +655,15 @@ export class CloseoutEngine {
     return prompt;
   }
 
+  /**
+   * Check if the feature branch has been merged into the base branch.
+   *
+   * Guard against false positives: a freshly created branch with no work
+   * is trivially an ancestor of origin/base. Only return true if:
+   *   - Branch was pushed to remote, OR
+   *   - Branch has local commits ahead of base
+   * This matches CompletionJudge's artifact check logic.
+   */
   private isMergedToBase(worktree: string, branchName: string): boolean {
     try {
       execFileSync('git', ['-C', worktree, 'fetch', 'origin', this.ctx.mergeBranch], { stdio: 'ignore' });
@@ -653,10 +677,20 @@ export class CloseoutEngine {
         ['-C', worktree, 'merge-base', '--is-ancestor', branchName, `origin/${this.ctx.mergeBranch}`],
         { stdio: 'ignore' },
       );
-      return true;
     } catch {
       return false;
     }
+
+    // is-ancestor passed — but is it a real merge or an empty branch?
+    const pushed = branchPushed(worktree, branchName);
+    const localAhead = branchCommitsAhead(worktree, branchName, this.ctx.mergeBranch);
+    if (pushed || localAhead > 0) {
+      return true;
+    }
+
+    // Empty branch sitting at base commit — not a real merge
+    this.log.debug(`seq branch ${branchName}: ancestor of ${this.ctx.mergeBranch} but no artifacts — not a real merge`);
+    return false;
   }
 
   private async releaseQaSlot(seq: string, slotName: string): Promise<void> {
@@ -672,7 +706,7 @@ export class CloseoutEngine {
         dropLease: false,
         phase: 'merging',
         keepWorktree: true,
-        pmStateObserved: 'QA',
+        pmStateObserved: this.pipelineAdapter.states.review,
       });
     });
 

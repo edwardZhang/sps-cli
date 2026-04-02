@@ -17,6 +17,7 @@ import {
 } from '../core/taskPrompts.js';
 import { Logger } from '../core/logger.js';
 import type { WorkerManager, TaskRunRequest, TaskRunResponse } from '../manager/worker-manager.js';
+import type { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 
 const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME'];
 /** All labels that should be cleaned when a card re-enters the pipeline */
@@ -31,6 +32,7 @@ export class ExecutionEngine {
     private taskBackend: TaskBackend,
     private repoBackend: RepoBackend,
     private workerManager: WorkerManager,
+    private pipelineAdapter: ProjectPipelineAdapter,
     private notifier?: Notifier,
   ) {
     this.log = new Logger('pipeline', ctx.projectName, ctx.paths.logsDir);
@@ -77,10 +79,10 @@ export class ExecutionEngine {
       //    However, we limit prepares to available capacity: only prepare as
       //    many cards as there are idle slots + remaining launch quota. This
       //    prevents cards piling up in Todo when workers can't launch.
-      const backlogCards = await this.taskBackend.listByState('Backlog');
+      const backlogCards = await this.taskBackend.listByState(this.pipelineAdapter.states.backlog);
       const currentState = this.runtimeStore.readState();
       const idleSlots = Object.values(currentState.workers).filter(w => w.status === 'idle').length;
-      const todoCards0 = await this.taskBackend.listByState('Todo');
+      const todoCards0 = await this.taskBackend.listByState(this.pipelineAdapter.states.ready);
       const todoCount = todoCards0.filter(c => !this.shouldSkip(c)).length;
       const prepareLimit = Math.max(0, idleSlots - todoCount);
       let preparedThisTick = 0;
@@ -103,7 +105,7 @@ export class ExecutionEngine {
       //    This is the only step that consumes action quota — it starts
       //    resource-intensive AI workers that need system capacity.
       //    Sort by pipeline_order to respect card priority (#5 skip bug fix).
-      let todoCards = await this.taskBackend.listByState('Todo');
+      let todoCards = await this.taskBackend.listByState(this.pipelineAdapter.states.ready);
       const pipelineOrder = readQueue(this.ctx.paths.pipelineOrderFile);
       if (pipelineOrder.length > 0) {
         todoCards = todoCards.sort((a, b) => {
@@ -173,7 +175,7 @@ export class ExecutionEngine {
     }
 
     // If card is in Backlog, do prepare first
-    if (card.state === 'Backlog') {
+    if (card.state === this.pipelineAdapter.states.backlog) {
       const prepareAction = await this.prepareCard(card, opts);
       result.actions.push(prepareAction);
       if (prepareAction.result === 'fail') {
@@ -183,18 +185,18 @@ export class ExecutionEngine {
       }
       // Reload card after prepare
       const updated = await this.taskBackend.getBySeq(seq);
-      if (!updated || updated.state !== 'Todo') {
+      if (!updated || updated.state !== this.pipelineAdapter.states.ready) {
         result.status = 'fail';
         result.exitCode = 1;
-        result.details = { error: 'Card not in Todo after prepare' };
+        result.details = { error: `Card not in ${this.pipelineAdapter.states.ready} after prepare` };
         return result;
       }
     }
 
-    if (card.state !== 'Todo' && card.state !== 'Backlog') {
+    if (card.state !== this.pipelineAdapter.states.ready && card.state !== this.pipelineAdapter.states.backlog) {
       result.status = 'fail';
       result.exitCode = 2;
-      result.details = { error: `Card seq:${seq} is in ${card.state}, expected Backlog or Todo` };
+      result.details = { error: `Card seq:${seq} is in ${card.state}, expected ${this.pipelineAdapter.states.backlog} or ${this.pipelineAdapter.states.ready}` };
       return result;
     }
 
@@ -213,13 +215,13 @@ export class ExecutionEngine {
   }
 
   private async listRuntimeAwareInprogressCards(): Promise<Card[]> {
-    const cards = await this.taskBackend.listByState('Inprogress');
+    const cards = await this.taskBackend.listByState(this.pipelineAdapter.states.active);
     const bySeq = new Map(cards.map(card => [card.seq, card]));
     const state = this.runtimeStore.readState();
 
     for (const [seq, lease] of Object.entries(state.leases)) {
       const slot = lease.slot ? state.workers[lease.slot] || null : null;
-      if (this.derivePmStateFromLease(lease, slot) !== 'Inprogress' || bySeq.has(seq)) continue;
+      if (this.derivePmStateFromLease(lease, slot) !== this.pipelineAdapter.states.active || bySeq.has(seq)) continue;
       const card = await this.taskBackend.getBySeq(seq);
       if (card) bySeq.set(seq, card);
     }
@@ -267,25 +269,26 @@ export class ExecutionEngine {
     lease: TaskLease,
     slot: WorkerSlotState | null,
   ): CardState | null {
+    const s = this.pipelineAdapter.states;
     if (lease.phase === 'queued' || lease.phase === 'preparing') {
-      return 'Todo';
+      return s.ready;
     }
     if (lease.phase === 'coding') {
-      return 'Inprogress';
+      return s.active;
     }
     if (
       lease.phase === 'waiting_confirmation'
-      && lease.pmStateObserved !== 'QA'
+      && lease.pmStateObserved !== s.review
       && slot?.status !== 'merging'
       && slot?.status !== 'resolving'
     ) {
-      return 'Inprogress';
+      return s.active;
     }
     if (['merging', 'resolving_conflict', 'closing'].includes(lease.phase)) {
-      return 'QA';
+      return s.review;
     }
-    if (lease.phase === 'waiting_confirmation' && lease.pmStateObserved === 'QA') {
-      return 'QA';
+    if (lease.phase === 'waiting_confirmation' && lease.pmStateObserved === s.review) {
+      return s.review;
     }
     return null;
   }
@@ -432,19 +435,19 @@ export class ExecutionEngine {
 
     // Step 3: Move card to Todo
     try {
-      await this.taskBackend.move(seq, 'Todo');
-      this.log.ok(`Step 3: Moved seq ${seq} Backlog → Todo`);
+      await this.taskBackend.move(seq, this.pipelineAdapter.states.ready);
+      this.log.ok(`Step 3: Moved seq ${seq} ${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready}`);
       this.logEvent('prepare', seq, 'ok');
       if (this.notifier) {
-        await this.notifier.send(`ℹ️ [${this.ctx.projectName}] seq:${seq} environment ready (Backlog → Todo)`).catch(() => {});
+        await this.notifier.send(`ℹ️ [${this.ctx.projectName}] seq:${seq} environment ready (${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready})`).catch(() => {});
       }
-      return { action: 'prepare', entity: `seq:${seq}`, result: 'ok', message: 'Backlog → Todo' };
+      return { action: 'prepare', entity: `seq:${seq}`, result: 'ok', message: `${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready}` };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.error(`Step 3 failed (move) for seq ${seq}: ${msg}`);
       this.logEvent('prepare-move', seq, 'fail', { error: msg });
       // Rollback: cleanup branch + worktree would be ideal but risky; log for manual cleanup
-      return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Move to Todo failed: ${msg}` };
+      return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Move to ${this.pipelineAdapter.states.ready} failed: ${msg}` };
     }
   }
 
@@ -538,13 +541,13 @@ export class ExecutionEngine {
 
     // Step 7: Move card to Inprogress
     try {
-      await this.taskBackend.move(seq, 'Inprogress');
+      await this.taskBackend.move(seq, this.pipelineAdapter.states.active);
       // Update active card state
       this.runtimeStore.updateState('pipeline-launch', (freshState) => {
         if (freshState.activeCards[seq]) {
-          freshState.activeCards[seq].state = 'Inprogress';
+          freshState.activeCards[seq].state = this.pipelineAdapter.states.active;
           if (freshState.leases[seq]) {
-            freshState.leases[seq].pmStateObserved = 'Inprogress';
+            freshState.leases[seq].pmStateObserved = this.pipelineAdapter.states.active;
             if (freshState.leases[seq].phase === 'preparing' || freshState.leases[seq].phase === 'queued') {
               freshState.leases[seq].phase = 'coding';
             }
@@ -552,9 +555,9 @@ export class ExecutionEngine {
           }
         }
       });
-      this.log.ok(`Step 7: Moved seq ${seq} Todo → Inprogress`);
+      this.log.ok(`Step 7: Moved seq ${seq} ${this.pipelineAdapter.states.ready} → ${this.pipelineAdapter.states.active}`);
       this.logEvent('launch', seq, 'ok', { worker: slotName });
-      return { action: 'launch', entity: `seq:${seq}`, result: 'ok', message: `Todo → Inprogress (${slotName})` };
+      return { action: 'launch', entity: `seq:${seq}`, result: 'ok', message: `${this.pipelineAdapter.states.ready} → ${this.pipelineAdapter.states.active} (${slotName})` };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.error(`Step 7 failed (move) for seq ${seq}: ${msg}`);
@@ -564,7 +567,7 @@ export class ExecutionEngine {
       } catch { /* best effort */ }
       this.releaseSlot(slotName, seq);
       this.logEvent('launch-move', seq, 'fail', { error: msg });
-      return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Move to Inprogress failed: ${msg}` };
+      return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Move to ${this.pipelineAdapter.states.active} failed: ${msg}` };
     }
   }
 

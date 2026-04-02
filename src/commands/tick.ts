@@ -130,6 +130,9 @@ function createRunner(project: string): ProjectRunner | null {
     maxWorkers: ctx.maxWorkers,
   });
 
+  // Pipeline adapter: reads YAML config or returns defaults
+  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+
   // Register SPSEventHandler for PM operations on worker lifecycle events
   const runtimeStore = new RuntimeStore({
     paths: { stateFile: ctx.paths.stateFile },
@@ -141,11 +144,9 @@ function createRunner(project: string): ProjectRunner | null {
     notifier,
     runtimeStore,
     project,
+    pipelineAdapter,
   });
   workerManager.onEvent((event) => eventHandler.handle(event));
-
-  // Pipeline adapter: reads YAML config or returns defaults
-  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
 
   return {
     project,
@@ -156,10 +157,10 @@ function createRunner(project: string): ProjectRunner | null {
     notifier,
     agentRuntime,
     workerManager,
-    scheduler: new SchedulerEngine(ctx, taskBackend, notifier),
-    closeout: new CloseoutEngine(ctx, taskBackend, repoBackend, workerManager, notifier),
-    execution: new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, notifier),
-    monitor: new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor),
+    scheduler: new SchedulerEngine(ctx, taskBackend, pipelineAdapter, notifier),
+    closeout: new CloseoutEngine(ctx, taskBackend, repoBackend, workerManager, pipelineAdapter, notifier),
+    execution: new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, pipelineAdapter, notifier),
+    monitor: new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter),
     done: false,
     fatalError: false,
     tickNum: 0,

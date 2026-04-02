@@ -118,6 +118,7 @@ function stateColor(state: CardState): string {
     case 'Inprogress': return FG.green;
     case 'QA': return FG.yellow;
     case 'Done': return FG.white;
+    default: return FG.white;
   }
 }
 

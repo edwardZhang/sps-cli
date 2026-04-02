@@ -1,6 +1,7 @@
 import { ProjectContext } from '../core/context.js';
 import { SchedulerEngine } from '../engines/SchedulerEngine.js';
 import { createTaskBackend, createNotifier } from '../providers/registry.js';
+import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 import { Logger } from '../core/logger.js';
 
 export async function executeSchedulerTick(
@@ -26,7 +27,8 @@ export async function executeSchedulerTick(
 
   const taskBackend = createTaskBackend(ctx.config);
   const notifier = createNotifier(ctx.config);
-  const engine = new SchedulerEngine(ctx, taskBackend, notifier);
+  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+  const engine = new SchedulerEngine(ctx, taskBackend, pipelineAdapter, notifier);
   const result = await engine.tick({ dryRun });
 
   if (jsonOutput) {

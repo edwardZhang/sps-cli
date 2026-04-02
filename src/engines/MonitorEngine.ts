@@ -7,6 +7,7 @@ import type { ProcessSupervisor } from '../manager/supervisor.js';
 import { existsSync, statSync } from 'node:fs';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import { Logger } from '../core/logger.js';
+import type { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 
 /**
  * MonitorEngine performs anomaly detection and health checks.
@@ -30,6 +31,7 @@ export class MonitorEngine {
     private repoBackend: RepoBackend,
     private notifier: Notifier | undefined,
     private supervisor: ProcessSupervisor,
+    private pipelineAdapter: ProjectPipelineAdapter,
   ) {
     this.log = new Logger('monitor', ctx.projectName, ctx.paths.logsDir);
     this.runtimeStore = new RuntimeStore(ctx);
@@ -268,7 +270,7 @@ export class MonitorEngine {
   }
 
   private async listRuntimeAwareInprogressCards(): Promise<{ seq: string; name: string; labels: string[] }[]> {
-    const cards = await this.taskBackend.listByState('Inprogress');
+    const cards = await this.taskBackend.listByState(this.pipelineAdapter.states.active);
     const bySeq = new Map(cards.map(card => [card.seq, card]));
     const state = this.runtimeStore.readState();
 
@@ -294,19 +296,19 @@ export class MonitorEngine {
 
     if (this.ctx.config.MONITOR_AUTO_QA) {
       try {
-        await this.taskBackend.move(seq, 'QA');
-        this.log.ok(`seq ${seq}: Auto-moved to QA (MONITOR_AUTO_QA=true)`);
+        await this.taskBackend.move(seq, this.pipelineAdapter.states.review);
+        this.log.ok(`seq ${seq}: Auto-moved to ${this.pipelineAdapter.states.review} (MONITOR_AUTO_QA=true)`);
         actions.push({
           action: 'auto-qa',
           entity: `seq:${seq}`,
           result: 'ok',
-          message: 'Stale runtime — auto-moved to QA',
+          message: `Stale runtime — auto-moved to ${this.pipelineAdapter.states.review}`,
         });
         this.logEvent('auto-qa', seq, 'ok');
-        await this.notifySafe(`⚠️ [${this.ctx.projectName}] seq:${seq} auto-moved to QA (stale runtime)`);
+        await this.notifySafe(`⚠️ [${this.ctx.projectName}] seq:${seq} auto-moved to ${this.pipelineAdapter.states.review} (stale runtime)`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.log.error(`seq ${seq}: Failed to auto-move to QA: ${msg}`);
+        this.log.error(`seq ${seq}: Failed to auto-move to ${this.pipelineAdapter.states.review}: ${msg}`);
         actions.push({
           action: 'auto-qa',
           entity: `seq:${seq}`,
@@ -317,7 +319,7 @@ export class MonitorEngine {
     } else {
       await this.notifySafe(`⚠️ [${this.ctx.projectName}] seq:${seq} has a stale runtime — worker session dead but MR may exist`);
       recommendedActions.push({
-        action: `Move seq:${seq} to QA or investigate stale runtime`,
+        action: `Move seq:${seq} to ${this.pipelineAdapter.states.review} or investigate stale runtime`,
         reason: 'Worker session dead, MONITOR_AUTO_QA is disabled',
         severity: 'warning',
         autoExecutable: true,
@@ -455,7 +457,8 @@ export class MonitorEngine {
   // ─── Check 5: BLOCKED Condition Check ─────────────────────────
 
   private async checkBlockedCards(checks: CheckResult[]): Promise<void> {
-    const states = ['Backlog', 'Todo', 'Inprogress', 'QA'] as const;
+    const s = this.pipelineAdapter.states;
+    const states = [s.backlog, s.ready, s.active, s.review];
     let blockedCount = 0;
 
     for (const cardState of states) {
@@ -645,7 +648,7 @@ export class MonitorEngine {
 
     if (retryCount < restartLimit) {
       try {
-        await this.taskBackend.move(seq, 'Todo');
+        await this.taskBackend.move(seq, this.pipelineAdapter.states.ready);
         await this.removeLabelSafe(seq, 'CLAIMED');
         await this.removeLabelSafe(seq, 'STALE-RUNTIME');
         this.runtimeStore.updateState('monitor-auto-retry', (draft) => {
@@ -657,13 +660,13 @@ export class MonitorEngine {
             draft.leases[seq].slot = null;
             draft.leases[seq].sessionId = null;
             draft.leases[seq].runId = null;
-            draft.leases[seq].pmStateObserved = 'Todo';
+            draft.leases[seq].pmStateObserved = this.pipelineAdapter.states.ready;
             draft.leases[seq].lastTransitionAt = new Date().toISOString();
           }
         });
 
         const attempt = retryCount + 1;
-        this.log.ok(`seq ${seq}: Auto-retry ${attempt}/${restartLimit} — moved back to Todo (${reason})`);
+        this.log.ok(`seq ${seq}: Auto-retry ${attempt}/${restartLimit} — moved back to ${this.pipelineAdapter.states.ready} (${reason})`);
         await this.notifySafe(`⚠️ [${this.ctx.projectName}] seq:${seq} auto-retry ${attempt}/${restartLimit} — ${reason}`);
         actions.push({
           action: 'auto-retry',
@@ -708,7 +711,7 @@ export class MonitorEngine {
       });
       try {
         await this.addLabelSafe(seq, 'BLOCKED');
-        await this.taskBackend.move(seq, 'Todo');
+        await this.taskBackend.move(seq, this.pipelineAdapter.states.ready);
         await this.taskBackend.comment(
           seq,
           `Auto-retry limit reached (${restartLimit}). Last failure: ${reason}. Needs manual intervention.`,

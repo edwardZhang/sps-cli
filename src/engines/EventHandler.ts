@@ -12,6 +12,7 @@ import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { RuntimeStore } from '../core/runtimeStore.js';
 import type { PendingPMAction } from '../core/state.js';
+import type { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 
 // ─── Dependencies ──────────────────────────────────────────────
 
@@ -20,6 +21,7 @@ export interface EventHandlerDeps {
   notifier?: Notifier;
   runtimeStore: RuntimeStore;
   project: string;
+  pipelineAdapter: ProjectPipelineAdapter;
 }
 
 // ─── SPSEventHandler ──────────────────────────────────────────
@@ -29,12 +31,14 @@ export class SPSEventHandler {
   private readonly notifier: Notifier | undefined;
   private readonly runtimeStore: RuntimeStore;
   private readonly project: string;
+  private readonly pipelineAdapter: ProjectPipelineAdapter;
 
   constructor(deps: EventHandlerDeps) {
     this.taskBackend = deps.taskBackend;
     this.notifier = deps.notifier;
     this.runtimeStore = deps.runtimeStore;
     this.project = deps.project;
+    this.pipelineAdapter = deps.pipelineAdapter;
   }
 
   /**
@@ -108,11 +112,11 @@ export class SPSEventHandler {
     this.releaseSlot(event);
 
     if (isIntegration) {
-      await this.safeAction({ type: 'move', taskId, project: this.project, target: 'Done' });
+      await this.safeAction({ type: 'move', taskId, project: this.project, target: this.pipelineAdapter.states.done });
       // Mark worktree for cleanup — the task is fully done
       this.markWorktreeCleanup(taskId, event);
     } else {
-      await this.safeAction({ type: 'move', taskId, project: this.project, target: 'QA' });
+      await this.safeAction({ type: 'move', taskId, project: this.project, target: this.pipelineAdapter.states.review });
     }
 
     await this.safeAction({ type: 'release', taskId, project: this.project });
@@ -126,7 +130,10 @@ export class SPSEventHandler {
     const { taskId, exitCode, completionResult } = event;
     const reason = completionResult?.reason ?? 'unknown';
 
-    // Release slot in runtime state first
+    // Release slot in runtime state — keep lease in merging phase so the
+    // reconciler can advance the card to QA. CloseoutEngine will check
+    // for actual merge evidence and either finalize or mark NEEDS-FIX.
+    // This approach allows recovery when the worker pushed code before crashing.
     this.releaseSlot(event);
 
     // Add NEEDS-FIX label and comment
@@ -168,7 +175,7 @@ export class SPSEventHandler {
             dropLease: false,
             phase: 'merging',
             keepWorktree: true,
-            pmStateObserved: 'QA',
+            pmStateObserved: this.pipelineAdapter.states.review,
           });
         });
       }

@@ -2,6 +2,7 @@ import { ProjectContext } from '../core/context.js';
 import { MonitorEngine } from '../engines/MonitorEngine.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { createTaskBackend, createRepoBackend, createNotifier } from '../providers/registry.js';
+import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 import { Logger } from '../core/logger.js';
 
 export async function executeMonitorTick(
@@ -28,7 +29,8 @@ export async function executeMonitorTick(
   const repoBackend = createRepoBackend(ctx.config);
   const notifier = createNotifier(ctx.config);
   const supervisor = new ProcessSupervisor();
-  const engine = new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor);
+  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+  const engine = new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter);
   const result = await engine.tick();
 
   if (jsonOutput) {

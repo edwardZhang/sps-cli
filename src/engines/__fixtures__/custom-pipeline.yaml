@@ -1,0 +1,27 @@
+mode: project
+
+pm:
+  card_states:
+    planning: Planned
+    backlog: Queue
+    ready: Ready
+    active: Working
+    review: Review
+    done: Shipped
+
+stages:
+  - name: develop
+    trigger: "card_enters 'Ready'"
+    card_state: Working
+    agent: claude
+    completion: git-evidence
+    on_complete: "move_card Review"
+    on_fail: "label NEEDS-FIX"
+
+  - name: integrate
+    trigger: "card_enters 'Review'"
+    card_state: Review
+    agent: claude
+    completion: fast-forward-merge
+    on_complete: "move_card Shipped"
+    queue: fifo

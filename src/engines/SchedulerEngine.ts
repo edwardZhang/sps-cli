@@ -5,6 +5,7 @@ import type { CommandResult, ActionRecord, Card } from '../models/types.js';
 import { readState } from '../core/state.js';
 import { readQueue, removeFromQueue } from '../core/queue.js';
 import { Logger } from '../core/logger.js';
+import type { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 
 export class SchedulerEngine {
   private log: Logger;
@@ -12,6 +13,7 @@ export class SchedulerEngine {
   constructor(
     private ctx: ProjectContext,
     private taskBackend: TaskBackend,
+    private pipelineAdapter: ProjectPipelineAdapter,
     private notifier?: Notifier,
   ) {
     this.log = new Logger('scheduler', ctx.projectName, ctx.paths.logsDir);
@@ -34,7 +36,7 @@ export class SchedulerEngine {
       const state = readState(this.ctx.paths.stateFile, this.ctx.maxWorkers);
 
       // 2. Get Planning cards from PM
-      const planningCards = await this.taskBackend.listByState('Planning');
+      const planningCards = await this.taskBackend.listByState(this.pipelineAdapter.states.planning);
       const pipelineLabel = this.ctx.config.PIPELINE_LABEL || 'AI-PIPELINE';
 
       // Filter to AI-PIPELINE cards only
@@ -110,12 +112,12 @@ export class SchedulerEngine {
 
         // Admission passed — promote card
         if (opts.dryRun) {
-          this.log.info(`[dry-run] Would move seq ${seq} to Backlog`);
+          this.log.info(`[dry-run] Would move seq ${seq} to ${this.pipelineAdapter.states.backlog}`);
           actions.push({
             action: 'promote',
             entity: `seq:${seq}`,
             result: 'ok',
-            message: 'dry-run: would move Planning → Backlog',
+            message: `dry-run: would move ${this.pipelineAdapter.states.planning} → ${this.pipelineAdapter.states.backlog}`,
           });
         } else {
           try {
@@ -125,11 +127,11 @@ export class SchedulerEngine {
                 try { await this.taskBackend.removeLabel(card.seq, label); } catch { /* best effort */ }
               }
             }
-            await this.taskBackend.move(card.seq, 'Backlog');
+            await this.taskBackend.move(card.seq, this.pipelineAdapter.states.backlog);
             removeFromQueue(this.ctx.paths.pipelineOrderFile, seq);
-            this.log.ok(`Moved seq ${seq} Planning → Backlog`);
+            this.log.ok(`Moved seq ${seq} ${this.pipelineAdapter.states.planning} → ${this.pipelineAdapter.states.backlog}`);
             if (this.notifier) {
-              await this.notifier.send(`↔️ [${this.ctx.projectName}] seq:${seq} "${card.name}" scheduled (Planning → Backlog)`).catch(() => {});
+              await this.notifier.send(`↔️ [${this.ctx.projectName}] seq:${seq} "${card.name}" scheduled (${this.pipelineAdapter.states.planning} → ${this.pipelineAdapter.states.backlog})`).catch(() => {});
             }
             this.log.event({
               component: 'scheduler',
@@ -141,7 +143,7 @@ export class SchedulerEngine {
               action: 'promote',
               entity: `seq:${seq}`,
               result: 'ok',
-              message: 'Moved Planning → Backlog',
+              message: `Moved ${this.pipelineAdapter.states.planning} → ${this.pipelineAdapter.states.backlog}`,
             });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -206,7 +208,7 @@ export class SchedulerEngine {
   ): string | null {
     // Only consider cards that are actively being worked on (have a worker assigned)
     const inprogressCards = Object.values(state.activeCards).filter(
-      (ac) => ac.state === 'Inprogress' || ac.state === 'Todo',
+      (ac) => ac.state === this.pipelineAdapter.states.active || ac.state === this.pipelineAdapter.states.ready,
     );
     if (inprogressCards.length === 0) return null;
 

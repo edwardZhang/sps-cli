@@ -9,7 +9,8 @@ export interface Card {
   meta: Record<string, unknown>;
 }
 
-export type CardState = 'Planning' | 'Backlog' | 'Todo' | 'Inprogress' | 'QA' | 'Done';
+/** Card state — defaults are Planning/Backlog/Todo/Inprogress/QA/Done but configurable via pipeline YAML */
+export type CardState = string;
 
 export type AuxiliaryState = 'BLOCKED' | 'NEEDS-FIX' | 'WAITING-CONFIRMATION' | 'CONFLICT' | 'STALE-RUNTIME';
 

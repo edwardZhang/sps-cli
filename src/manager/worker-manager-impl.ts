@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { readState, writeState, createIdleWorkerSlot } from '../core/state.js';
 import type { RuntimeState, TaskLease, WorktreeEvidence } from '../core/state.js';
 import type { ProcessSupervisor } from './supervisor.js';
-import type { CompletionJudge } from './completion-judge.js';
+import type { CompletionJudge, CompletionResult } from './completion-judge.js';
 import type { ResourceLimiter } from './resource-limiter.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import { IntegrationQueue } from './integration-queue.js';
@@ -456,9 +456,16 @@ export class WorkerManagerImpl implements WorkerManager {
 
   // ─── Private: ACP Completion Monitor ───────────────────────────
   /**
-   * Poll ACP session until run reaches terminal state, then call handleExit.
-   * This bridges the gap: ACP prompt() resolves async, but WorkerManager
-   * needs an event to trigger card flow (move to Done/QA).
+   * Poll ACP session until run reaches terminal state, then emit event.
+   *
+   * ACP protocol provides authoritative completion status:
+   *   - completed → trust directly, emit run.completed (skip CompletionJudge)
+   *   - failed/cancelled → trust directly, emit run.failed
+   *   - lost (process died) → fall back to CompletionJudge (check git evidence)
+   *   - timeout → fall back to CompletionJudge
+   *
+   * This avoids the old pattern of converting everything to exitCode and
+   * letting CompletionJudge guess from git artifacts.
    */
   private monitorAcpCompletion(ctx: {
     workerId: string; taskId: string; cardId: string; project: string;
@@ -488,9 +495,9 @@ export class WorkerManagerImpl implements WorkerManager {
         return;
       }
 
-      // Max poll duration guard
+      // Max poll duration guard — process may be hung, fall back to git evidence
       if (Date.now() - startedAt > maxPollMs) {
-        this.log(`ACP monitor: ${ctx.taskId} exceeded max poll duration (${maxPollMs / 60000}min) — treating as failed`);
+        this.log(`ACP monitor: ${ctx.taskId} exceeded max poll duration (${maxPollMs / 60000}min) — falling back to CompletionJudge`);
         this.acpMonitorAborts.delete(ctx.slot);
         await this.handleExit({ ...ctx, exitCode: 1 });
         return;
@@ -502,22 +509,37 @@ export class WorkerManagerImpl implements WorkerManager {
 
         const session = Object.values(state.sessions).find(s => s.sessionName === ctx.sessionName);
         if (!session) {
-          this.log(`ACP monitor: session ${ctx.sessionName} not found — treating as lost`);
+          // Process died — session gone. Fall back to CompletionJudge
+          // which checks git evidence (worker may have pushed before dying).
+          this.log(`ACP monitor: ${ctx.taskId} session lost — falling back to CompletionJudge`);
           this.acpMonitorAborts.delete(ctx.slot);
           await this.handleExit({ ...ctx, exitCode: 1 });
           return;
         }
 
         const runStatus = session.currentRun?.status;
+
         if (runStatus === 'completed') {
-          this.log(`ACP monitor: ${ctx.taskId} completed`);
+          // ── ACP says completed — trust it directly ──
+          this.log(`ACP monitor: ${ctx.taskId} completed (authoritative)`);
           this.clearAcpSessionRun(ctx.sessionName);
           this.acpMonitorAborts.delete(ctx.slot);
-          await this.handleExit({ ...ctx, exitCode: 0 });
+          this.finalizeAcpWorker(ctx, 'run.completed', 0, { status: 'completed', reason: 'acp_completed' });
           return;
         }
-        if (runStatus === 'failed' || runStatus === 'cancelled' || runStatus === 'lost') {
-          this.log(`ACP monitor: ${ctx.taskId} ${runStatus}`);
+
+        if (runStatus === 'failed' || runStatus === 'cancelled') {
+          // ── ACP says explicitly failed/cancelled — trust it directly ──
+          this.log(`ACP monitor: ${ctx.taskId} ${runStatus} (authoritative)`);
+          this.clearAcpSessionRun(ctx.sessionName);
+          this.acpMonitorAborts.delete(ctx.slot);
+          this.finalizeAcpWorker(ctx, 'run.failed', 1, { status: 'failed', reason: `acp_${runStatus}` });
+          return;
+        }
+
+        if (runStatus === 'lost') {
+          // ── Process died mid-run — fall back to CompletionJudge ──
+          this.log(`ACP monitor: ${ctx.taskId} lost — falling back to CompletionJudge`);
           this.clearAcpSessionRun(ctx.sessionName);
           this.acpMonitorAborts.delete(ctx.slot);
           await this.handleExit({ ...ctx, exitCode: 1 });
@@ -540,6 +562,48 @@ export class WorkerManagerImpl implements WorkerManager {
 
     // Start first poll after a short delay (let the run initialize)
     pendingTimeout = setTimeout(poll, pollIntervalMs);
+  }
+
+  /**
+   * Finalize an ACP worker with a known status — emit event and release resources.
+   * Bypasses CompletionJudge since ACP protocol provides authoritative status.
+   */
+  private finalizeAcpWorker(
+    ctx: {
+      workerId: string; taskId: string; cardId: string; project: string;
+      phase: WorkerPhase; slot: string; targetBranch: string;
+    },
+    eventType: 'run.completed' | 'run.failed',
+    exitCode: number,
+    completionResult: CompletionResult,
+  ): void {
+    this.clearTimeoutForTask(ctx.taskId);
+    this.log(`ACP finalize ${ctx.workerId}: ${completionResult.status} (${completionResult.reason})`);
+
+    this.emitEvent({
+      type: eventType,
+      taskId: ctx.taskId, cardId: ctx.cardId, project: ctx.project,
+      phase: ctx.phase, slot: ctx.slot, workerId: ctx.workerId,
+      timestamp: new Date().toISOString(),
+      state: eventType === 'run.completed' ? 'completed' : 'failed',
+      exitCode, completionResult,
+    });
+
+    // Release resources (same as handleExit tail)
+    this.supervisor.remove(ctx.workerId);
+    this.resourceLimiter.release();
+    this.taskSlotMap.delete(ctx.taskId);
+
+    if (this.eventHandlers.length === 0) {
+      this.releaseSlotInState(ctx.slot, ctx.taskId);
+      this.log(`Safety net: released slot ${ctx.slot} for task ${ctx.taskId} (no event handlers)`);
+    }
+
+    if (ctx.phase === 'integration') {
+      this.advanceIntegrationQueue(ctx.project, ctx.targetBranch).catch(err => {
+        this.log(`Failed to advance integration queue: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
   }
 
   /** Clear currentRun in session state so the slot can be reused for next task. */
