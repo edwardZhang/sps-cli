@@ -180,7 +180,13 @@ function readLogIncrement(file: string, fromOffset: number): { lines: string[]; 
   }
 }
 
-/** Clear currentRun from session state so the slot can accept the next prompt. */
+/**
+ * Clear currentRun from session state so the slot can accept the next prompt.
+ *
+ * Note: Uses readState/writeState directly instead of RuntimeStore because
+ * harness mode operates with SessionContext (no ProjectContext/RuntimeStore).
+ * writeState is atomic (write-to-temp-then-rename) so this is safe.
+ */
 function clearRunInState(stateFile: string, slot: string): void {
   try {
     const state = readState(stateFile, 0);
@@ -190,6 +196,6 @@ function clearRunInState(stateFile: string, slot: string): void {
       writeState(stateFile, state, 'agent-clear-run');
     }
   } catch {
-    // Best effort
+    // Best effort — session cleanup is non-critical
   }
 }

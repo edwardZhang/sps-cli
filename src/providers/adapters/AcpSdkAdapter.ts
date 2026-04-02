@@ -242,7 +242,9 @@ export class AcpSdkAdapter implements ACPClient {
         session.accumulator.stopReason = result.stopReason ?? 'end_turn';
         session.activePromise = null;
       })
-      .catch(() => {
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[acp] Prompt failed for ${input.sessionName}: ${msg}\n`);
         session.accumulator.stopReason = 'failed';
         session.activePromise = null;
       });

@@ -235,6 +235,13 @@ export class ProcessSupervisor {
     handle: Omit<WorkerHandle, 'child'>,
     onDead: (exitCode: number) => Promise<void> | void,
   ): void {
+    // Clear any existing orphan timer for this ID to prevent stale polls
+    const existingTimer = this.orphanTimers.get(id);
+    if (existingTimer) {
+      clearInterval(existingTimer);
+      this.orphanTimers.delete(id);
+    }
+
     // Store handle without child reference
     const orphanHandle: WorkerHandle = {
       ...handle,

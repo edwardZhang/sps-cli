@@ -73,9 +73,14 @@ export class SessionDaemon {
     // Poll sessions every 2s to keep state.json fresh
     this.pollTimer = setInterval(() => this.pollSessions(), 2_000);
 
-    // Graceful shutdown
+    // Graceful shutdown on signals and unexpected exit
     process.on('SIGINT', () => this.shutdown());
     process.on('SIGTERM', () => this.shutdown());
+    process.on('exit', () => {
+      // Sync cleanup: remove socket and PID files so clients don't connect to dead daemon
+      try { unlinkSync(this.socketPath); } catch { /* noop */ }
+      try { unlinkSync(this.pidFile); } catch { /* noop */ }
+    });
   }
 
   private handleClient(socket: Socket): void {

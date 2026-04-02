@@ -1,5 +1,15 @@
 #!/usr/bin/env node
 
+// Global error handlers — catch unhandled rejections and uncaught exceptions
+process.on('unhandledRejection', (reason) => {
+  process.stderr.write(`[sps] Unhandled rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}\n`);
+  process.exit(1);
+});
+process.on('uncaughtException', (err) => {
+  process.stderr.write(`[sps] Uncaught exception: ${err.stack || err.message}\n`);
+  process.exit(1);
+});
+
 // Polyfill fetch for Node.js < 18.13 where it's not globally available.
 if (typeof globalThis.fetch === 'undefined') {
   try {
