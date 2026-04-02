@@ -130,7 +130,7 @@ export function loadProjectConf(projectName: string): ProjectConfig {
     MAX_ACTIONS_PER_TICK: parseInt(raw.MAX_ACTIONS_PER_TICK || '1', 10),
     ACP_AGENT: raw.ACP_AGENT as ProjectConfig['ACP_AGENT'] | undefined,
 
-    WORKER_LAUNCH_TIMEOUT_S: parseInt(raw.WORKER_LAUNCH_TIMEOUT_S || '120', 10),
+    WORKER_LAUNCH_TIMEOUT_S: parseInt(raw.WORKER_LAUNCH_TIMEOUT_S || '300', 10),
     WORKER_IDLE_TIMEOUT_M: parseInt(raw.WORKER_IDLE_TIMEOUT_M || '15', 10),
 
     INPROGRESS_TIMEOUT_HOURS: parseInt(raw.INPROGRESS_TIMEOUT_HOURS || '8', 10),
