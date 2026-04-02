@@ -52,6 +52,8 @@ export interface TaskRunRequest {
   timeoutSec?: number;
   maxRetries?: number;
   env?: Record<string, string>;
+  /** Completion strategy: git-evidence (default), fast-forward-merge, exit-code */
+  completionStrategy?: string;
 }
 
 export interface TaskResumeRequest {

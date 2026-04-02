@@ -108,15 +108,21 @@ export class SPSEventHandler {
       phase === 'integration' ||
       completionResult?.reason === 'already_merged';
 
+    // Resolve the stage definition for this phase
+    const stage = isIntegration
+      ? this.pipelineAdapter.integrateStage
+      : this.pipelineAdapter.developStage;
+    const targetState = stage?.onCompleteState
+      || (isIntegration ? this.pipelineAdapter.states.done : this.pipelineAdapter.states.review);
+
     // Release slot in runtime state first (never blocks on PM)
     this.releaseSlot(event);
 
+    await this.safeAction({ type: 'move', taskId, project: this.project, target: targetState });
+
     if (isIntegration) {
-      await this.safeAction({ type: 'move', taskId, project: this.project, target: this.pipelineAdapter.states.done });
       // Mark worktree for cleanup — the task is fully done
       this.markWorktreeCleanup(taskId, event);
-    } else {
-      await this.safeAction({ type: 'move', taskId, project: this.project, target: this.pipelineAdapter.states.review });
     }
 
     await this.safeAction({ type: 'release', taskId, project: this.project });
@@ -127,22 +133,34 @@ export class SPSEventHandler {
   }
 
   private async onFailed(event: WorkerEvent): Promise<void> {
-    const { taskId, exitCode, completionResult } = event;
+    const { taskId, exitCode, completionResult, phase } = event;
     const reason = completionResult?.reason ?? 'unknown';
+    const isIntegration =
+      phase === 'integration' ||
+      completionResult?.reason === 'already_merged';
+
+    // Resolve the stage definition for this phase
+    const stage = isIntegration
+      ? this.pipelineAdapter.integrateStage
+      : this.pipelineAdapter.developStage;
+    const failLabel = stage?.onFailLabel ?? 'NEEDS-FIX';
+    const failComment = stage?.onFailComment
+      ?? `Worker ${reason} (exit ${exitCode ?? 1}). Marked as ${failLabel}.`;
 
     // Release slot in runtime state — keep lease in merging phase so the
     // reconciler can advance the card to QA. CloseoutEngine will check
     // for actual merge evidence and either finalize or mark NEEDS-FIX.
-    // This approach allows recovery when the worker pushed code before crashing.
     this.releaseSlot(event);
 
-    // Add NEEDS-FIX label and comment
-    await this.safeAction({ type: 'label', taskId, project: this.project, target: 'NEEDS-FIX' });
+    // Apply on_fail actions from stage config
+    if (failLabel) {
+      await this.safeAction({ type: 'label', taskId, project: this.project, target: failLabel });
+    }
     await this.safeAction({
       type: 'comment',
       taskId,
       project: this.project,
-      message: `Worker ${reason} (exit ${exitCode ?? 1}). Marked as NEEDS-FIX.`,
+      message: failComment,
     });
 
     await this.safeNotify(`⚠️ [${this.project}] seq:${taskId} FAILED — ${reason}`);

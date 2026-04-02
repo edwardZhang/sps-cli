@@ -504,11 +504,12 @@ export class ExecutionEngine {
       cwd: worktreePath,
       branch: branchName,
       targetBranch: this.ctx.mergeBranch,
-      tool: this.ctx.config.WORKER_TOOL as 'claude' | 'codex',
+      tool: (this.pipelineAdapter.developStage.agent || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
       transport: workflowTransport as 'proc' | 'acp-sdk',
       outputFile: resolve(logsDir, `${this.ctx.projectName}-worker-${card.seq}-${Date.now()}.jsonl`),
       timeoutSec: this.ctx.config.WORKER_LAUNCH_TIMEOUT_S,
       maxRetries: this.ctx.config.WORKER_RESTART_LIMIT,
+      completionStrategy: this.pipelineAdapter.developStage.completion,
     };
 
     let response: TaskRunResponse;
@@ -707,7 +708,7 @@ export class ExecutionEngine {
 
     const claudeMdPath = resolve(worktreePath, 'CLAUDE.md');
     const agentsMdPath = resolve(worktreePath, 'AGENTS.md');
-    const workerTool = this.ctx.config.WORKER_TOOL;
+    const workerTool = this.pipelineAdapter.developStage.agent || this.ctx.config.WORKER_TOOL;
     let projectRules = '';
     if (existsSync(claudeMdPath)) {
       projectRules = readFileSync(claudeMdPath, 'utf-8').trim();
@@ -784,7 +785,12 @@ export class ExecutionEngine {
       .filter(l => l.startsWith('skill:'))
       .map(l => l.slice('skill:'.length));
 
-    // 2. Fallback to project default
+    // 2. Stage-level profile from pipeline YAML (overrides project default)
+    if (skills.length === 0 && this.pipelineAdapter.developStage.profile) {
+      skills = this.pipelineAdapter.developStage.profile.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    // 3. Fallback to project default
     if (skills.length === 0) {
       const defaultSkills = this.ctx.config.raw.DEFAULT_WORKER_SKILLS;
       if (defaultSkills) {

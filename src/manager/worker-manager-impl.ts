@@ -43,6 +43,7 @@ interface SpawnContext {
   tool: 'claude' | 'codex'; transport: 'proc' | 'acp-sdk';
   outputFile: string; maxRetries: number; resumeSessionId?: string;
   customTimeoutSec?: number;
+  completionStrategy?: string;
 }
 
 // ─── Timeout Defaults ──────────────────────────────────────────
@@ -91,6 +92,7 @@ export class WorkerManagerImpl implements WorkerManager {
       tool: request.tool, transport: request.transport,
       outputFile: request.outputFile, maxRetries: request.maxRetries ?? 0,
       customTimeoutSec: request.timeoutSec,
+      completionStrategy: request.completionStrategy,
     }, 'wm-run');
   }
 
@@ -352,6 +354,7 @@ export class WorkerManagerImpl implements WorkerManager {
           onExit: (exitCode) => this.handleExit({
             workerId, taskId, cardId, project, phase, slot, branch, cwd,
             targetBranch, outputFile, tool, transport, exitCode, maxRetries,
+            completionStrategy: ctx.completionStrategy,
           }),
         });
         pid = handle.pid;
@@ -371,6 +374,7 @@ export class WorkerManagerImpl implements WorkerManager {
           workerId, taskId, cardId, project, phase, slot, branch, cwd,
           targetBranch, outputFile, tool, transport, maxRetries,
           sessionName: session.sessionName,
+          completionStrategy: ctx.completionStrategy,
         });
       }
     } catch (err) {
@@ -413,6 +417,7 @@ export class WorkerManagerImpl implements WorkerManager {
     phase: WorkerPhase; slot: string; branch: string; cwd: string;
     targetBranch: string; outputFile: string; tool: 'claude' | 'codex';
     transport: 'proc' | 'acp-sdk'; exitCode: number; maxRetries: number;
+    completionStrategy?: string;
   }): Promise<void> {
     const { workerId, taskId, cardId, project, phase, slot, branch, cwd,
             targetBranch, outputFile, tool, transport, exitCode, maxRetries } = ctx;
@@ -421,6 +426,7 @@ export class WorkerManagerImpl implements WorkerManager {
 
     const completion = this.completionJudge.judge({
       worktree: cwd, branch, baseBranch: targetBranch, outputFile, exitCode, phase,
+      completionStrategy: ctx.completionStrategy,
     });
     this.log(`CompletionJudge for ${workerId}: ${completion.status} (${completion.reason})`);
 
@@ -472,7 +478,7 @@ export class WorkerManagerImpl implements WorkerManager {
     phase: WorkerPhase; slot: string; branch: string; cwd: string;
     targetBranch: string; outputFile: string; tool: 'claude' | 'codex';
     transport: 'proc' | 'acp-sdk'; maxRetries: number;
-    sessionName: string;
+    sessionName: string; completionStrategy?: string;
   }): void {
     if (!this.agentRuntime) return;
     const runtime = this.agentRuntime;

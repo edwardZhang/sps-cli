@@ -24,6 +24,8 @@ export interface JudgeInput {
   exitCode: number;
   logsDir?: string;
   phase: WorkerTaskPhase;
+  /** Completion strategy from pipeline stage config. Overrides phase-based defaults. */
+  completionStrategy?: string;
 }
 
 export interface CompletionResult {
@@ -55,7 +57,20 @@ export class CompletionJudge {
  * 2. Otherwise incomplete/failed
    */
   judge(input: JudgeInput): CompletionResult {
-    const { worktree, branch, baseBranch, outputFile, exitCode, logsDir, phase } = input;
+    const { worktree, branch, baseBranch, outputFile, exitCode, logsDir, phase,
+            completionStrategy } = input;
+
+    // ── exit-code strategy: trust exit code directly, no git checks ──
+    if (completionStrategy === 'exit-code') {
+      if (exitCode === 0) {
+        return { status: 'completed', reason: 'exit_code_zero' };
+      }
+      return { status: 'failed', reason: `exit_code(${exitCode})` };
+    }
+
+    // Determine effective phase: completionStrategy overrides phase-based defaults
+    const useIntegrationLogic = completionStrategy === 'fast-forward-merge'
+      || (!completionStrategy && phase === 'integration');
 
     const mergedToBase = this.isMergedToBase(worktree, branch, baseBranch);
     if (mergedToBase) {
@@ -80,7 +95,7 @@ export class CompletionJudge {
       }
     }
 
-    if (phase === 'integration') {
+    if (useIntegrationLogic) {
       // Check if branch was pushed to target (worker did git push origin branch:target)
       // even if exit code is non-zero (claude/codex may exit 1 after successful push)
       const pushed = branchPushed(worktree, branch);
