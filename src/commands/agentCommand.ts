@@ -88,7 +88,7 @@ function parseAgentArgs(argv: string[]): {
   const first = positionals[0];
   const common = {
     name: flags.name || 'default',
-    tool: (flags.tool || 'claude') as ACPTool,
+    tool: (flags.tool || process.env.DEFAULT_AGENT || 'claude') as ACPTool,
     cwd: flags.cwd || process.cwd(),
     verbose: flags.verbose === 'true',
     context: contextFiles,

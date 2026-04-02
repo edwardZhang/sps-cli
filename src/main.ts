@@ -131,6 +131,9 @@ const COMMANDS: Record<string, CommandInfo> = {
     examples: ['sps stop my-project', 'sps stop --all'] },
   reset:     { desc: '重置卡片状态，清理 worktree 和 branch，准备重跑', usage: 'sps reset <project> [--all] [--card N,N,N]',
     examples: ['sps reset my-project', 'sps reset my-project --all', 'sps reset my-project --card 5,6,7'] },
+  skill:     { desc: 'Skill 管理', usage: 'sps skill <子命令>', subs: {
+    sync: '同步 ~/.coral/skills/ 到 agent 目录',
+  }, examples: ['sps skill sync'] },
   status:    { desc: '显示所有项目运行状态', usage: 'sps status [--json]',
     examples: ['sps status', 'sps status --json'] },
 };
@@ -192,7 +195,7 @@ interface ParsedArgs {
 }
 
 // Commands that always have subcommands
-const SUBCOMMAND_COMMANDS = new Set(['scheduler', 'pipeline', 'worker', 'acp', 'pm', 'qa', 'monitor', 'project', 'card']);
+const SUBCOMMAND_COMMANDS = new Set(['scheduler', 'pipeline', 'worker', 'acp', 'pm', 'qa', 'monitor', 'project', 'card', 'skill']);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const flags: Record<string, boolean> = {};
@@ -435,6 +438,24 @@ async function main() {
     const initialLines = linesIdx >= 0 ? parseInt(process.argv[linesIdx + 1] || '20', 10) : 20;
     await executeLogs(projects, args.flags, initialLines);
     return;
+  }
+
+  // ─── skill ──────────────────────────────────────────────────────
+  if (args.command === 'skill') {
+    if (args.subcommand === 'sync') {
+      const { syncSkills } = await import('./commands/setup.js');
+      const { Logger } = await import('./core/logger.js');
+      const log = new Logger('skill-sync', '');
+      const synced = syncSkills(log);
+      if (synced > 0) {
+        console.log(`  ✓ Synced ${synced} skill(s)`);
+      } else {
+        console.log('  No skills to sync. Create skills in ~/.coral/skills/<name>/SKILL.md');
+      }
+      return;
+    }
+    console.error('Usage: sps skill sync');
+    process.exit(2);
   }
 
   // ─── status ─────────────────────────────────────────────────────

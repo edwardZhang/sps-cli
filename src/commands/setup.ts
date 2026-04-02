@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, chmodSync, readdirSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, chmodSync, readdirSync, copyFileSync, symlinkSync, readlinkSync, lstatSync, unlinkSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
@@ -8,6 +8,7 @@ const HOME = process.env.HOME || '/home/coral';
 const ENV_PATH = resolve(HOME, '.coral', 'env');
 const PROJECTS_DIR = resolve(HOME, '.coral', 'projects');
 const PROFILES_DIR = resolve(HOME, '.coral', 'profiles');
+const SKILLS_SRC_DIR = resolve(HOME, '.coral', 'skills');
 
 function createPrompt(): { ask: (question: string, defaultValue?: string) => Promise<string>; close: () => void } {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -129,6 +130,10 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     const finalTrelloToken = (trelloToken.includes('****') || trelloToken.includes('— Enter to keep') || trelloToken === '') && existing.TRELLO_TOKEN
       ? existing.TRELLO_TOKEN : trelloToken;
 
+    // Default Agent
+    console.log('\n  ── Default Agent ──');
+    const defaultAgent = await prompt.ask('DEFAULT_AGENT (claude/codex)', existing.DEFAULT_AGENT || 'claude');
+
     // Matrix notifications
     console.log('\n  ── Notifications (Matrix) ──');
     const matrixHomeserver = await prompt.ask('MATRIX_HOMESERVER', existing.MATRIX_HOMESERVER || '');
@@ -176,11 +181,29 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
       lines.push('');
     }
 
+    if (defaultAgent) {
+      lines.push('# ── Default Agent ───────────────────────────────────');
+      lines.push(`export DEFAULT_AGENT="${defaultAgent}"`);
+      lines.push('');
+    }
+
     writeFileSync(ENV_PATH, lines.join('\n') + '\n');
     chmodSync(ENV_PATH, 0o600);
     log.ok(`Saved ${ENV_PATH} (permissions: 600)`);
     } // closes: if (!existsSync(ENV_PATH) || flags.force)
   } // closes: Step 2 block
+
+  // ─── Step 3: Skill sync (symlink ~/.coral/skills → agent skill dirs) ──
+  {
+    const synced = syncSkills(log);
+    if (synced > 0) {
+      log.ok(`Synced ${synced} skill(s) to agent directories`);
+    } else if (existsSync(SKILLS_SRC_DIR)) {
+      log.info('No skills to sync (directory empty)');
+    } else {
+      log.info(`No skills directory at ${SKILLS_SRC_DIR} — skipping sync`);
+    }
+  }
 
   // ─── Summary ───────────────────────────────────────────────────
   console.log('\n  Setup complete! Next steps:\n');
@@ -201,4 +224,69 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
   console.log('');
 
   prompt.close();
+}
+
+// ─── Skill Sync ──────────────────────────────────────────────────
+
+/** Agent skill directories (user-level) */
+const AGENT_SKILL_DIRS = [
+  resolve(HOME, '.claude', 'skills'),   // Claude Code
+  resolve(HOME, '.codex', 'skills'),    // Codex
+];
+
+/**
+ * Sync skills from ~/.coral/skills/ to agent skill directories via symlink.
+ * Each skill is a directory with SKILL.md inside.
+ * Returns number of skills synced.
+ */
+export function syncSkills(log?: Logger): number {
+  if (!existsSync(SKILLS_SRC_DIR)) return 0;
+
+  const skillDirs = readdirSync(SKILLS_SRC_DIR, { withFileTypes: true })
+    .filter(d => d.isDirectory() && existsSync(resolve(SKILLS_SRC_DIR, d.name, 'SKILL.md')))
+    .map(d => d.name);
+
+  if (skillDirs.length === 0) return 0;
+
+  let synced = 0;
+  for (const targetDir of AGENT_SKILL_DIRS) {
+    if (!existsSync(targetDir)) {
+      // Agent not installed — skip
+      continue;
+    }
+
+    for (const skill of skillDirs) {
+      const src = resolve(SKILLS_SRC_DIR, skill);
+      const dest = resolve(targetDir, skill);
+
+      // Already a correct symlink — skip
+      try {
+        const stat = lstatSync(dest);
+        if (stat.isSymbolicLink()) {
+          const linkTarget = readlinkSync(dest);
+          if (linkTarget === src) continue; // correct symlink already exists
+          // Wrong target — will recreate below
+        }
+        // Not a symlink (real directory) — skip to avoid overwriting user files
+        if (stat.isDirectory()) {
+          log?.info(`Skipping ${skill} in ${targetDir} (real directory, not managed by SPS)`);
+          continue;
+        }
+      } catch {
+        // Doesn't exist — create symlink
+      }
+
+      try {
+        // Remove stale symlink if exists
+        try { unlinkSync(dest); } catch { /* doesn't exist */ }
+        symlinkSync(src, dest);
+        log?.ok(`Linked ${skill} → ${targetDir}/`);
+        synced++;
+      } catch (err) {
+        log?.warn?.(`Failed to link ${skill}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  return synced;
 }
