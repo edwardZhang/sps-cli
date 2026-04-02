@@ -124,10 +124,19 @@ export class AcpSdkAdapter implements ACPClient {
     // Drain stderr (adapter debug output)
     child.stderr?.on('data', () => { /* discard */ });
 
-    await new Promise<void>((resolve, reject) => {
-      child.once('spawn', () => resolve());
-      child.once('error', (err) => reject(new Error(`Failed to spawn ${input.tool} ACP adapter: ${err.message}`)));
-    });
+    // Spawn with 60s timeout to prevent indefinite hang if adapter binary is stuck
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        child.once('spawn', () => resolve());
+        child.once('error', (err) => reject(new Error(`Failed to spawn ${input.tool} ACP adapter: ${err.message}`)));
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* noop */ }
+          reject(new Error(`ACP adapter spawn timed out after 60s (${input.tool})`));
+        }, 60_000).unref(),
+      ),
+    ]);
 
     // Establish JSON-RPC connection over stdio
     const stream = ndJsonStream(

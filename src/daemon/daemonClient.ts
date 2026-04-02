@@ -60,12 +60,19 @@ export class DaemonClient {
       const finish = (err?: Error, data?: T) => {
         if (settled) return;
         settled = true;
+        if (connectTimeout) clearTimeout(connectTimeout);
         socket.destroy();
         if (err) reject(err);
         else resolve(data as T);
       };
 
+      // 5s connection timeout (separate from 30s request timeout)
+      const connectTimeout = setTimeout(() => {
+        finish(new Error('Daemon connection timeout (5s)'));
+      }, 5_000);
+
       socket.on('connect', () => {
+        clearTimeout(connectTimeout);
         const req: DaemonRequest = { method: method as DaemonRequest['method'], params };
         socket.write(JSON.stringify(req) + '\n');
       });

@@ -474,9 +474,21 @@ export class WorkerManagerImpl implements WorkerManager {
     const abortController = new AbortController();
     this.acpMonitorAborts.set(ctx.slot, abortController);
 
+    const maxPollMs = 30 * 60 * 1000; // 30 minutes max poll duration
+    const startedAt = Date.now();
+    let pendingTimeout: ReturnType<typeof setTimeout> | null = null;
+
     const poll = async () => {
       if (abortController.signal.aborted) {
         this.log(`ACP monitor: ${ctx.taskId} aborted (slot ${ctx.slot} reused)`);
+        return;
+      }
+
+      // Max poll duration guard
+      if (Date.now() - startedAt > maxPollMs) {
+        this.log(`ACP monitor: ${ctx.taskId} exceeded max poll duration (${maxPollMs / 60000}min) — treating as failed`);
+        this.acpMonitorAborts.delete(ctx.slot);
+        await this.handleExit({ ...ctx, exitCode: 1 });
         return;
       }
 
@@ -508,17 +520,22 @@ export class WorkerManagerImpl implements WorkerManager {
           return;
         }
 
-        // Still running — poll again
-        setTimeout(poll, pollIntervalMs);
+        // Still running — poll again (store timeout ID for cleanup)
+        pendingTimeout = setTimeout(poll, pollIntervalMs);
       } catch (err) {
         if (abortController.signal.aborted) return;
         this.log(`ACP monitor error for ${ctx.taskId}: ${err instanceof Error ? err.message : String(err)}`);
-        setTimeout(poll, pollIntervalMs);
+        pendingTimeout = setTimeout(poll, pollIntervalMs);
       }
     };
 
+    // Clean up pending setTimeout when abort fires
+    abortController.signal.addEventListener('abort', () => {
+      if (pendingTimeout) clearTimeout(pendingTimeout);
+    }, { once: true });
+
     // Start first poll after a short delay (let the run initialize)
-    setTimeout(poll, pollIntervalMs);
+    pendingTimeout = setTimeout(poll, pollIntervalMs);
   }
 
   /** Clear currentRun in session state so the slot can be reused for next task. */
@@ -869,6 +886,22 @@ export class WorkerManagerImpl implements WorkerManager {
         this.log(`Event handler error: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+  }
+
+  cleanup(): void {
+    // Clear all pending timeouts (soft + hard)
+    for (const [key, timer] of this.timeouts) {
+      clearTimeout(timer);
+    }
+    this.timeouts.clear();
+
+    // Abort all ACP monitors
+    for (const [slot, controller] of this.acpMonitorAborts) {
+      controller.abort();
+    }
+    this.acpMonitorAborts.clear();
+
+    this.log('Cleanup: cleared all timeouts and ACP monitors');
   }
 
   private reject(reason: TaskRunResponse['rejectReason']): TaskRunResponse {

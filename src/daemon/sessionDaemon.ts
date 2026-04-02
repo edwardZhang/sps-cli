@@ -10,7 +10,7 @@
  * State:  ~/.coral/sessions/state.json (shared with clients)
  */
 import { createServer, type Socket, type Server } from 'node:net';
-import { writeFileSync, unlinkSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, unlinkSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createSessionContext, type SessionContext } from '../core/sessionContext.js';
 import { createSessionRuntime } from '../providers/registry.js';
@@ -55,6 +55,19 @@ export class SessionDaemon {
 
   async start(): Promise<void> {
     mkdirSync(dirname(this.socketPath), { recursive: true });
+
+    // Check if another daemon is already running (PID file race protection)
+    if (existsSync(this.pidFile)) {
+      try {
+        const oldPid = parseInt(readFileSync(this.pidFile, 'utf-8').trim(), 10);
+        if (oldPid > 0) {
+          process.kill(oldPid, 0); // signal 0: test if alive
+          throw new Error(`Daemon already running (PID ${oldPid})`);
+        }
+      } catch (err: any) {
+        if (err.code !== 'ESRCH') throw err; // ESRCH = process not found = stale PID, safe to continue
+      }
+    }
 
     // Clean stale socket
     if (existsSync(this.socketPath)) {
@@ -191,7 +204,11 @@ export class SessionDaemon {
           const idleMs = now - Date.parse(session.lastSeenAt);
           if (idleMs > ttlMs) {
             this.log(`TTL expired for ${slot} (idle ${Math.round(idleMs / 60000)}min) — stopping`);
-            try { await this.runtime.stopSession(slot); } catch { /* best effort */ }
+            try {
+              await this.runtime.stopSession(slot);
+            } catch (err) {
+              this.log(`Failed to stop expired session ${slot}: ${err instanceof Error ? err.message : String(err)}`);
+            }
           }
         }
       }

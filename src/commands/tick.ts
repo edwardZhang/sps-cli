@@ -248,6 +248,7 @@ export async function executeTick(
   const cleanupAll = () => {
     for (const runner of runners) {
       releaseTickLock(runner.ctx.paths.tickLockFile);
+      runner.workerManager.cleanup();
     }
   };
   process.on('exit', cleanupAll);

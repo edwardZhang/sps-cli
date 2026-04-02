@@ -234,4 +234,10 @@ export interface WorkerManager {
    * Scans state.json, checks PID survival, rebuilds projections.
    */
   recover(contexts: RecoveryContext[]): Promise<RecoveryResult>;
+
+  /**
+   * Clean up internal resources (timers, monitors) on tick shutdown.
+   * Must be called before the process exits to prevent timer leaks.
+   */
+  cleanup(): void;
 }
