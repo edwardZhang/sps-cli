@@ -800,24 +800,11 @@ export class ExecutionEngine {
 
     if (skills.length === 0) return '';
 
-    // 3. Load profile files from ~/.coral/profiles/
-    const profilesDir = resolve(process.env.HOME || '~', '.coral', 'profiles');
-    const sections: string[] = ['# Skill Profiles'];
-
-    for (const skill of skills) {
-      const filePath = resolve(profilesDir, `${skill}.md`);
-      if (existsSync(filePath)) {
-        const content = readFileSync(filePath, 'utf-8').trim();
-        // Strip YAML frontmatter
-        const body = content.replace(/^---[\s\S]*?---\s*/, '');
-        sections.push(body);
-        this.log.ok(`Loaded skill profile: ${skill}`);
-      } else {
-        this.log.warn(`Skill profile not found: ${filePath}`);
-      }
-    }
-
-    return sections.length > 1 ? sections.join('\n\n') : '';
+    // Don't inject full profile content — agent loads skills on demand
+    // via ~/.claude/skills/ or ~/.codex/skills/ (symlinked from ~/.coral/skills/).
+    // Just tell the agent which skills to activate.
+    this.log.ok(`Skill labels: ${skills.join(', ')}`);
+    return `# Required Skills\n\nThis task requires the following skills: ${skills.join(', ')}.\nLoad the dev-worker skill and read the corresponding references.`;
   }
 
   // ─── Project Knowledge Loading (truncated) ────────────────────
