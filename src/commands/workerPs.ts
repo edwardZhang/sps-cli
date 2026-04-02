@@ -1,5 +1,5 @@
 import { ProjectContext } from '../core/context.js';
-import { readState } from '../core/state.js';
+import { readState, writeState, createIdleWorkerSlot } from '../core/state.js';
 import { Logger } from '../core/logger.js';
 
 /**
@@ -82,15 +82,19 @@ export async function executeWorkerPs(
   // Also check ACP sessions
   for (const [slotName, session] of Object.entries(state.sessions ?? {})) {
     const existing = workers.find(w => w.slot === slotName);
-    if (existing && session.pid && !existing.pid) {
+    if (!existing) continue;
+
+    if (session.pid && !existing.pid) {
       existing.pid = session.pid;
-      try { process.kill(session.pid, 0); existing.alive = true; } catch { /* dead */ }
     }
-    if (existing && session.status) {
-      // Enrich with session info
-      if (existing.status === 'idle' && session.status !== 'idle' && session.status !== 'offline') {
-        existing.status = `session:${session.status}`;
-      }
+    // Check if session process is actually alive
+    if (existing.pid) {
+      try { process.kill(existing.pid, 0); existing.alive = true; } catch { existing.alive = false; }
+    }
+    // Only show session status if process is alive
+    if (existing.alive && session.status && existing.status === 'idle'
+        && session.status !== 'idle' && session.status !== 'offline') {
+      existing.status = `session:${session.status}`;
     }
   }
 
@@ -213,6 +217,40 @@ export async function executeWorkerKill(
     } catch {
       // Dead — good
     }
+  }
+
+  // Clean up state.json: reset slot to idle, remove lease and activeCard
+  const freshState = readState(ctx.paths.stateFile, ctx.maxWorkers);
+  let cleaned = false;
+
+  for (const [slotName, w] of Object.entries(freshState.workers)) {
+    if (w.seq === parseInt(seq, 10) && w.status !== 'idle') {
+      freshState.workers[slotName] = createIdleWorkerSlot();
+      cleaned = true;
+    }
+  }
+  delete freshState.activeCards[seq];
+  // Clean up ACP session for this slot
+  for (const [slotName, w] of Object.entries(freshState.workers)) {
+    if (w.seq === parseInt(seq, 10) || (slotEntry && slotEntry[0] === slotName)) {
+      const session = freshState.sessions?.[slotName];
+      if (session) {
+        session.status = 'offline' as any;
+        session.currentRun = null;
+      }
+    }
+  }
+  if (freshState.leases[seq]) {
+    freshState.leases[seq].phase = 'suspended';
+    freshState.leases[seq].slot = null;
+    freshState.leases[seq].sessionId = null;
+    freshState.leases[seq].runId = null;
+    freshState.leases[seq].lastTransitionAt = new Date().toISOString();
+    cleaned = true;
+  }
+
+  if (cleaned) {
+    writeState(ctx.paths.stateFile, freshState, 'worker-kill');
   }
 
   console.log(`  Worker seq:${seq} killed`);
