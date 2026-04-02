@@ -252,8 +252,17 @@ export async function executeTick(
     }
   };
   process.on('exit', cleanupAll);
-  process.on('SIGINT', () => { cleanupAll(); process.exit(130); });
-  process.on('SIGTERM', () => { cleanupAll(); process.exit(143); });
+
+  // Wait for pending PM operations before exiting on signal
+  const gracefulExit = async (code: number) => {
+    cleanupAll();
+    try {
+      await supervisor.drainPendingActions();
+    } catch { /* best effort */ }
+    process.exit(code);
+  };
+  process.on('SIGINT', () => { gracefulExit(130); });
+  process.on('SIGTERM', () => { gracefulExit(143); });
 
   // ─── Continuous mode ───────────────────────────────────────────
   for (const runner of runners) {

@@ -98,15 +98,37 @@ export class PlaneTaskBackend implements TaskBackend {
     if (body !== undefined) {
       init.body = JSON.stringify(body);
     }
-    const res = await fetch(url, init);
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Plane API ${method} ${path} failed (${res.status}): ${text}`);
+
+    const maxRetries = 3;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const res = await fetch(url, init);
+        if (res.ok) {
+          const text = await res.text();
+          if (!text) return undefined as T;
+          return JSON.parse(text) as T;
+        }
+        // Retry on 5xx or 429 (rate limit), fail immediately on 4xx
+        if ((res.status >= 500 || res.status === 429) && attempt < maxRetries - 1) {
+          const delay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+          process.stderr.write(`[plane] ${method} ${path} returned ${res.status}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})\n`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        const text = await res.text().catch(() => '');
+        throw new Error(`Plane API ${method} ${path} failed (${res.status}): ${text}`);
+      } catch (err) {
+        // Retry on network errors (ECONNRESET, ETIMEDOUT, etc.)
+        if (attempt < maxRetries - 1 && err instanceof TypeError) {
+          const delay = 1000 * Math.pow(2, attempt);
+          process.stderr.write(`[plane] ${method} ${path} network error, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})\n`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw err;
+      }
     }
-    // Some endpoints (DELETE, PATCH with 204) may return empty body
-    const text = await res.text();
-    if (!text) return undefined as T;
-    return JSON.parse(text) as T;
+    throw new Error(`Plane API ${method} ${path} failed after ${maxRetries} retries`);
   }
 
   // ---------------------------------------------------------------------------

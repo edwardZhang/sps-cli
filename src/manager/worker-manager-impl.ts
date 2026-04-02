@@ -342,6 +342,7 @@ export class WorkerManagerImpl implements WorkerManager {
     const workerId = `${project}:${slot}:${taskId}`;
     let pid: number | null = null;
     let sessionId: string | undefined;
+    let resourceAcquired = true; // track whether resource was released by spawn-fail path
 
     try {
       if (transport === 'proc') {
@@ -374,7 +375,10 @@ export class WorkerManagerImpl implements WorkerManager {
       }
     } catch (err) {
       this.log(`Spawn failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`);
-      this.resourceLimiter.release();
+      if (resourceAcquired) {
+        this.resourceLimiter.release();
+        resourceAcquired = false;
+      }
       this.releaseSlotInState(slot, taskId);
       this.taskSlotMap.delete(taskId);
       if (phase === 'integration') {
