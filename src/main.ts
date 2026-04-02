@@ -78,7 +78,7 @@ const COMMANDS: Record<string, CommandInfo> = {
   scheduler: { desc: '调度器：Planning → Backlog 晋升', usage: 'sps scheduler <子命令> <project>', subs: {
     tick: '执行一次调度 tick',
   }, examples: ['sps scheduler tick my-project'] },
-  pipeline:  { desc: '流水线管理（启动、停止、状态、看板）', usage: 'sps pipeline <子命令> <project>', subs: {
+  pipeline:  { desc: '流水线管理（启动、停止、状态、看板、自定义管线）', usage: 'sps pipeline <子命令> [args]', subs: {
     start: '启动持续流水线（= sps tick）',
     stop: '停止流水线（= sps stop）',
     status: '查看状态（= sps status）',
@@ -87,7 +87,9 @@ const COMMANDS: Record<string, CommandInfo> = {
     board: '卡片看板（= sps card dashboard）',
     logs: '日志查看（= sps logs）',
     tick: '执行一次流水线 tick',
-  }, examples: ['sps pipeline start my-project', 'sps pipeline workers my-project', 'sps pipeline board my-project'] },
+    list: '列出所有自定义管线',
+    run: '执行自定义管线',
+  }, examples: ['sps pipeline start my-project', 'sps pipeline list', 'sps pipeline run discuss "微服务vs单体"'] },
   worker:    { desc: 'Worker 生命周期管理', usage: 'sps worker <子命令> <project> [seq]', subs: {
     launch: '启动 Worker 实例',
     dashboard: '展示 Worker 仪表板',
@@ -332,7 +334,40 @@ async function main() {
       await executeLogs(projects, args.flags, 30);
       return;
     }
-    console.error('Usage: sps pipeline <start|stop|status|reset|workers|board|card|logs> [project]');
+    if (sub === 'list') {
+      const { listPipelines } = await import('./core/pipelineConfig.js');
+      const pipelines = listPipelines();
+      if (pipelines.length === 0) {
+        console.log('No pipelines found. Create .sps/pipelines/<name>.yaml to get started.');
+      } else {
+        console.log(`\n  Available pipelines:\n`);
+        for (const p of pipelines) {
+          const desc = p.description ? `  ${p.description}` : '';
+          console.log(`  ${p.name.padEnd(20)} ${p.mode.padEnd(8)} ${desc}`);
+        }
+        console.log('');
+      }
+      return;
+    }
+    if (sub === 'run') {
+      const pipelineName = args.project;
+      if (!pipelineName) {
+        console.error('Usage: sps pipeline run <name> ["prompt"]');
+        process.exit(2);
+      }
+      const { loadPipelineConfig } = await import('./core/pipelineConfig.js');
+      const config = loadPipelineConfig(pipelineName);
+      if (config.mode === 'steps') {
+        const { executePipelineRun } = await import('./commands/pipelineRunner.js');
+        const userPrompt = args.positionals.join(' ');
+        await executePipelineRun(config, userPrompt, args.flags);
+      } else {
+        console.error(`Pipeline "${pipelineName}" is mode "${config.mode}" — use "sps pipeline start" for project pipelines`);
+        process.exit(2);
+      }
+      return;
+    }
+    console.error('Usage: sps pipeline <start|stop|status|reset|workers|board|card|logs|list|run> [project]');
     process.exit(2);
   }
 
