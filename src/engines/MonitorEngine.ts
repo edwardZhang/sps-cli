@@ -55,6 +55,19 @@ export class MonitorEngine {
     this.runtimeStore = new RuntimeStore(ctx);
   }
 
+  /**
+   * Safe MR status check — returns { exists: false, state: 'unknown' } if GitLab API
+   * fails (project not found, MR_MODE=none, network error). Prevents monitor from
+   * crashing on projects without GitLab integration.
+   */
+  private async safeMrStatus(branch: string): Promise<{ exists: boolean; state: string }> {
+    try {
+      return await this.safeMrStatus(branch);
+    } catch {
+      return { exists: false, state: 'unknown' };
+    }
+  }
+
   async tick(): Promise<CommandResult> {
     const actions: ActionRecord[] = [];
     const checks: CheckResult[] = [];
@@ -211,13 +224,13 @@ export class MonitorEngine {
             this.log.debug(`seq ${card.seq}: in transition (lease.phase=${runtime.lease.phase}, ${Math.round(transitionAge / 1000)}s ago) — skipping stale check`);
             continue;
           }
-          const mrStatus = await this.repoBackend.getMrStatus(branchName);
+          const mrStatus = await this.safeMrStatus(branchName);
           if (mrStatus.state === 'merged') {
             this.log.info(`seq ${card.seq}: Card already merged, skipping stale check`);
             continue;
           }
         } else {
-          const mrStatus = await this.repoBackend.getMrStatus(branchName);
+          const mrStatus = await this.safeMrStatus(branchName);
           if (mrStatus.state === 'merged') {
             this.log.info(`seq ${card.seq}: Card already merged while closeout was releasing resources, skipping stale check`);
             continue;
@@ -251,7 +264,7 @@ export class MonitorEngine {
       if (!handle) {
         // Not tracked by Supervisor and no slot → stale
         // Check for MR as a last resort
-        const mrStatus = await this.repoBackend.getMrStatus(slotState.branch || runtime.lease?.branch || branchName);
+        const mrStatus = await this.safeMrStatus(slotState.branch || runtime.lease?.branch || branchName);
 
         if (mrStatus.exists) {
           this.log.warn(`seq ${card.seq}: Worker not tracked, but MR exists — stale runtime`);
