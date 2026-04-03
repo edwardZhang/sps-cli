@@ -933,13 +933,6 @@ export class StageEngine {
       phase,
     });
 
-    // Archive to .sps/ for debugging
-    try {
-      const spsDir = resolve(worktreePath, '.sps');
-      if (!existsSync(spsDir)) mkdirSync(spsDir, { recursive: true });
-      writeFileSync(resolve(spsDir, `${this.stage.name}_prompt.txt`), prompt);
-    } catch { /* archive failure should never block worker launch */ }
-
     return prompt;
   }
 

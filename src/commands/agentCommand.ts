@@ -201,12 +201,13 @@ function levenshtein(a: string, b: string): number {
   return dp[m][n];
 }
 
-/** Load a profile from profiles/ directory. Searches dist/profiles/ then cwd. */
+/** Load a profile from skills directory or direct path. */
 function loadProfile(name: string): string | null {
+  const HOME = process.env.HOME || '/home/coral';
   const candidates = [
-    // Installed package profiles
-    resolve(import.meta.url.replace('file://', '').replace(/\/commands\/agentCommand\.js$/, ''), '..', 'profiles', `${name}.md`),
-    // CWD profiles
+    // Skill references (primary location since v0.34.0)
+    resolve(HOME, '.coral', 'skills', 'dev-worker', 'references', `${name}.md`),
+    // CWD profiles (user-created)
     resolve(process.cwd(), 'profiles', `${name}.md`),
     // Direct path
     name,

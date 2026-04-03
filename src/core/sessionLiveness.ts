@@ -18,15 +18,8 @@ import type { WorkerSlotState } from './state.js';
 
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'lost']);
 
-export function isProcessAlive(pid: number | null | undefined): boolean {
-  if (!pid || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { isProcessAlive } from '../providers/outputParser.js';
+export { isProcessAlive };
 
 export function isACPBackedSlot(slot: Pick<WorkerSlotState, 'transport' | 'mode'>): boolean {
   return (

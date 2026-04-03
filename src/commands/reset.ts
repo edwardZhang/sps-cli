@@ -31,9 +31,7 @@ const HOME = process.env.HOME || '/home/coral';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
-function isPidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
+import { isProcessAlive as isPidAlive } from '../providers/outputParser.js';
 
 function stopTick(project: string, log: Logger): void {
   const lockFile = resolve(HOME, '.coral', 'projects', project, 'runtime', 'tick.lock');

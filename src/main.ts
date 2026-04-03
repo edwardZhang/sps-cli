@@ -376,7 +376,7 @@ async function main() {
       const { listPipelines } = await import('./core/pipelineConfig.js');
       const pipelines = listPipelines();
       if (pipelines.length === 0) {
-        console.log('No pipelines found. Create .sps/pipelines/<name>.yaml to get started.');
+        console.log('No pipelines found. Create ~/.coral/projects/<project>/pipelines/<name>.yaml to get started.');
       } else {
         console.log(`\n  Available pipelines:\n`);
         for (const p of pipelines) {
@@ -394,22 +394,21 @@ async function main() {
         console.error('Usage: sps pipeline use <project> <pipeline-name>');
         process.exit(2);
       }
-      const { ProjectContext } = await import('./core/context.js');
-      const { setActivePipeline, getActivePipelineName } = await import('./core/projectPipelineAdapter.js');
-      const ctx = ProjectContext.load(project);
-      const pipelinesDir = resolve(ctx.paths.repoDir, '.sps', 'pipelines');
-      // Verify the pipeline file exists
+      const { getPipelinesDir } = await import('./core/pipelineConfig.js');
+      const { setActivePipeline } = await import('./core/projectPipelineAdapter.js');
+      const pipelinesDir = getPipelinesDir(project);
       const found = ['.yaml', '.yml'].some(ext => existsSync(resolve(pipelinesDir, pipelineName + ext)));
       if (!found) {
         console.error(`Pipeline "${pipelineName}" not found in ${pipelinesDir}/`);
-        const files = readdirSync(pipelinesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
-        if (files.length > 0) {
-          console.error(`Available: ${files.map(f => f.replace(/\.ya?ml$/, '')).join(', ')}`);
+        if (existsSync(pipelinesDir)) {
+          const files = readdirSync(pipelinesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+          if (files.length > 0) {
+            console.error(`Available: ${files.map(f => f.replace(/\.ya?ml$/, '')).join(', ')}`);
+          }
         }
         process.exit(1);
       }
-      setActivePipeline(ctx.paths.repoDir, pipelineName);
-      const prev = getActivePipelineName(ctx.paths.repoDir);
+      setActivePipeline(project, pipelineName);
       console.log(`  ✓ Active pipeline for ${project}: ${pipelineName}`);
       return;
     }

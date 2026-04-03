@@ -14,6 +14,7 @@
  * @boundedContext pipeline
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ProjectConfig } from './config.js';
@@ -110,7 +111,7 @@ export class ProjectPipelineAdapter {
   readonly settings: ProjectPipelineSettings;
 
   constructor(config: ProjectConfig, projectDir?: string) {
-    const yamlConfig = loadProjectPipelineYaml(projectDir || config.PROJECT_DIR);
+    const yamlConfig = loadProjectPipelineYaml(config.PROJECT_NAME, projectDir);
 
     if (yamlConfig) {
       this.settings = buildFromYaml(yamlConfig, config);
@@ -202,36 +203,44 @@ export class ProjectPipelineAdapter {
 
 // ─── YAML Loading ───────────────────────────────────────────────
 
-/** Path to the active pipeline marker file */
-function activePipelinePath(projectDir: string): string {
-  return resolve(projectDir, '.sps', 'active-pipeline');
+/** Resolve pipelines dir: ~/.coral/projects/<name>/pipelines/ with legacy fallback */
+function resolvePipelinesDir(projectName: string, projectDir?: string): string | null {
+  const coralDir = resolve(homedir(), '.coral', 'projects', projectName, 'pipelines');
+  if (existsSync(coralDir)) return coralDir;
+  // Legacy fallback: <repo>/.sps/pipelines/
+  if (projectDir) {
+    const legacyDir = resolve(projectDir, '.sps', 'pipelines');
+    if (existsSync(legacyDir)) return legacyDir;
+  }
+  return null;
 }
 
-/** Read the active pipeline name from .sps/active-pipeline */
-export function getActivePipelineName(projectDir: string): string | null {
+/** Path to the active pipeline marker file */
+function activePipelinePath(projectName: string): string {
+  return resolve(homedir(), '.coral', 'projects', projectName, 'active-pipeline');
+}
+
+/** Read the active pipeline name */
+export function getActivePipelineName(projectName: string): string | null {
   try {
-    const marker = readFileSync(activePipelinePath(projectDir), 'utf-8').trim();
+    const marker = readFileSync(activePipelinePath(projectName), 'utf-8').trim();
     return marker || null;
   } catch { return null; }
 }
 
 /** Set the active pipeline name */
-export function setActivePipeline(projectDir: string, name: string): void {
-  const spsDir = resolve(projectDir, '.sps');
-  if (!existsSync(spsDir)) {
-    mkdirSync(spsDir, { recursive: true });
-  }
-  writeFileSync(activePipelinePath(projectDir), name + '\n');
+export function setActivePipeline(projectName: string, name: string): void {
+  const dir = resolve(homedir(), '.coral', 'projects', projectName);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(activePipelinePath(projectName), name + '\n');
 }
 
-function loadProjectPipelineYaml(projectDir?: string): any | null {
-  if (!projectDir) return null;
-
-  const pipelinesDir = resolve(projectDir, '.sps', 'pipelines');
-  if (!existsSync(pipelinesDir)) return null;
+function loadProjectPipelineYaml(projectName: string, projectDir?: string): any | null {
+  const pipelinesDir = resolvePipelinesDir(projectName, projectDir);
+  if (!pipelinesDir) return null;
 
   // Check for explicitly activated pipeline
-  const activeName = getActivePipelineName(projectDir);
+  const activeName = getActivePipelineName(projectName);
   if (activeName) {
     for (const ext of ['.yaml', '.yml']) {
       const filePath = resolve(pipelinesDir, activeName + ext);

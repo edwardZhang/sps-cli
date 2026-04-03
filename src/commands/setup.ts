@@ -27,7 +27,6 @@ import { Logger } from '../core/logger.js';
 const HOME = process.env.HOME || '/home/coral';
 const ENV_PATH = resolve(HOME, '.coral', 'env');
 const PROJECTS_DIR = resolve(HOME, '.coral', 'projects');
-const PROFILES_DIR = resolve(HOME, '.coral', 'profiles');
 const SKILLS_SRC_DIR = resolve(HOME, '.coral', 'skills');
 
 function createPrompt(): { ask: (question: string, defaultValue?: string) => Promise<string>; close: () => void } {
@@ -59,42 +58,47 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
   console.log('');
   console.log('  AI-Driven Development Pipeline Orchestrator');
   console.log('  ──────────────────────────────────────────────────────────────────────');
-  console.log('  Automate the full dev lifecycle: task cards → AI coding → MR → merge.');
-  console.log('  Supports Plane/Trello/Markdown, GitLab, Claude Code/Codex, Matrix.');
+  console.log('  Automate the full dev lifecycle: task cards → AI coding → push → merge.');
+  console.log('  Supports Plane/Trello/Markdown, GitLab/GitHub, Claude/Codex/Gemini, Matrix.');
   console.log('  https://www.npmjs.com/package/@coralai/sps-cli');
   console.log('');
 
-  // ─── Step 1: ~/.coral/projects directory ───────────────────────
-  if (!existsSync(PROJECTS_DIR)) {
-    mkdirSync(PROJECTS_DIR, { recursive: true });
-    log.ok(`Created ${PROJECTS_DIR}`);
-  } else {
-    log.ok(`${PROJECTS_DIR} already exists`);
+  // ─── Step 1: ~/.coral/ directory structure ──────────────────────
+  const dirs = [
+    PROJECTS_DIR,
+    resolve(HOME, '.coral', 'memory', 'user'),
+  ];
+  for (const dir of dirs) {
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+      log.ok(`Created ${dir}`);
+    } else {
+      log.ok(`${dir} already exists`);
+    }
   }
 
-  // ─── Step 1.5: Install worker skill profiles to ~/.coral/profiles/ ──
+  // ─── Step 1.5: Install bundled skills to ~/.coral/skills/ ───────
   {
-    // Resolve bundled profiles directory relative to compiled JS location
-    // dist/commands/setup.js → ../../profiles/
     const thisFile = fileURLToPath(import.meta.url);
-    const bundledProfilesDir = resolve(dirname(thisFile), '..', '..', 'profiles');
+    const bundledSkillsDir = resolve(dirname(thisFile), '..', '..', 'skills');
 
-    if (existsSync(bundledProfilesDir)) {
-      mkdirSync(PROFILES_DIR, { recursive: true });
-      const files = readdirSync(bundledProfilesDir).filter(f => f.endsWith('.md'));
+    if (existsSync(bundledSkillsDir)) {
+      mkdirSync(SKILLS_SRC_DIR, { recursive: true });
+      const skillDirs = readdirSync(bundledSkillsDir, { withFileTypes: true })
+        .filter(d => d.isDirectory());
       let installed = 0;
-      for (const file of files) {
-        const src = resolve(bundledProfilesDir, file);
-        const dest = resolve(PROFILES_DIR, file);
-        // Only overwrite bundled profiles, preserve user-created ones
+      for (const dir of skillDirs) {
+        const src = resolve(bundledSkillsDir, dir.name);
+        const dest = resolve(SKILLS_SRC_DIR, dir.name);
         if (!existsSync(dest) || flags.force) {
-          copyFileSync(src, dest);
+          // Copy entire skill directory recursively
+          copyDirRecursive(src, dest);
           installed++;
         }
       }
-      log.ok(`Installed ${installed} skill profiles to ${PROFILES_DIR} (${files.length} total)`);
+      log.ok(`Installed ${installed} system skill(s) to ${SKILLS_SRC_DIR} (${skillDirs.length} total)`);
     } else {
-      log.warn(`Bundled profiles not found at ${bundledProfilesDir} — skipping`);
+      log.warn(`Bundled skills not found at ${bundledSkillsDir} — skipping`);
     }
   }
 
@@ -124,8 +128,8 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     console.log('\n  Configure global credentials (~/.coral/env)');
     console.log('  Press Enter to keep existing value (shown in brackets).\n');
 
-    // GitLab
-    console.log('  ── GitLab ──');
+    // Git Remote (GitLab / GitHub / other)
+    console.log('  ── Git Remote (GitLab / GitHub — leave blank if not needed) ──');
     const gitlabUrl = await prompt.ask('GITLAB_URL', existing.GITLAB_URL || '');
     const gitlabToken = await prompt.ask('GITLAB_TOKEN', mask(existing.GITLAB_TOKEN) ? `${mask(existing.GITLAB_TOKEN)} — Enter to keep` : '');
     // If user pressed Enter on masked token, keep the original
@@ -170,7 +174,7 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     ];
 
     if (gitlabUrl || finalGitlabToken) {
-      lines.push('# ── GitLab ──────────────────────────────────────────');
+      lines.push('# ── Git Remote ──────────────────────────────────────');
       if (gitlabUrl) lines.push(`export GITLAB_URL="${gitlabUrl}"`);
       if (finalGitlabToken) lines.push(`export GITLAB_TOKEN="${finalGitlabToken}"`);
       if (gitlabSshHost) lines.push(`export GITLAB_SSH_HOST="${gitlabSshHost}"`);
@@ -309,4 +313,18 @@ export function syncSkills(log?: Logger): number {
   }
 
   return synced;
+}
+
+/** Recursively copy a directory */
+function copyDirRecursive(src: string, dest: string): void {
+  mkdirSync(dest, { recursive: true });
+  for (const entry of readdirSync(src, { withFileTypes: true })) {
+    const srcPath = resolve(src, entry.name);
+    const destPath = resolve(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      copyFileSync(srcPath, destPath);
+    }
+  }
 }

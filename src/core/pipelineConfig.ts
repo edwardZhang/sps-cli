@@ -14,6 +14,7 @@
  * @boundedContext pipeline
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 
@@ -167,35 +168,59 @@ function validateStepsPipeline(config: StepsPipelineConfig, filePath: string): v
 // ─── Loading ────────────────────────────────────────────────────
 
 /**
- * Get the pipelines directory path for the current working directory.
+ * Get the pipelines directory path for a project.
+ * Pipeline YAML files live in ~/.coral/projects/<name>/pipelines/.
+ * Falls back to <cwd>/.sps/pipelines/ for legacy compatibility.
  */
-export function getPipelinesDir(cwd?: string): string {
-  return resolve(cwd || process.cwd(), '.sps', 'pipelines');
+export function getPipelinesDir(projectOrCwd?: string): string {
+  if (projectOrCwd) {
+    // Try ~/.coral/projects/<name>/pipelines/ first
+    const coralDir = resolve(homedir(), '.coral', 'projects', projectOrCwd, 'pipelines');
+    if (existsSync(coralDir)) return coralDir;
+    // Legacy fallback: <cwd>/.sps/pipelines/
+    const legacyDir = resolve(projectOrCwd, '.sps', 'pipelines');
+    if (existsSync(legacyDir)) return legacyDir;
+    // Default to new location (will be created)
+    return coralDir;
+  }
+  return resolve(homedir(), '.coral', 'projects');
 }
 
 /**
- * List all available pipelines.
+ * List all available pipelines across all projects (or for a specific project).
  */
-export function listPipelines(cwd?: string): PipelineInfo[] {
-  const dir = getPipelinesDir(cwd);
-  if (!existsSync(dir)) return [];
-
-  const files = readdirSync(dir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+export function listPipelines(projectName?: string): PipelineInfo[] {
   const pipelines: PipelineInfo[] = [];
+  const projectsDir = resolve(homedir(), '.coral', 'projects');
 
-  for (const file of files) {
-    const filePath = resolve(dir, file);
-    try {
-      const raw = readFileSync(filePath, 'utf-8');
-      const parsed = parseYaml(raw);
-      pipelines.push({
-        name: parsed.name || basename(file, file.endsWith('.yaml') ? '.yaml' : '.yml'),
-        description: parsed.description || '',
-        mode: parsed.mode || 'steps',
-        filePath,
-      });
-    } catch {
-      // Skip unparseable files
+  // Collect pipeline dirs to scan
+  const pipelineDirs: string[] = [];
+  if (projectName) {
+    const dir = getPipelinesDir(projectName);
+    if (existsSync(dir)) pipelineDirs.push(dir);
+  } else if (existsSync(projectsDir)) {
+    // Scan all projects
+    for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dir = resolve(projectsDir, entry.name, 'pipelines');
+      if (existsSync(dir)) pipelineDirs.push(dir);
+    }
+  }
+
+  for (const dir of pipelineDirs) {
+    const files = readdirSync(dir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+    for (const file of files) {
+      const filePath = resolve(dir, file);
+      try {
+        const raw = readFileSync(filePath, 'utf-8');
+        const parsed = parseYaml(raw);
+        pipelines.push({
+          name: parsed.name || basename(file, file.endsWith('.yaml') ? '.yaml' : '.yml'),
+          description: parsed.description || '',
+          mode: parsed.mode || 'steps',
+          filePath,
+        });
+      } catch { /* skip */ }
     }
   }
 
@@ -223,7 +248,7 @@ export function loadPipelineConfig(name: string, cwd?: string): PipelineConfig {
     const names = available.map(p => p.name).join(', ');
     throw new Error(
       `Pipeline "${name}" not found in ${dir}\n` +
-      (names ? `Available pipelines: ${names}` : 'No pipelines found. Create .sps/pipelines/<name>.yaml'),
+      (names ? `Available pipelines: ${names}` : 'No pipelines found. Create ~/.coral/projects/<project>/pipelines/<name>.yaml'),
     );
   }
 

@@ -100,7 +100,7 @@ export function parseCodexSessionId(filePath: string): string | null {
 /**
  * Check if a process is alive by sending signal 0.
  */
-export function isProcessAlive(pid: number): boolean {
+export function isProcessAlive(pid: number | null | undefined): boolean {
   if (!pid || pid <= 0) return false;
   try {
     process.kill(pid, 0);

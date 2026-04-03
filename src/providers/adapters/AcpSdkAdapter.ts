@@ -79,11 +79,8 @@ function isChildAlive(child: ChildProcess): boolean {
   return child.exitCode == null && child.signalCode == null && !child.killed;
 }
 
-/** Cross-process PID liveness check (signal 0) */
-function isPidAlive(pid: number | null | undefined): boolean {
-  if (!pid) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
+// isPidAlive imported from outputParser for cross-process PID liveness check
+import { isProcessAlive as isPidAlive } from '../outputParser.js';
 
 export class AcpSdkAdapter implements ACPClient {
   private readonly sessions = new Map<string, ActiveSession>();
@@ -385,18 +382,24 @@ export class AcpSdkAdapter implements ACPClient {
 
   private async destroySession(session: ActiveSession): Promise<void> {
     const pid = session.child.pid;
+    const log = (msg: string) => process.stderr.write(`[acp-adapter] ${msg}\n`);
     // Kill child + try to kill descendant processes
-    try { session.child.kill('SIGTERM'); } catch { /* noop */ }
+    try { session.child.kill('SIGTERM'); } catch (e) {
+      log(`SIGTERM child failed: ${e instanceof Error ? e.message : e}`);
+    }
     if (pid) {
-      // Kill descendants spawned by npx (sh → node child tree)
-      try { process.kill(pid, 'SIGTERM'); } catch { /* noop */ }
+      try { process.kill(pid, 'SIGTERM'); } catch { /* already dead */ }
       this.killDescendants(pid, 'SIGTERM');
     }
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
-        try { session.child.kill('SIGKILL'); } catch { /* noop */ }
+        try { session.child.kill('SIGKILL'); } catch (e) {
+          log(`SIGKILL child failed (pid=${pid}): ${e instanceof Error ? e.message : e}`);
+        }
         if (pid) {
-          try { process.kill(pid, 'SIGKILL'); } catch { /* noop */ }
+          try { process.kill(pid, 'SIGKILL'); } catch (e) {
+            log(`SIGKILL pid=${pid} failed: ${e instanceof Error ? e.message : e}`);
+          }
           this.killDescendants(pid, 'SIGKILL');
         }
         resolve();
@@ -415,10 +418,10 @@ export class AcpSdkAdapter implements ACPClient {
       for (const line of out.trim().split('\n')) {
         const childPid = parseInt(line, 10);
         if (childPid > 0) {
-          try { process.kill(childPid, signal); } catch { /* noop */ }
-          this.killDescendants(childPid, signal); // recursive
+          try { process.kill(childPid, signal); } catch { /* already dead */ }
+          this.killDescendants(childPid, signal);
         }
       }
-    } catch { /* pgrep not found or no children */ }
+    } catch { /* pgrep not found or no children — expected */ }
   }
 }

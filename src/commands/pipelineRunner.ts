@@ -149,11 +149,12 @@ async function runAgentStep(
 }
 
 /**
- * Load a profile from profiles/ directory.
+ * Load a profile from skills directory or direct path.
  */
 function loadProfile(name: string): string | null {
+  const HOME = process.env.HOME || '/home/coral';
   const candidates = [
-    resolve(import.meta.url.replace('file://', '').replace(/\/commands\/pipelineRunner\.js$/, ''), '..', 'profiles', `${name}.md`),
+    resolve(HOME, '.coral', 'skills', 'dev-worker', 'references', `${name}.md`),
     resolve(process.cwd(), 'profiles', `${name}.md`),
     name,
   ];

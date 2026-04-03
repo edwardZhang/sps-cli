@@ -29,14 +29,7 @@ interface LockInfo {
   startedAt: string;
 }
 
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { isProcessAlive as isPidAlive } from '../providers/outputParser.js';
 
 function discoverProjects(): string[] {
   const projectsDir = resolve(HOME, '.coral', 'projects');
