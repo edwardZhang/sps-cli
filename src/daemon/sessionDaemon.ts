@@ -1,13 +1,17 @@
 /**
- * Session Daemon — background process managing persistent ACP sessions.
+ * @module        sessionDaemon
+ * @description   会话守护进程，管理持久化 ACP 会话的后台服务
  *
- * Spawned by `sps agent daemon start`. Listens on Unix domain socket.
- * Holds AcpSdkAdapter instances (ACP adapter child processes) that persist
- * across terminal sessions. CLI clients communicate via NDJSON RPC.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
  *
- * Socket: ~/.coral/sessions/daemon.sock
- * PID:    ~/.coral/sessions/daemon.pid
- * State:  ~/.coral/sessions/state.json (shared with clients)
+ * @created       2026-03-31
+ * @updated       2026-04-03
+ *
+ * @role          daemon
+ * @layer         daemon
+ * @boundedContext session-management
  */
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';

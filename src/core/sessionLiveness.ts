@@ -1,3 +1,18 @@
+/**
+ * @module        sessionLiveness
+ * @description   会话与进程存活检测工具
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-04-03
+ *
+ * @role          util
+ * @layer         core
+ * @boundedContext session
+ */
 import type { ACPSessionRecord } from '../models/acp.js';
 import type { WorkerSlotState } from './state.js';
 

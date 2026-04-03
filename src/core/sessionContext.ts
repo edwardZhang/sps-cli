@@ -1,8 +1,17 @@
 /**
- * SessionContext — lightweight runtime context for harness mode (sps agent).
+ * @module        sessionContext
+ * @description   轻量级会话上下文，用于 harness 模式
  *
- * Unlike ProjectContext, does not require ~/.coral/projects/<name>/conf.
- * State stored in ~/.coral/sessions/ (separate from pipeline state).
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-31
+ * @updated       2026-04-03
+ *
+ * @role          state
+ * @layer         core
+ * @boundedContext session
  */
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';

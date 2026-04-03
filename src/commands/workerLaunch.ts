@@ -1,3 +1,23 @@
+/**
+ * @module        workerLaunch
+ * @description   Worker 启动命令，为指定槽位创建并执行 Agent 工作进程
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext pipeline
+ *
+ * @trigger       sps worker launch <project> <seq> [--json] [--dry-run]
+ * @inputs        项目名、Worker 序号、JSON 输出标志、dry-run 标志
+ * @outputs       Worker 执行结果
+ * @workflow      1. 加载上下文 → 2. 创建 StageEngine → 3. 启动 Worker 进程 → 4. 输出结果
+ */
 import {} from '../core/config.js';
 import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';

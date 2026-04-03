@@ -1,9 +1,22 @@
 /**
- * sps status — Show running status of all SPS projects.
+ * @module        status
+ * @description   全局状态查看命令，展示所有项目的 tick 和 Worker 运行状态
  *
- * Usage:
- *   sps status           # list all projects with tick/worker status
- *   sps status --json    # JSON output
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-26
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext system
+ *
+ * @trigger       sps status [--json]
+ * @inputs        --json 标志
+ * @outputs       项目状态列表（终端表格或 JSON）
+ * @workflow      1. 扫描项目目录 → 2. 读取锁文件和状态 → 3. 渲染状态表格
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';

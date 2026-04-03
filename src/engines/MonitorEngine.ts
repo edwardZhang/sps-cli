@@ -1,3 +1,21 @@
+/**
+ * @module        MonitorEngine
+ * @description   异常检测与健康检查引擎，监控孤儿插槽、超时任务及 Worker 状态
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          engine
+ * @layer         engine
+ * @boundedContext pipeline-health
+ *
+ * @workflow       tick → orphan cleanup → stale detection → timeout check → BLOCKED check → state alignment
+ */
+
 import { existsSync, statSync } from 'node:fs';
 import type { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';

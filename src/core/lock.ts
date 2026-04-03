@@ -1,3 +1,18 @@
+/**
+ * @module        lock
+ * @description   Tick 级文件锁实现，防止并发调度冲突
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          util
+ * @layer         core
+ * @boundedContext concurrency
+ */
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 

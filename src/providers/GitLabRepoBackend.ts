@@ -1,14 +1,24 @@
+/**
+ * @module        GitLabRepoBackend
+ * @description   GitLab 仓库后端实现，提供 Git 操作与 GitLab REST API 集成
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-03-26
+ *
+ * @role          provider
+ * @layer         provider
+ * @boundedContext repo
+ */
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { ProjectConfig } from '../core/config.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { MrStatus } from '../models/types.js';
-
-/**
- * GitLab-backed implementation of RepoBackend.
- * Local git operations via execFileSync, remote operations via GitLab REST API.
- */
 export class GitLabRepoBackend implements RepoBackend {
   private readonly gitlabUrl: string;
   private readonly projectId: string;

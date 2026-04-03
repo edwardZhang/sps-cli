@@ -1,3 +1,18 @@
+/**
+ * @module        paths
+ * @description   项目与会话的文件路径解析
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          config
+ * @layer         core
+ * @boundedContext project
+ */
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 

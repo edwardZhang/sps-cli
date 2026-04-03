@@ -1,3 +1,19 @@
+/**
+ * @module        completion-judge.test
+ * @description   CompletionJudge 单元测试
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-29
+ * @updated       2026-04-03
+ *
+ * @role          test
+ * @layer         manager
+ * @boundedContext worker-lifecycle
+ */
+
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

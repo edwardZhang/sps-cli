@@ -1,3 +1,18 @@
+/**
+ * @module        MatrixNotifier
+ * @description   Matrix 协议消息通知器，通过 Matrix REST API 发送流水线通知
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-03-19
+ *
+ * @role          provider
+ * @layer         provider
+ * @boundedContext notification
+ */
 import type { ProjectConfig } from '../core/config.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 

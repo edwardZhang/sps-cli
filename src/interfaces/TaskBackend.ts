@@ -1,3 +1,19 @@
+/**
+ * @module        TaskBackend
+ * @description   任务后端接口，定义卡片 CRUD、状态流转、标签及元数据操作的契约
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-03-27
+ *
+ * @role          interface
+ * @layer         interface
+ * @boundedContext task-management
+ */
+
 import type { Card, CardState } from '../models/types.js';
 
 export interface TaskBackend {

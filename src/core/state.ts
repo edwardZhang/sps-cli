@@ -1,3 +1,18 @@
+/**
+ * @module        state
+ * @description   运行时状态文件的原子读写与工作槽管理
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          state
+ * @layer         core
+ * @boundedContext runtime
+ */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ACPSessionRecord } from '../models/acp.js';

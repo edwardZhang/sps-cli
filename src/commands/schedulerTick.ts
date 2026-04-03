@@ -1,3 +1,23 @@
+/**
+ * @module        schedulerTick
+ * @description   调度引擎单次执行命令，将就绪卡片从 Backlog 推入工作队列
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext pipeline
+ *
+ * @trigger       sps scheduler <project> [--json] [--dry-run]
+ * @inputs        项目名、JSON 输出标志、dry-run 标志
+ * @outputs       调度结果（推入队列的卡片列表）
+ * @workflow      1. 加载上下文 → 2. 创建 SchedulerEngine → 3. 执行调度 tick → 4. 输出结果
+ */
 import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';

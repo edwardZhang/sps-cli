@@ -1,11 +1,20 @@
 /**
- * SPSEventHandler — decoupled event handler for WorkerManager lifecycle events.
+ * @module        EventHandler
+ * @description   解耦的事件处理器，处理 WorkerManager 生命周期事件及 PM 操作重试
  *
- * Replaces the direct PostActions coupling in WorkerManagerImpl.handleExit().
- * PM operations (move, comment, label, release) are executed here and
- * failures are saved to pendingPMActions for retry on the next tick cycle.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
  *
- * Phase 3 of the Worker Manager refactor (T60-T64).
+ * @created       2026-03-28
+ * @updated       2026-04-03
+ *
+ * @role          engine
+ * @layer         engine
+ * @boundedContext worker-lifecycle
+ *
+ * @stateTransition Inprogress → QA | Done (via PM move on worker exit)
+ * @workflow       WorkerManager.exit → EventHandler.handle → PM ops → pendingPMActions retry
  */
 
 import type { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';

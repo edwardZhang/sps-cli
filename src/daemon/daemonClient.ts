@@ -1,8 +1,17 @@
 /**
- * Daemon Client — connects to SessionDaemon via Unix domain socket.
+ * @module        daemonClient
+ * @description   守护进程客户端，通过 Unix 域套接字与 SessionDaemon 通信
  *
- * Lightweight: sends NDJSON requests, waits for responses.
- * Used by `sps agent --chat` to delegate session management to daemon.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-31
+ * @updated       2026-04-03
+ *
+ * @role          daemon
+ * @layer         daemon
+ * @boundedContext session-management
  */
 
 import { existsSync } from 'node:fs';

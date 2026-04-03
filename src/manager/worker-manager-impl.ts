@@ -1,11 +1,17 @@
 /**
- * WorkerManagerImpl — concrete implementation of the WorkerManager interface.
+ * @module        worker-manager-impl
+ * @description   WorkerManager 接口的具体实现，整合 Supervisor/Judge/Limiter 为统一 ACP 接口
  *
- * Wraps ProcessSupervisor, CompletionJudge, ResourceLimiter into the
- * unified ACP interface. PM operations are delegated to SPSEventHandler
- * via the event system (Phase 3 refactor).
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
  *
- * Phase 4: recover() fully implemented with decision matrix from doc-09 §11.3.
+ * @created       2026-03-28
+ * @updated       2026-04-03
+ *
+ * @role          manager
+ * @layer         manager
+ * @boundedContext worker-lifecycle
  */
 import { execFileSync } from 'node:child_process';
 import type { RuntimeState, TaskLease, WorktreeEvidence } from '../core/state.js';

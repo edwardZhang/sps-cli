@@ -1,3 +1,23 @@
+/**
+ * @module        tick
+ * @description   主 tick 循环命令，协调调度、流水线、QA 和监控引擎的周期性执行
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext pipeline
+ *
+ * @trigger       sps tick <project> [--interval N] [--once] [--json]
+ * @inputs        项目名、执行间隔、单次/循环模式、JSON 输出标志
+ * @outputs       每轮 tick 的调度/流水线/QA/监控结果
+ * @workflow      1. 获取锁 → 2. 加载引擎 → 3. 循环执行 scheduler→pipeline→QA→monitor → 4. 释放锁
+ */
 import {} from '../core/config.js';
 import { ProjectContext } from '../core/context.js';
 import { acquireTickLock, releaseTickLock } from '../core/lock.js';

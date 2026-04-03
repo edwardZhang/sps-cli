@@ -1,3 +1,19 @@
+/**
+ * @module        AgentRuntime
+ * @description   Agent 运行时接口，抽象会话管理与任务执行的统一契约
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-04-03
+ *
+ * @role          interface
+ * @layer         interface
+ * @boundedContext agent-control-protocol
+ */
+
 import type { ACPSessionRecord, ACPState, ACPTool } from '../models/acp.js';
 import type { McpServerConfig } from './ACPClient.js';
 

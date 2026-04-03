@@ -1,3 +1,18 @@
+/**
+ * @module        state.test
+ * @description   运行时状态读写的单元测试
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-29
+ * @updated       2026-04-03
+ *
+ * @role          test
+ * @layer         core
+ * @boundedContext runtime
+ */
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

@@ -1,11 +1,26 @@
+/**
+ * @module        workerPs
+ * @description   Worker 进程列表命令，展示所有 Worker 会话的状态和运行信息
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-04-02
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext pipeline
+ *
+ * @trigger       sps worker ps <project> [--json]
+ * @inputs        项目名、JSON 输出标志
+ * @outputs       Worker 槽位状态列表（终端表格或 JSON）
+ * @workflow      1. 加载项目状态 → 2. 遍历 Worker 槽位 → 3. 渲染状态表格
+ */
 import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import { createIdleWorkerSlot, readState, writeState } from '../core/state.js';
-
-/**
- * sps worker ps <project>
- * List all worker sessions with their status, seq, pid, runtime.
- */
 export async function executeWorkerPs(
   project: string,
   flags: Record<string, boolean>,

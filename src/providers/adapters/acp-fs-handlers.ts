@@ -1,8 +1,17 @@
 /**
- * ACP File System Handlers — aligned with OpenClaw/acpx FileSystemHandlers
+ * @module        acp-fs-handlers
+ * @description   ACP 文件系统处理器，处理文件读写回调并强制沙箱隔离
  *
- * Handles fs/read_text_file and fs/write_text_file ACP Client callbacks.
- * Enforces cwd sandbox and supports line-range slicing.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-31
+ * @updated       2026-04-03
+ *
+ * @role          adapter
+ * @layer         provider
+ * @boundedContext acp
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';

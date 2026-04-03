@@ -1,3 +1,18 @@
+/**
+ * @module        context
+ * @description   项目上下文封装，聚合配置与路径
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          state
+ * @layer         core
+ * @boundedContext project
+ */
 import { loadProjectConf, type ProjectConfig, validateConfig } from './config.js';
 import { type ProjectPaths, resolveProjectPaths } from './paths.js';
 

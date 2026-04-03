@@ -1,3 +1,18 @@
+/**
+ * @module        PlaneTaskBackend
+ * @description   Plane 项目管理平台的任务后端实现，通过 REST API 同步卡片状态
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          provider
+ * @layer         provider
+ * @boundedContext task
+ */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ProjectConfig } from '../core/config.js';
@@ -5,13 +20,6 @@ import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { Card, CardState } from '../models/types.js';
 
 const ALL_STATES: CardState[] = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA', 'Done'];
-
-/**
- * TaskBackend implementation for Plane (plane.so / self-hosted).
- *
- * Uses Node.js built-in fetch to communicate with the Plane REST API v1.
- * Local pm_meta JSON files provide the metadata / claim layer.
- */
 export class PlaneTaskBackend implements TaskBackend {
   private readonly apiUrl: string;
   private readonly apiKey: string;

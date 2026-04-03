@@ -1,3 +1,23 @@
+/**
+ * @module        monitorTick
+ * @description   监控引擎单次执行命令，检测异常 Worker 并触发恢复操作
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext pipeline
+ *
+ * @trigger       sps monitor <project> [--json]
+ * @inputs        项目名、JSON 输出标志
+ * @outputs       监控结果（修复动作列表）
+ * @workflow      1. 加载项目上下文 → 2. 创建 MonitorEngine → 3. 执行监控 tick → 4. 输出结果
+ */
 import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';

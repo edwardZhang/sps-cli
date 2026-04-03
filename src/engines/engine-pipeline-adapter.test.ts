@@ -1,9 +1,17 @@
 /**
- * Integration test: verify all engines use ProjectPipelineAdapter states
- * instead of hardcoded 'Planning'/'Backlog'/'Todo'/'Inprogress'/'QA'/'Done'.
+ * @module        engine-pipeline-adapter.test
+ * @description   集成测试：验证所有引擎通过 ProjectPipelineAdapter 使用可配置状态名
  *
- * Uses a custom pipeline YAML with non-default state names to prove
- * configurability end-to-end.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-04-02
+ * @updated       2026-04-03
+ *
+ * @role          test
+ * @layer         engine
+ * @boundedContext pipeline-configuration
  */
 
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

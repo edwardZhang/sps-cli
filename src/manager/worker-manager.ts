@@ -1,12 +1,17 @@
 /**
- * WorkerManager — ACP interface entry point (v0.24.x).
+ * @module        worker-manager
+ * @description   WorkerManager ACP 接口定义，引擎层与 Worker 进程管理之间的契约
  *
- * Defines the contract between SPS engine layer (orchestrator) and
- * worker process management (executor).  The SPS engines call these
- * methods; the implementation encapsulates Supervisor, CompletionJudge,
- * ResourceLimiter, and (transitionally) PostActions.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
  *
- * See: docs/design/14-acp-worker-manager-protocol.md
+ * @created       2026-03-28
+ * @updated       2026-04-03
+ *
+ * @role          manager
+ * @layer         manager
+ * @boundedContext worker-lifecycle
  */
 
 import type { CompletionResult } from './completion-judge.js';

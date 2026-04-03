@@ -1,3 +1,18 @@
+/**
+ * @module        queue
+ * @description   流水线任务队列的原子读写与删除
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          util
+ * @layer         core
+ * @boundedContext pipeline
+ */
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 

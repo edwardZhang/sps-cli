@@ -1,11 +1,17 @@
 /**
- * ProjectPipelineAdapter — bridges pipeline YAML config with existing engines.
+ * @module        projectPipelineAdapter
+ * @description   流水线 YAML 配置与引擎之间的适配层
  *
- * When a mode:project YAML exists, it drives card states, stage definitions,
- * and per-stage agent/profile. When no YAML exists, returns defaults that
- * exactly match current hardcoded behavior (zero behavior change).
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
  *
- * Engines use this adapter instead of hardcoded string literals.
+ * @created       2026-04-02
+ * @updated       2026-04-03
+ *
+ * @role          util
+ * @layer         core
+ * @boundedContext pipeline
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';

@@ -1,3 +1,19 @@
+/**
+ * @module        types
+ * @description   核心数据类型定义，包括 Card、Worker 状态、MR 状态及命令结果等
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-02
+ *
+ * @role          model
+ * @layer         model
+ * @boundedContext shared-types
+ */
+
 /** Unified card representation across PM backends */
 export interface Card {
   id: string;

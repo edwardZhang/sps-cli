@@ -1,3 +1,23 @@
+/**
+ * @module        workerDashboard
+ * @description   Worker 仪表盘命令，展示所有 Worker 槽位的详细运行状态和输出
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-24
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext pipeline
+ *
+ * @trigger       sps worker dashboard <project> [--json] [--watch]
+ * @inputs        项目名、JSON 输出标志、watch 模式
+ * @outputs       Worker 状态仪表盘（含会话、输出流和运行时信息）
+ * @workflow      1. 加载项目状态 → 2. 收集 Worker 运行时快照 → 3. 渲染仪表盘视图
+ */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';

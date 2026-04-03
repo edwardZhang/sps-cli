@@ -1,3 +1,19 @@
+/**
+ * @module        acp
+ * @description   ACP（Agent Control Protocol）数据模型，定义会话、运行记录及状态枚举
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-03-31
+ *
+ * @role          model
+ * @layer         model
+ * @boundedContext agent-control-protocol
+ */
+
 export type ACPTool = 'claude' | 'codex' | 'gemini';
 
 export type ACPSlotStatus =

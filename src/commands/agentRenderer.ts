@@ -1,6 +1,21 @@
 /**
- * Agent output renderer — polls AgentRuntime.inspect() and streams
- * incremental output to stdout. Shared by sps agent (one-shot + chat).
+ * @module        agentRenderer
+ * @description   Agent 输出渲染器，轮询 AgentRuntime 并流式输出增量内容到终端
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-31
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext agent
+ *
+ * @inputs        AgentRuntime 实例、轮询配置
+ * @outputs       流式文本输出（含 spinner 动画）
+ * @workflow      1. 轮询 inspect() → 2. 计算增量 → 3. 渲染到 stdout → 4. 返回最终结果
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';

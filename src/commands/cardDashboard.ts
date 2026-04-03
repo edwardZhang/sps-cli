@@ -1,3 +1,23 @@
+/**
+ * @module        cardDashboard
+ * @description   卡片看板仪表盘，按状态列展示所有任务卡及 Worker 分配情况
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext taskManagement
+ *
+ * @trigger       sps card dashboard <project>
+ * @inputs        项目名、flags
+ * @outputs       看板视图（终端表格或 JSON）
+ * @workflow      1. 加载项目配置 → 2. 读取卡片和状态 → 3. 渲染多列看板
+ */
 import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { type CardStates, ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';

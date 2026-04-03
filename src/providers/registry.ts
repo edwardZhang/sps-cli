@@ -1,3 +1,18 @@
+/**
+ * @module        registry
+ * @description   Provider 注册中心，根据项目配置创建各后端实例
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          provider
+ * @layer         provider
+ * @boundedContext registry
+ */
 import type { ProjectConfig } from '../core/config.js';
 import type { ProjectContext } from '../core/context.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';

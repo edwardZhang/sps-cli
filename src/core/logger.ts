@@ -1,3 +1,18 @@
+/**
+ * @module        logger
+ * @description   结构化事件日志记录与轮转
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          util
+ * @layer         core
+ * @boundedContext logging
+ */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs';
 import { resolve } from 'node:path';
 

@@ -1,16 +1,23 @@
+/**
+ * @module        TrelloTaskBackend
+ * @description   Trello 看板的任务后端实现，通过 REST API 管理卡片与列表状态
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          provider
+ * @layer         provider
+ * @boundedContext task
+ */
 import type { ProjectConfig } from '../core/config.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { Card, CardState } from '../models/types.js';
 
 const ALL_STATES: CardState[] = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA', 'Done'];
-
-/**
- * Trello-backed TaskBackend.
- *
- * Uses Trello REST API via Node.js built-in fetch.
- * Cards are identified by shortLink (seq). Lists represent states.
- * Metadata is stored in card comments with [JARVIS-META] prefix.
- */
 export class TrelloTaskBackend implements TaskBackend {
   private readonly apiBase = 'https://api.trello.com/1';
   private readonly apiKey: string;

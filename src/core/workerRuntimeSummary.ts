@@ -1,3 +1,18 @@
+/**
+ * @module        workerRuntimeSummary
+ * @description   Worker 运行时状态统计摘要
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-03-28
+ *
+ * @role          util
+ * @layer         core
+ * @boundedContext worker
+ */
 import { hasPersistedActiveRun, isACPBackedSlot, isProcessAlive } from './sessionLiveness.js';
 import type { RuntimeState, WorkerSlotState } from './state.js';
 

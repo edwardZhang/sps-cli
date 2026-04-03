@@ -1,13 +1,17 @@
 /**
- * AcpSdkAdapter — Implements ACPClient using real ACP JSON-RPC over stdio.
+ * @module        AcpSdkAdapter
+ * @description   ACP SDK 适配器，通过 JSON-RPC over stdio 实现 Agent 客户端协议通信
  *
- * Replaces legacy adapters with
- * structured protocol communication via @agentclientprotocol/sdk.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
  *
- * Architecture (aligned with OpenClaw/acpx):
- *   AcpSdkAdapter → spawn ACP adapter child process → stdio pipe → JSON-RPC
- *   Claude: npx @agentclientprotocol/claude-agent-acp (Anthropic official SDK)
- *   Codex:  npx @zed-industries/codex-acp (Rust native binary)
+ * @created       2026-03-31
+ * @updated       2026-04-03
+ *
+ * @role          adapter
+ * @layer         provider
+ * @boundedContext acp
  */
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';

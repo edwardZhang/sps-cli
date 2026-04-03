@@ -1,3 +1,22 @@
+/**
+ * @module        StageEngine
+ * @description   通用阶段引擎，根据 YAML 配置驱动任意流水线阶段的执行与流转
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-04-03
+ * @updated       2026-04-03
+ *
+ * @role          engine
+ * @layer         engine
+ * @boundedContext pipeline-execution
+ *
+ * @stateTransition stage.from → stage.to (由 StageDefinition 配置驱动)
+ * @workflow       tick → prepare (first stage) → claim → launch worker → complete → release (last stage)
+ */
+
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';

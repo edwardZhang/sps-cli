@@ -1,7 +1,17 @@
 /**
- * Shell environment utilities — parse and source shell conf files.
+ * @module        shellEnv
+ * @description   Shell 配置文件解析与环境变量加载工具
  *
- * Shared by config.ts (project loading) and supervisor.ts (worker env).
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-29
+ * @updated       2026-04-03
+ *
+ * @role          util
+ * @layer         core
+ * @boundedContext configuration
  */
 
 import { execSync } from 'node:child_process';

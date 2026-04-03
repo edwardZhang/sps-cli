@@ -1,3 +1,23 @@
+/**
+ * @module        pmCommand
+ * @description   项目管理命令，支持卡片状态变更、列表查询等 PM 操作
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext taskManagement
+ *
+ * @trigger       sps pm <subcommand> <project> [args]
+ * @inputs        项目名、子命令、卡片 ID、目标状态
+ * @outputs       操作结果（文本或 JSON）
+ * @workflow      1. 解析子命令 → 2. 加载项目上下文 → 3. 创建 TaskBackend → 4. 执行 PM 操作
+ */
 import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import type { CardState } from '../models/types.js';

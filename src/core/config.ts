@@ -1,3 +1,18 @@
+/**
+ * @module        config
+ * @description   项目配置加载、解析与校验
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          config
+ * @layer         core
+ * @boundedContext configuration
+ */
 import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';

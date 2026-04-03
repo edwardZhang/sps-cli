@@ -1,3 +1,18 @@
+/**
+ * @module        LocalACPClient
+ * @description   本地 ACP 客户端，封装 ACP SDK 适配器提供会话与运行管理
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-03-31
+ *
+ * @role          provider
+ * @layer         provider
+ * @boundedContext acp
+ */
 import type {
   ACPClient,
   EnsureSessionInput,

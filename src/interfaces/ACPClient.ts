@@ -1,3 +1,19 @@
+/**
+ * @module        ACPClient
+ * @description   ACP 客户端接口定义，规范会话创建、运行启动及状态检查的契约
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-04-03
+ *
+ * @role          interface
+ * @layer         interface
+ * @boundedContext agent-control-protocol
+ */
+
 import type { ACPRunStatus, ACPSessionStatus, ACPTool } from '../models/acp.js';
 
 export interface McpServerConfig {

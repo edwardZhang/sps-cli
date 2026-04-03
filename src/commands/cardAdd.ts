@@ -1,3 +1,23 @@
+/**
+ * @module        cardAdd
+ * @description   添加任务卡片命令，向项目看板中创建新的任务卡
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext taskManagement
+ *
+ * @trigger       sps card add <project> "<title>" ["description"]
+ * @inputs        项目名、卡片标题、可选描述
+ * @outputs       新创建的卡片信息（文本或 JSON）
+ * @workflow      1. 解析参数 → 2. 加载项目上下文 → 3. 创建 TaskBackend → 4. 写入卡片
+ */
 import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import { readQueue, writeQueue } from '../core/queue.js';

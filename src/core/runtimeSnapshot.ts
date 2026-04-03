@@ -1,3 +1,18 @@
+/**
+ * @module        runtimeSnapshot
+ * @description   项目运行时快照聚合，提供全局状态视图
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-04-03
+ *
+ * @role          state
+ * @layer         core
+ * @boundedContext runtime
+ */
 import { existsSync, readFileSync } from 'node:fs';
 import { RuntimeCoordinator } from '../manager/runtime-coordinator.js';
 import type { ACPState } from '../models/acp.js';

@@ -1,8 +1,17 @@
 /**
- * CompletionJudge — determines whether a worker completed its task.
+ * @module        completion-judge
+ * @description   Worker 完成度判定器，根据 git 产物和阶段证据判断任务是否完成
  *
- * Called immediately when a worker process exits (via Supervisor exit callback).
- * Checks git artifacts and phase-specific completion evidence.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-25
+ * @updated       2026-04-03
+ *
+ * @role          manager
+ * @layer         manager
+ * @boundedContext worker-lifecycle
  */
 
 import { execFileSync } from 'node:child_process';

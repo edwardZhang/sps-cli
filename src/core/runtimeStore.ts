@@ -1,3 +1,18 @@
+/**
+ * @module        runtimeStore
+ * @description   运行时状态存储与任务视图查询
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-04-03
+ *
+ * @role          state
+ * @layer         core
+ * @boundedContext runtime
+ */
 import { existsSync, readFileSync } from 'node:fs';
 import type { ACPSessionRecord, ACPState } from '../models/acp.js';
 import type { ProjectContext } from './context.js';

@@ -1,3 +1,19 @@
+/**
+ * @module        runtime-coordinator
+ * @description   运行时协调器，管理 Worker 生命周期调度与状态恢复
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-04-03
+ *
+ * @role          manager
+ * @layer         manager
+ * @boundedContext worker-lifecycle
+ */
+
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import type { ProjectContext } from '../core/context.js';

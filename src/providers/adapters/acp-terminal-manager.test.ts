@@ -1,3 +1,18 @@
+/**
+ * @module        acp-terminal-manager.test
+ * @description   ACP 终端管理器的单元测试
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-31
+ * @updated       2026-04-03
+ *
+ * @role          test-setup
+ * @layer         provider
+ * @boundedContext acp
+ */
 import { describe, expect, it } from 'vitest';
 import { TerminalManager } from './acp-terminal-manager.js';
 

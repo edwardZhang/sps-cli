@@ -1,3 +1,22 @@
+/**
+ * @module        SchedulerEngine
+ * @description   调度引擎，从队列中取出任务卡片并分配到可用的 Worker 插槽
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          engine
+ * @layer         engine
+ * @boundedContext task-scheduling
+ *
+ * @stateTransition Queue → Worker slot assignment
+ * @workflow       tick → readQueue → matchSlot → assign → notify
+ */
+
 import type { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import type { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';

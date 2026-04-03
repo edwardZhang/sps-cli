@@ -1,10 +1,17 @@
 /**
- * PipelineConfig — loads and validates pipeline YAML configurations.
+ * @module        pipelineConfig
+ * @description   流水线 YAML 配置加载与校验
  *
- * Pipelines are stored in .sps/pipelines/*.yaml.
- * Two modes:
- *   - mode: steps  — linear agent+shell orchestration
- *   - mode: project — event-driven PM workflow (future Phase C)
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-04-02
+ * @updated       2026-04-03
+ *
+ * @role          config
+ * @layer         core
+ * @boundedContext pipeline
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';

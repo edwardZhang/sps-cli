@@ -1,6 +1,17 @@
 /**
- * Shared utilities for print-mode worker providers.
- * Handles output file tailing, session ID parsing, and process inspection.
+ * @module        outputParser
+ * @description   Worker 输出解析工具，提供日志尾读、会话 ID 解析与进程检查
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-25
+ * @updated       2026-04-03
+ *
+ * @role          provider
+ * @layer         provider
+ * @boundedContext worker-runtime
  */
 
 import { execFileSync } from 'node:child_process';

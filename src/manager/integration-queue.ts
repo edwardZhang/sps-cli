@@ -1,11 +1,17 @@
 /**
- * IntegrationQueue — serialises integration workers per project+targetBranch.
+ * @module        integration-queue
+ * @description   集成队列，按项目+目标分支串行化集成 Worker 的启动与排队
  *
- * Same project + same target branch can only have ONE active integration worker
- * at a time.  Additional requests are FIFO-queued and auto-dequeued when the
- * active worker completes or fails.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
  *
- * State is persisted to state.json under the `integrationQueues` field.
+ * @created       2026-03-28
+ * @updated       2026-04-03
+ *
+ * @role          manager
+ * @layer         manager
+ * @boundedContext worker-lifecycle
  */
 
 import type { RuntimeState } from '../core/state.js';

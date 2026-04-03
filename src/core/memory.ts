@@ -1,18 +1,17 @@
 /**
- * Memory system — persistent project-level knowledge for SPS workers and agents.
+ * @module        memory
+ * @description   项目级持久化知识记忆系统
  *
- * Design follows Claude Code's approach:
- * - File-based storage with YAML frontmatter (name / description / type)
- * - MEMORY.md index file (one line per entry, max 200 lines)
- * - Agents read/write memory files directly via bash
- * - CLI provides `sps memory context` for prompt injection
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
  *
- * Directory layout:
- *   ~/.coral/memory/projects/<project>/
- *   ├── MEMORY.md              ← index (loaded into every prompt)
- *   ├── api-naming.md          ← convention
- *   ├── use-phaser.md          ← decision
- *   └── migration-order.md     ← lesson
+ * @created       2026-04-03
+ * @updated       2026-04-03
+ *
+ * @role          util
+ * @layer         core
+ * @boundedContext memory
  *
  * Types: convention (no decay), decision (slow decay), lesson (normal decay), reference (no decay)
  */

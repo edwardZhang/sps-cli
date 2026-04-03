@@ -1,12 +1,22 @@
 /**
- * sps logs — Real-time log viewer for all projects (pm2-style).
+ * @module        logs
+ * @description   实时日志查看器，支持多项目日志聚合和跟踪模式
  *
- * Usage:
- *   sps logs                     # all projects, follow mode
- *   sps logs <project>           # single project
- *   sps logs --lines 50          # show last 50 lines initially
- *   sps logs --err               # error logs only
- *   sps logs --no-follow         # dump and exit (no tailing)
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-25
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext system
+ *
+ * @trigger       sps logs [project] [--lines N] [--err] [--no-follow]
+ * @inputs        可选项目名、行数、错误过滤、跟踪模式标志
+ * @outputs       彩色日志流输出（按项目着色）
+ * @workflow      1. 发现日志文件 → 2. 读取尾部内容 → 3. 实时跟踪新增行
  */
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';

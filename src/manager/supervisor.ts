@@ -1,9 +1,17 @@
 /**
- * ProcessSupervisor — manages worker handle lifecycle.
+ * @module        supervisor
+ * @description   进程监管器，管理 Worker 句柄生命周期、终止与孤儿监控
  *
- * Tracks ACP worker handles, provides kill/query/orphan monitoring.
- * Worker spawning is handled by AgentRuntime (ACP transport).
- * Three-layer env merge (system + global creds + project conf) for environment.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-25
+ * @updated       2026-04-03
+ *
+ * @role          manager
+ * @layer         manager
+ * @boundedContext worker-lifecycle
  */
 import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';

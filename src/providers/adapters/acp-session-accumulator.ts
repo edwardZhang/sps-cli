@@ -1,9 +1,17 @@
 /**
- * ACP Session Update Accumulator
+ * @module        acp-session-accumulator
+ * @description   ACP 会话更新累加器，收集 Agent 进程的会话通知并提供结构化状态
  *
- * Collects session/update notifications from the ACP agent process.
- * Provides structured state for inspectRun() without terminal scraping.
- * Optionally writes events to a log file for `sps logs` compatibility.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-31
+ * @updated       2026-03-31
+ *
+ * @role          adapter
+ * @layer         provider
+ * @boundedContext acp
  */
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';

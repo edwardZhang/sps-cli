@@ -1,10 +1,17 @@
 /**
- * PMClient — lightweight PM operations for PostActions.
+ * @module        pm-client
+ * @description   轻量级项目管理客户端，为 PostActions 提供完成/失败后续操作
  *
- * Only the 5 methods needed by post-completion/failure flows.
- * Full TaskBackend remains for SchedulerEngine/StageEngine use.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
  *
- * Supports Plane, Trello, and Markdown backends.
+ * @created       2026-03-25
+ * @updated       2026-04-03
+ *
+ * @role          manager
+ * @layer         manager
+ * @boundedContext worker-lifecycle
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';

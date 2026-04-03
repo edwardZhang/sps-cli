@@ -1,9 +1,22 @@
 /**
- * sps stop — Stop a running tick process for one or all projects.
+ * @module        stop
+ * @description   停止命令，终止指定项目或所有项目的 tick 进程
  *
- * Usage:
- *   sps stop <project>       # stop tick for a specific project
- *   sps stop --all           # stop ticks for all projects
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-25
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext system
+ *
+ * @trigger       sps stop <project> | sps stop --all
+ * @inputs        项目名或 --all 标志
+ * @outputs       停止操作结果
+ * @workflow      1. 查找锁文件 → 2. 读取 PID → 3. 发送 SIGTERM → 4. 清理锁文件
  */
 import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';

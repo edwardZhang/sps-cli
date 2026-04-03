@@ -1,5 +1,20 @@
+/**
+ * @module        MarkdownTaskBackend
+ * @description   基于 Markdown 文件的任务后端实现，以文件系统目录映射卡片状态
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          provider
+ * @layer         provider
+ * @boundedContext task
+ */
 import {
-  existsSync, mkdirSync, readdirSync, readFileSync, 
+  existsSync, mkdirSync, readdirSync, readFileSync,
   renameSync, unlinkSync,writeFileSync,
 } from 'node:fs';
 import { basename, resolve } from 'node:path';

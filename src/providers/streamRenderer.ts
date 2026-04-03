@@ -1,5 +1,17 @@
 /**
- * Transforms raw stream-json/JSONL output into human-readable dashboard text.
+ * @module        streamRenderer
+ * @description   流式输出渲染器，将 stream-json/JSONL 转换为可读仪表盘文本
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-25
+ * @updated       2026-03-25
+ *
+ * @role          provider
+ * @layer         provider
+ * @boundedContext worker-runtime
  */
 
 /**

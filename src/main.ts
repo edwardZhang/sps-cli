@@ -1,4 +1,19 @@
 #!/usr/bin/env node
+/**
+ * @module        main
+ * @description   SPS CLI 入口文件，注册全局错误处理与命令行解析
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          entry
+ * @layer         entry
+ * @boundedContext cli
+ */
 
 // Global error handlers — catch unhandled rejections and uncaught exceptions
 process.on('unhandledRejection', (reason) => {

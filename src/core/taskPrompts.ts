@@ -1,3 +1,18 @@
+/**
+ * @module        taskPrompts
+ * @description   Worker 任务提示词模板生成
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-28
+ * @updated       2026-04-03
+ *
+ * @role          util
+ * @layer         core
+ * @boundedContext worker
+ */
 export type WorkerTaskPhase = 'development' | 'integration';
 
 interface SharedPromptContext {

@@ -1,3 +1,23 @@
+/**
+ * @module        acpCommand
+ * @description   ACP 会话管理命令，支持创建、查询和控制 Agent 会话
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext acp
+ *
+ * @trigger       sps acp <subcommand>
+ * @inputs        project name, subcommand, positionals, flags
+ * @outputs       ACP 会话状态信息（文本或 JSON）
+ * @workflow      1. 解析子命令 → 2. 加载项目上下文 → 3. 创建 AgentRuntime → 4. 执行 ACP 操作
+ */
 import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import type { ACPTool } from '../models/acp.js';

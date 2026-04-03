@@ -1,8 +1,17 @@
 /**
- * Vitest global setup — suppress stderr log noise during tests.
+ * @module        test-setup
+ * @description   Vitest 全局配置，抑制测试中的 stderr 日志噪音
  *
- * Production modules write [worker-manager], [supervisor], [completion-judge]
- * logs to stderr. This silences them in test output.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-29
+ * @updated       2026-03-29
+ *
+ * @role          test-setup
+ * @layer         entry
+ * @boundedContext test
  */
 import { vi } from 'vitest';
 

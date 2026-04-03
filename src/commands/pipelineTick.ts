@@ -1,3 +1,23 @@
+/**
+ * @module        pipelineTick
+ * @description   Pipeline 引擎单次执行命令，驱动任务分配和 Worker 调度
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext pipeline
+ *
+ * @trigger       sps pipeline <project> [--json] [--dry-run]
+ * @inputs        项目名、JSON 输出标志、dry-run 标志
+ * @outputs       Pipeline tick 执行结果
+ * @workflow      1. 加载上下文 → 2. 创建 StageEngine → 3. 执行 pipeline tick → 4. 输出结果
+ */
 import {} from '../core/config.js';
 import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';

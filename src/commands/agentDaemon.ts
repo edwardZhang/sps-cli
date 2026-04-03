@@ -1,5 +1,22 @@
 /**
- * Daemon control commands for `sps agent daemon start/stop/status`.
+ * @module        agentDaemon
+ * @description   Agent 守护进程控制命令，管理后台 daemon 的启停和状态查询
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-31
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext agent
+ *
+ * @trigger       sps agent daemon <start|stop|status>
+ * @inputs        子命令（start/stop/status）
+ * @outputs       daemon 进程状态信息
+ * @workflow      1. 解析子命令 → 2. 执行 start/stop/status 操作 → 3. 输出状态
  */
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';

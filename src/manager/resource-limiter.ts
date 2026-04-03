@@ -1,8 +1,17 @@
 /**
- * ResourceLimiter — global worker resource control.
+ * @module        resource-limiter
+ * @description   全局 Worker 资源限制器，控制并发数量、启动间隔和内存使用
  *
- * Shared across all project runners in the tick process.
- * Controls total worker count, launch stagger, and memory usage.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-25
+ * @updated       2026-03-30
+ *
+ * @role          manager
+ * @layer         manager
+ * @boundedContext worker-lifecycle
  */
 import { freemem, totalmem } from 'node:os';
 

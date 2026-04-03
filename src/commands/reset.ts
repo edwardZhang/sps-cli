@@ -1,20 +1,23 @@
 /**
- * sps reset — Reset cards for re-execution.
+ * @module        reset
+ * @description   重置命令，清理卡片状态、Worker 和 worktree 以便重新执行
  *
- * Usage:
- *   sps reset <project>              # reset all non-Done cards
- *   sps reset <project> --all        # reset ALL cards including Done
- *   sps reset <project> --card 5     # reset specific card(s)
- *   sps reset <project> --card 5,6,7
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
  *
- * Each reset performs 5 steps:
- *   1. Stop tick (kill process, remove lock)
- *   2. Clean state.json (leases, activeCards, worker slots, queues)
- *   3. Remove worktrees + git branches
- *   4. Move cards back to Planning
- *   5. Report summary
+ * @created       2026-03-30
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext system
+ *
+ * @trigger       sps reset <project> [--all] [--card N]
+ * @inputs        项目名、--all/--card 标志
+ * @outputs       重置操作摘要
+ * @workflow      1. 停止 tick 进程 → 2. 清理 state.json → 3. 删除 worktree 和分支 → 4. 卡片回退到 Planning
  */
-
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';

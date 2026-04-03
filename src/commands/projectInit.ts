@@ -1,3 +1,23 @@
+/**
+ * @module        projectInit
+ * @description   项目初始化命令，从模板创建项目配置和目录结构
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext system
+ *
+ * @trigger       sps init <project> [--force]
+ * @inputs        项目名、--force 覆盖标志
+ * @outputs       初始化后的项目目录和配置文件
+ * @workflow      1. 查找模板目录 → 2. 创建项目目录 → 3. 复制模板文件 → 4. 写入配置
+ */
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

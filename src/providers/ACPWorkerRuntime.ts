@@ -1,3 +1,18 @@
+/**
+ * @module        ACPWorkerRuntime
+ * @description   基于 ACP 协议的 Worker 运行时实现，管理 Agent 会话与任务执行
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-27
+ * @updated       2026-04-03
+ *
+ * @role          provider
+ * @layer         provider
+ * @boundedContext worker-runtime
+ */
 import { basename } from 'node:path';
 import type { ProjectContext } from '../core/context.js';
 import { RuntimeStore } from '../core/runtimeStore.js';

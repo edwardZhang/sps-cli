@@ -1,15 +1,23 @@
 /**
- * sps agent — Harness mode: direct agent interaction without project config.
+ * @module        agentCommand
+ * @description   独立 Agent 交互命令，支持单次执行、多轮对话和会话管理
  *
- * Usage:
- *   sps agent "<prompt>"                    # one-shot
- *   sps agent --chat                        # multi-turn REPL
- *   sps agent --chat --name backend         # named session
- *   sps agent --tool codex "<prompt>"       # specify agent
- *   sps agent status                        # show sessions
- *   sps agent close [--name NAME]           # close session
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-31
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext agent
+ *
+ * @trigger       sps agent "<prompt>" | sps agent --chat | sps agent status | sps agent close
+ * @inputs        prompt 文本、--chat/--name/--tool 标志
+ * @outputs       Agent 执行结果流式输出
+ * @workflow      1. 解析参数 → 2. 创建/恢复会话 → 3. 发送 prompt → 4. 流式渲染输出
  */
-
 import * as childProcess from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';

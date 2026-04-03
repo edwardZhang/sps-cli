@@ -1,3 +1,19 @@
+/**
+ * @module        RepoBackend
+ * @description   代码仓库后端接口，抽象分支管理、MR 操作及 Worktree 生命周期
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-03-24
+ *
+ * @role          interface
+ * @layer         interface
+ * @boundedContext repository-operations
+ */
+
 import type { MrStatus } from '../models/types.js';
 
 export interface RepoBackend {

@@ -1,8 +1,17 @@
 /**
- * ACP Terminal Manager — aligned with OpenClaw/acpx TerminalManager
+ * @module        acp-terminal-manager
+ * @description   ACP 终端管理器，处理子进程创建、输出捕获与优雅终止
  *
- * Handles terminal/create, output, wait_for_exit, kill, release ACP Client callbacks.
- * Spawns subprocesses, captures stdout+stderr with byte-limit truncation, graceful kill.
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-31
+ * @updated       2026-04-03
+ *
+ * @role          adapter
+ * @layer         provider
+ * @boundedContext acp
  */
 import { type ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';

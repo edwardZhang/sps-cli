@@ -1,3 +1,23 @@
+/**
+ * @module        doctor
+ * @description   环境诊断命令，检查项目配置、依赖和运行状态是否正常
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext system
+ *
+ * @trigger       sps doctor <project> [--fix] [--json]
+ * @inputs        项目名、--fix/--json/--skip-remote/--reset-state 标志
+ * @outputs       诊断结果列表（pass/warn/fail）
+ * @workflow      1. 检查配置字段 → 2. 验证路径 → 3. 检查远程连接 → 4. 可选自动修复
+ */
 import { execSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';

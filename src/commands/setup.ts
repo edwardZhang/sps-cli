@@ -1,3 +1,23 @@
+/**
+ * @module        setup
+ * @description   全局环境初始化向导，配置 SPS 运行所需的目录、密钥和全局设置
+ *
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-19
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext system
+ *
+ * @trigger       sps setup [--force]
+ * @inputs        交互式用户输入（API key、配置项）
+ * @outputs       ~/.coral/ 目录结构和全局配置文件
+ * @workflow      1. 创建目录结构 → 2. 交互式收集配置 → 3. 写入 env 文件 → 4. 安装技能文件
+ */
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';

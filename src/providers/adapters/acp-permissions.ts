@@ -1,10 +1,17 @@
 /**
- * ACP Permission Resolver — aligned with OpenClaw/acpx permissions.ts
+ * @module        acp-permissions
+ * @description   ACP 权限解析器，三层决策链自动审批工具调用权限
  *
- * 3-layer decision chain:
- *   1. Global policy (approve-all / deny-all)
- *   2. Kind classification (approve-reads auto-approves read/search)
- *   3. Unattended fallback (SPS auto-approves everything — no TTY)
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-03-31
+ * @updated       2026-03-31
+ *
+ * @role          adapter
+ * @layer         provider
+ * @boundedContext acp
  */
 
 export type PermissionMode = 'approve-all' | 'approve-reads' | 'deny-all';

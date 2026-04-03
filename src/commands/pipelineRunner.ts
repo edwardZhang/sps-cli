@@ -1,9 +1,22 @@
 /**
- * PipelineRunner — executes mode:steps pipelines.
+ * @module        pipelineRunner
+ * @description   步骤模式流水线执行器，顺序执行 agent/shell 步骤并处理流程控制
  *
- * Sequentially runs steps (agent or shell), handles flow control
- * (abort/skip/retry/goto), variable substitution, and session reuse.
- * Agent steps run through DaemonClient (persistent daemon sessions).
+ * @author        eddy
+ * @organization  wykj
+ * @ownership     wykj/eddy
+ *
+ * @created       2026-04-02
+ * @updated       2026-04-03
+ *
+ * @role          command
+ * @layer         command
+ * @boundedContext pipeline
+ *
+ * @trigger       由 sps agent 的 steps 模式 pipeline 配置触发
+ * @inputs        StepsPipelineConfig、用户 prompt、工作目录
+ * @outputs       各步骤执行结果（含变量替换和流程控制）
+ * @workflow      1. 解析步骤配置 → 2. 变量替换 → 3. 顺序执行步骤 → 4. 处理 onFail 策略
  */
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
