@@ -204,7 +204,13 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
   try {
     const snapshot = await loadRuntimeSnapshot(projectName);
     const { ctx, state } = snapshot;
-    const taskBackend = createTaskBackend(ctx.config);
+    const adapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+    const allStateNames = [...new Set([
+      adapter.states.planning, adapter.states.backlog,
+      adapter.states.ready, adapter.states.done,
+      ...adapter.stages.flatMap(s => [s.triggerState, s.activeState, s.onCompleteState]),
+    ].filter(Boolean))];
+    const taskBackend = createTaskBackend(ctx.config, allStateNames);
     const cards = await taskBackend.listAll();
     const snapshots: CardSnapshot[] = cards.map(card => {
       const active = state.activeCards[card.seq];
@@ -237,7 +243,6 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
       };
     }).sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10));
 
-    const adapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
     const projectStates = buildStateList(adapter.states);
     const counts = Object.fromEntries(projectStates.map(s => [s, 0])) as Record<CardState, number>;
     for (const card of snapshots) {

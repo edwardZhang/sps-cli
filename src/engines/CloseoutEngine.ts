@@ -252,7 +252,7 @@ export class CloseoutEngine {
       branch: branchName,
       targetBranch: this.ctx.mergeBranch,
       tool: (this.pipelineAdapter.integrateStage?.agent || this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
-      transport: workflowTransport === 'proc' ? 'proc' : workflowTransport as 'proc' | 'acp-sdk',
+      transport: 'acp-sdk' as const,
       outputFile: resolve(logsDir, `${this.ctx.projectName}-integration-${card.seq}-${Date.now()}.jsonl`),
       completionStrategy: this.pipelineAdapter.integrateStage?.completion,
     };

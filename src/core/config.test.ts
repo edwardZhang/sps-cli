@@ -15,7 +15,7 @@ function makeConfig(overrides?: Partial<ProjectConfig>): ProjectConfig {
     PM_TOOL: 'plane',
     MR_MODE: 'none',
     WORKER_TOOL: 'claude',
-    WORKER_TRANSPORT: 'proc',
+    WORKER_TRANSPORT: 'acp-sdk',
     MAX_CONCURRENT_WORKERS: 3,
     WORKER_RESTART_LIMIT: 2,
     MAX_ACTIONS_PER_TICK: 1,
@@ -94,30 +94,10 @@ describe('resolveWorkflowTransport', () => {
     expect(resolveWorkflowTransport(config)).toBe('acp-sdk');
   });
 
-  it('preserves proc when explicitly set', async () => {
-    const { resolveWorkflowTransport } = await import('./config.js');
-    const config = makeConfig({ raw: { WORKER_TRANSPORT: 'proc' } as any });
-    expect(resolveWorkflowTransport(config)).toBe('proc');
-  });
-
-  it('maps unknown transport to acp-sdk', async () => {
+  it('always returns acp-sdk regardless of config', async () => {
     const { resolveWorkflowTransport } = await import('./config.js');
     const config = makeConfig({ raw: { WORKER_TRANSPORT: 'unknown' } as any });
     expect(resolveWorkflowTransport(config)).toBe('acp-sdk');
-  });
-});
-
-describe('workflowUsesAgentRuntime', () => {
-  it('returns true for default acp-sdk transport', async () => {
-    const { workflowUsesAgentRuntime } = await import('./config.js');
-    const config = makeConfig();
-    expect(workflowUsesAgentRuntime(config)).toBe(true);
-  });
-
-  it('returns false for proc transport', async () => {
-    const { workflowUsesAgentRuntime } = await import('./config.js');
-    const config = makeConfig({ raw: { WORKER_TRANSPORT: 'proc' } as any });
-    expect(workflowUsesAgentRuntime(config)).toBe(false);
   });
 });
 

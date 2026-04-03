@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { WorkerManagerImpl, type WorkerManagerDeps } from './worker-manager-impl.js';
-import { ProcessSupervisor, type SpawnOpts, type WorkerHandle } from './supervisor.js';
+import { ProcessSupervisor } from './supervisor.js';
 import { CompletionJudge } from './completion-judge.js';
 import { ResourceLimiter } from './resource-limiter.js';
 import { writeState, createIdleWorkerSlot, type RuntimeState } from '../core/state.js';
@@ -42,6 +42,7 @@ interface TestContext {
   supervisor: ProcessSupervisor;
   judge: CompletionJudge;
   limiter: ResourceLimiter;
+  agentRuntime: Record<string, ReturnType<typeof vi.fn>>;
   wm: WorkerManagerImpl;
   events: WorkerEvent[];
 }
@@ -56,40 +57,24 @@ function setup(maxWorkers = 2): TestContext {
   const judge = new CompletionJudge();
   const limiter = new ResourceLimiter({ maxGlobalWorkers: maxWorkers, staggerDelayMs: 0 });
 
-  // Mock supervisor.spawn to avoid real process creation
-  const spawnMock = vi.spyOn(supervisor, 'spawn').mockImplementation((opts: SpawnOpts): WorkerHandle => {
-    return {
-      id: opts.id,
-      transport: 'proc',
-      pid: 99999,
-      child: null,
-      outputFile: opts.outputFile,
-      project: opts.project,
-      seq: opts.seq,
-      slot: opts.slot,
-      branch: opts.branch,
-      worktree: opts.worktree,
-      tool: opts.tool,
-      exitCode: null,
-      sessionId: null,
-      runId: null,
-      sessionState: null,
-      remoteStatus: null,
-      lastEventAt: null,
-      startedAt: new Date().toISOString(),
-      exitedAt: null,
-    };
-  });
-
   // Mock supervisor.kill
   vi.spyOn(supervisor, 'kill').mockResolvedValue();
   vi.spyOn(supervisor, 'remove').mockImplementation(() => {});
+
+  // Mock agentRuntime for ACP transport
+  const agentRuntime = {
+    startRun: vi.fn().mockResolvedValue({ sessionId: 'mock-session', sessionName: 'mock', pid: 99999 }),
+    resumeRun: vi.fn().mockResolvedValue({ sessionId: 'mock-session', sessionName: 'mock', pid: 99999 }),
+    inspectRun: vi.fn().mockResolvedValue({ status: 'running' }),
+    stopSession: vi.fn().mockResolvedValue(undefined),
+    ensureSession: vi.fn().mockResolvedValue({ sessionId: 'mock-session' }),
+  };
 
   const deps: WorkerManagerDeps = {
     supervisor,
     completionJudge: judge,
     resourceLimiter: limiter,
-    agentRuntime: null,
+    agentRuntime: agentRuntime as any,
     stateFile,
     maxWorkers,
   };
@@ -97,7 +82,7 @@ function setup(maxWorkers = 2): TestContext {
   const events: WorkerEvent[] = [];
   wm.onEvent((event) => events.push(event));
 
-  return { tempDir, stateFile, supervisor, judge, limiter, wm, events };
+  return { tempDir, stateFile, supervisor, judge, limiter, agentRuntime, wm, events };
 }
 
 function makeRunRequest(taskId: string, project = 'test') {
@@ -111,7 +96,7 @@ function makeRunRequest(taskId: string, project = 'test') {
     branch: `feat-${taskId}`,
     targetBranch: 'main',
     tool: 'claude' as const,
-    transport: 'proc' as const,
+    transport: 'acp-sdk' as const,
     outputFile: `/tmp/output-${taskId}.jsonl`,
   };
 }
@@ -136,16 +121,6 @@ describe('WorkerManagerImpl', () => {
       expect(resp.slot).toBe('worker-1');
       expect(resp.workerId).toBe('test:worker-1:1');
       expect(resp.pid).toBe(99999);
-    });
-
-    it('spawns via supervisor', async () => {
-      ctx = setup(2);
-      await ctx.wm.run(makeRunRequest('1'));
-
-      expect(ctx.supervisor.spawn).toHaveBeenCalledOnce();
-      const opts = (ctx.supervisor.spawn as any).mock.calls[0][0] as SpawnOpts;
-      expect(opts.tool).toBe('claude');
-      expect(opts.prompt).toBe('implement feature X');
     });
 
     it('rejects duplicate task', async () => {
@@ -284,7 +259,7 @@ describe('WorkerManagerImpl', () => {
         branch: 'feat-1',
         targetBranch: 'main',
         tool: 'claude',
-        transport: 'proc',
+        transport: 'acp-sdk',
         outputFile: '/tmp/output-1.jsonl',
         sessionId: 'session-abc-123',
       });
@@ -451,12 +426,10 @@ describe('WorkerManagerImpl', () => {
   });
 
   describe('spawn failure handling', () => {
-    it('emits run.failed event when spawn throws', async () => {
+    it('emits run.failed event when agentRuntime.startRun throws', async () => {
       ctx = setup(2);
-      // Make spawn throw
-      (ctx.supervisor.spawn as any).mockImplementation(() => {
-        throw new Error('spawn failed: command not found');
-      });
+      // Make agentRuntime.startRun throw
+      ctx.agentRuntime.startRun.mockRejectedValueOnce(new Error('spawn failed: command not found'));
 
       const resp = await ctx.wm.run(makeRunRequest('1'));
       expect(resp.accepted).toBe(false);
@@ -469,21 +442,12 @@ describe('WorkerManagerImpl', () => {
 
     it('releases resources after spawn failure', async () => {
       ctx = setup(1);
-      (ctx.supervisor.spawn as any).mockImplementation(() => {
-        throw new Error('oops');
-      });
+      ctx.agentRuntime.startRun.mockRejectedValueOnce(new Error('oops'));
 
       await ctx.wm.run(makeRunRequest('1'));
 
       // Should be able to acquire again (resources released)
-      (ctx.supervisor.spawn as any).mockImplementation((opts: SpawnOpts): WorkerHandle => ({
-        id: opts.id, transport: 'proc', pid: 88888, child: null,
-        outputFile: opts.outputFile, project: opts.project, seq: opts.seq,
-        slot: opts.slot, branch: opts.branch, worktree: opts.worktree,
-        tool: opts.tool, exitCode: null, sessionId: null, runId: null,
-        sessionState: null, remoteStatus: null, lastEventAt: null,
-        startedAt: new Date().toISOString(), exitedAt: null,
-      }));
+      ctx.agentRuntime.startRun.mockResolvedValueOnce({ sessionId: 'mock-session-2', sessionName: 'mock', pid: 88888 });
 
       const resp2 = await ctx.wm.run(makeRunRequest('2'));
       expect(resp2.accepted).toBe(true);
@@ -503,110 +467,9 @@ describe('WorkerManagerImpl', () => {
     });
   });
 
-  describe('handleExit (via onExit callback)', () => {
-    it('emits run.completed when CompletionJudge says completed', async () => {
-      ctx = setup(2);
-      let capturedOnExit: ((exitCode: number) => Promise<void> | void) | null = null;
-
-      // Capture the onExit callback from spawn
-      (ctx.supervisor.spawn as any).mockImplementation((opts: SpawnOpts): WorkerHandle => {
-        capturedOnExit = opts.onExit;
-        return {
-          id: opts.id, transport: 'proc', pid: 99999, child: null,
-          outputFile: opts.outputFile, project: opts.project, seq: opts.seq,
-          slot: opts.slot, branch: opts.branch, worktree: opts.worktree,
-          tool: opts.tool, exitCode: null, sessionId: null, runId: null,
-          sessionState: null, remoteStatus: null, lastEventAt: null,
-          startedAt: new Date().toISOString(), exitedAt: null,
-        };
-      });
-
-      // Mock CompletionJudge to return completed
-      vi.spyOn(ctx.judge, 'judge').mockReturnValue({
-        status: 'completed',
-        reason: 'branch_pushed',
-      });
-
-      await ctx.wm.run(makeRunRequest('1'));
-      expect(capturedOnExit).not.toBeNull();
-
-      // Trigger the exit callback
-      await capturedOnExit!(0);
-
-      const completedEvent = ctx.events.find(e => e.type === 'run.completed' && e.taskId === '1');
-      expect(completedEvent).toBeDefined();
-      expect(completedEvent!.completionResult?.status).toBe('completed');
-      expect(completedEvent!.completionResult?.reason).toBe('branch_pushed');
-    });
-
-    it('emits run.failed when CompletionJudge says failed', async () => {
-      ctx = setup(2);
-      let capturedOnExit: ((exitCode: number) => Promise<void> | void) | null = null;
-
-      (ctx.supervisor.spawn as any).mockImplementation((opts: SpawnOpts): WorkerHandle => {
-        capturedOnExit = opts.onExit;
-        return {
-          id: opts.id, transport: 'proc', pid: 99999, child: null,
-          outputFile: opts.outputFile, project: opts.project, seq: opts.seq,
-          slot: opts.slot, branch: opts.branch, worktree: opts.worktree,
-          tool: opts.tool, exitCode: null, sessionId: null, runId: null,
-          sessionState: null, remoteStatus: null, lastEventAt: null,
-          startedAt: new Date().toISOString(), exitedAt: null,
-        };
-      });
-
-      vi.spyOn(ctx.judge, 'judge').mockReturnValue({
-        status: 'failed',
-        reason: 'crash(1)',
-      });
-
-      await ctx.wm.run(makeRunRequest('1'));
-      await capturedOnExit!(1);
-
-      const failedEvent = ctx.events.find(e => e.type === 'run.failed' && e.taskId === '1');
-      expect(failedEvent).toBeDefined();
-      expect(failedEvent!.exitCode).toBe(1);
-    });
-
-    it('releases resource limiter slot after exit', async () => {
-      ctx = setup(1);
-      let capturedOnExit: ((exitCode: number) => Promise<void> | void) | null = null;
-
-      (ctx.supervisor.spawn as any).mockImplementation((opts: SpawnOpts): WorkerHandle => {
-        capturedOnExit = opts.onExit;
-        return {
-          id: opts.id, transport: 'proc', pid: 99999, child: null,
-          outputFile: opts.outputFile, project: opts.project, seq: opts.seq,
-          slot: opts.slot, branch: opts.branch, worktree: opts.worktree,
-          tool: opts.tool, exitCode: null, sessionId: null, runId: null,
-          sessionState: null, remoteStatus: null, lastEventAt: null,
-          startedAt: new Date().toISOString(), exitedAt: null,
-        };
-      });
-
-      vi.spyOn(ctx.judge, 'judge').mockReturnValue({
-        status: 'completed',
-        reason: 'branch_pushed',
-      });
-
-      await ctx.wm.run(makeRunRequest('1'));
-      // Resource limiter should be at capacity
-      expect(ctx.limiter.tryAcquire()).toBe(false);
-
-      // Trigger exit → handleExit releases the resource limiter slot
-      await capturedOnExit!(0);
-
-      // Resource limiter should have a free slot now
-      // (state.json slot is released by SPSEventHandler, not handleExit)
-      expect(ctx.limiter.tryAcquire()).toBe(true);
-      ctx.limiter.release(); // clean up
-    });
-  });
-
-  // Note: Integration queue auto-dequeue on exit is tested via
-  // integration-queue.test.ts. The handleExit → advanceIntegrationQueue
-  // path requires full stagger timing which is tested above via the
-  // resource limiter release verification.
+  // Note: handleExit is now triggered by monitorAcpCompletion polling,
+  // not by supervisor.spawn onExit callbacks. Integration-level tests
+  // for the ACP completion flow live in integration-queue.test.ts.
 
   describe('mapWorkerState', () => {
     it('maps idle status correctly', async () => {

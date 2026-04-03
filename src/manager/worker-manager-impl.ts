@@ -40,7 +40,7 @@ export interface WorkerManagerDeps {
 interface SpawnContext {
   taskId: string; cardId: string; project: string; phase: WorkerPhase;
   prompt: string; cwd: string; branch: string; targetBranch: string;
-  tool: 'claude' | 'codex'; transport: 'proc' | 'acp-sdk';
+  tool: 'claude' | 'codex'; transport: 'acp-sdk';
   outputFile: string; maxRetries: number; resumeSessionId?: string;
   customTimeoutSec?: number;
   completionStrategy?: string;
@@ -347,36 +347,22 @@ export class WorkerManagerImpl implements WorkerManager {
     let resourceAcquired = true; // track whether resource was released by spawn-fail path
 
     try {
-      if (transport === 'proc') {
-        const handle = this.supervisor.spawn({
-          id: workerId, project, seq: taskId, slot, worktree: cwd, branch,
-          prompt, outputFile, tool, resumeSessionId,
-          onExit: (exitCode) => this.handleExit({
-            workerId, taskId, cardId, project, phase, slot, branch, cwd,
-            targetBranch, outputFile, tool, transport, exitCode, maxRetries,
-            completionStrategy: ctx.completionStrategy,
-          }),
-        });
-        pid = handle.pid;
-        sessionId = handle.sessionId ?? undefined;
-      } else if (transport === 'acp-sdk') {
-        if (!this.agentRuntime) {
-          throw new Error(`${transport} transport requires agentRuntime`);
-        }
-        const session = resumeSessionId
-          ? await this.agentRuntime.resumeRun(slot, prompt)
-          : await this.agentRuntime.startRun(slot, prompt, tool, cwd);
-        sessionId = session.sessionId;
-        pid = session.pid ?? null;
-
-        // ACP completion monitor — polls inspectRun until terminal state
-        this.monitorAcpCompletion({
-          workerId, taskId, cardId, project, phase, slot, branch, cwd,
-          targetBranch, outputFile, tool, transport, maxRetries,
-          sessionName: session.sessionName,
-          completionStrategy: ctx.completionStrategy,
-        });
+      if (!this.agentRuntime) {
+        throw new Error('acp-sdk transport requires agentRuntime');
       }
+      const session = resumeSessionId
+        ? await this.agentRuntime.resumeRun(slot, prompt)
+        : await this.agentRuntime.startRun(slot, prompt, tool, cwd);
+      sessionId = session.sessionId;
+      pid = session.pid ?? null;
+
+      // ACP completion monitor — polls inspectRun until terminal state
+      this.monitorAcpCompletion({
+        workerId, taskId, cardId, project, phase, slot, branch, cwd,
+        targetBranch, outputFile, tool, transport, maxRetries,
+        sessionName: session.sessionName,
+        completionStrategy: ctx.completionStrategy,
+      });
     } catch (err) {
       this.log(`Spawn failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`);
       if (resourceAcquired) {
@@ -416,7 +402,7 @@ export class WorkerManagerImpl implements WorkerManager {
     workerId: string; taskId: string; cardId: string; project: string;
     phase: WorkerPhase; slot: string; branch: string; cwd: string;
     targetBranch: string; outputFile: string; tool: 'claude' | 'codex';
-    transport: 'proc' | 'acp-sdk'; exitCode: number; maxRetries: number;
+    transport: 'acp-sdk'; exitCode: number; maxRetries: number;
     completionStrategy?: string;
   }): Promise<void> {
     const { workerId, taskId, cardId, project, phase, slot, branch, cwd,
@@ -477,7 +463,7 @@ export class WorkerManagerImpl implements WorkerManager {
     workerId: string; taskId: string; cardId: string; project: string;
     phase: WorkerPhase; slot: string; branch: string; cwd: string;
     targetBranch: string; outputFile: string; tool: 'claude' | 'codex';
-    transport: 'proc' | 'acp-sdk'; maxRetries: number;
+    transport: 'acp-sdk'; maxRetries: number;
     sessionName: string; completionStrategy?: string;
   }): void {
     if (!this.agentRuntime) return;
@@ -690,7 +676,7 @@ export class WorkerManagerImpl implements WorkerManager {
     this.supervisor.monitorOrphanPid(
       workerId, pid,
       {
-        id: workerId, transport: 'proc', pid,
+        id: workerId, transport: 'acp-sdk', pid,
         outputFile: null, project: ctx.project, seq, slot,
         branch: lease.branch ?? '', worktree: lease.worktree ?? '',
         tool: 'claude', exitCode: null, sessionId: lease.sessionId ?? null,
@@ -703,7 +689,7 @@ export class WorkerManagerImpl implements WorkerManager {
         workerId, taskId: seq, cardId: seq, project: ctx.project,
         phase, slot, branch: lease.branch ?? '',
         cwd: lease.worktree ?? '', targetBranch: ctx.baseBranch,
-        outputFile: '', tool: 'claude', transport: 'proc',
+        outputFile: '', tool: 'claude', transport: 'acp-sdk',
         exitCode, maxRetries: 0,
       }),
     );
@@ -784,7 +770,7 @@ export class WorkerManagerImpl implements WorkerManager {
         taskId: seq, cardId: seq, project: ctx.project,
         prompt: '', // Prompt will be regenerated by SPS
         cwd: lease.worktree ?? '', branch: lease.branch ?? '',
-        targetBranch: ctx.baseBranch, tool: 'claude', transport: 'proc',
+        targetBranch: ctx.baseBranch, tool: 'claude', transport: 'acp-sdk',
         outputFile: '', enqueuedAt: lease.lastTransitionAt,
       });
       result.queueRebuilt++;
@@ -852,15 +838,15 @@ export class WorkerManagerImpl implements WorkerManager {
 
   private claimSlot(state: RuntimeState, slot: string, ctx: {
     seq: string; cardId: string; project: string; phase: WorkerPhase;
-    branch: string; cwd: string; tool: 'claude' | 'codex'; transport: 'proc' | 'acp-sdk';
+    branch: string; cwd: string; tool: 'claude' | 'codex'; transport: 'acp-sdk';
     outputFile: string; nowIso: string; targetBranch: string;
   }): void {
     const seqNum = parseInt(ctx.seq, 10) || 0;
     state.workers[slot] = {
       ...createIdleWorkerSlot(), status: 'active', seq: seqNum,
       branch: ctx.branch, worktree: ctx.cwd, claimedAt: ctx.nowIso, lastHeartbeat: ctx.nowIso,
-      mode: ctx.transport === 'acp-sdk' ? 'acp-sdk' : 'print', transport: ctx.transport, agent: ctx.tool,
-      outputFile: ctx.transport === 'proc' ? ctx.outputFile : null,
+      mode: 'acp-sdk', transport: 'acp-sdk', agent: ctx.tool,
+      outputFile: null,
     };
     state.activeCards[ctx.seq] = {
       seq: seqNum, state: 'Inprogress', worker: slot, mrUrl: null,

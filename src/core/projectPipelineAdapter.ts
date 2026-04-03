@@ -133,25 +133,34 @@ export class ProjectPipelineAdapter {
     return this.settings.stages.find(s => s.triggerState === pmState);
   }
 
-  /** Get the development stage (first stage) */
+  /** Get the first stage (responsible for prepare: branch + worktree) */
+  get firstStage(): StageDefinition {
+    return this.settings.stages[0];
+  }
+
+  /** Get the last stage (responsible for release: worktree cleanup) */
+  get lastStage(): StageDefinition {
+    return this.settings.stages[this.settings.stages.length - 1];
+  }
+
+  /**
+   * @deprecated Use firstStage instead. Kept for backward compatibility during migration.
+   */
   get developStage(): StageDefinition {
     return this.settings.stages[0];
   }
 
-  /** Get the integration stage (last stage, or stage with queue:fifo) */
+  /**
+   * @deprecated Use lastStage or getStage() instead. Kept for backward compatibility during migration.
+   */
   get integrateStage(): StageDefinition | undefined {
     return this.settings.stages.find(s => s.queue === 'fifo')
       || this.settings.stages[this.settings.stages.length - 1];
   }
 
-  /** Is this a development-phase state? */
-  isDevelopmentState(pmState: string): boolean {
-    return pmState === this.settings.states.active;
-  }
-
-  /** Is this a review/integration-phase state? */
-  isReviewState(pmState: string): boolean {
-    return pmState === this.settings.states.review;
+  /** Find the stage whose activeState matches the given PM state */
+  getStageByActiveState(pmState: string): StageDefinition | undefined {
+    return this.settings.stages.find(s => s.activeState === pmState);
   }
 
   /** All states where cards are "active" (not done, not backlog) */
@@ -254,19 +263,26 @@ function buildFromYaml(yaml: any, config: ProjectConfig): ProjectPipelineSetting
   // Stages: build from YAML or use defaults
   let stages: StageDefinition[];
   if (yaml.stages && Array.isArray(yaml.stages) && yaml.stages.length > 0) {
-    stages = yaml.stages.map((s: any) => ({
-      name: s.name,
-      triggerState: parseTrigger(s.trigger) || s.card_state || states.ready,
-      activeState: s.card_state || states.active,
-      agent: s.agent || config.WORKER_TOOL || 'claude',
-      profile: s.profile,
-      completion: s.completion || 'git-evidence',
-      onCompleteState: parseOnComplete(s.on_complete, states),
-      onFailLabel: parseOnFailLabel(s.on_fail),
-      onFailComment: parseOnFailComment(s.on_fail),
-      queue: s.queue,
-      timeout: s.timeout,
-    }));
+    const yamlStages = yaml.stages as any[];
+    stages = yamlStages.map((s: any, idx: number) => {
+      // Default on_complete fallback: next stage's trigger state, or done for last stage
+      const nextTrigger = idx < yamlStages.length - 1
+        ? (parseTrigger(yamlStages[idx + 1].trigger) || yamlStages[idx + 1].card_state || states.done)
+        : states.done;
+      return {
+        name: s.name,
+        triggerState: parseTrigger(s.trigger) || s.card_state || states.ready,
+        activeState: s.card_state || states.active,
+        agent: s.agent || config.WORKER_TOOL || 'claude',
+        profile: s.profile,
+        completion: s.completion || 'git-evidence',
+        onCompleteState: parseOnComplete(s.on_complete, nextTrigger),
+        onFailLabel: parseOnFailLabel(s.on_fail),
+        onFailComment: parseOnFailComment(s.on_fail),
+        queue: s.queue,
+        timeout: s.timeout,
+      };
+    });
   } else {
     stages = defaultStages(config);
     // Remap default stages to use custom state names
@@ -278,7 +294,16 @@ function buildFromYaml(yaml: any, config: ProjectConfig): ProjectPipelineSetting
     stages[1].onCompleteState = states.done;
   }
 
-  const activeStates = [states.planning, states.backlog, states.ready, states.active, states.review];
+  // Derive activeStates from stages (all non-done states)
+  const activeStateSet = new Set<string>();
+  if (states.planning) activeStateSet.add(states.planning);
+  activeStateSet.add(states.backlog);
+  activeStateSet.add(states.ready);
+  for (const stage of stages) {
+    if (stage.triggerState) activeStateSet.add(stage.triggerState);
+    if (stage.activeState) activeStateSet.add(stage.activeState);
+  }
+  const activeStates = Array.from(activeStateSet);
 
   return {
     states,
@@ -306,18 +331,18 @@ function parseTrigger(raw?: string): string | undefined {
   return match ? match[1] : raw;
 }
 
-/** Parse on_complete to target state */
-function parseOnComplete(raw: any, states: CardStates): string {
-  if (!raw) return states.review;
+/** Parse on_complete to target state. fallbackState is used when on_complete is not defined. */
+function parseOnComplete(raw: any, fallbackState: string): string {
+  if (!raw) return fallbackState;
   if (typeof raw === 'string') {
     const match = raw.match(/move_card\s+["']?(\S+?)["']?\s*$/);
     return match ? match[1] : raw;
   }
   if (typeof raw === 'object' && raw.action) {
     const match = raw.action.match(/move_card\s+["']?(\S+?)["']?\s*$/);
-    return match ? match[1] : states.review;
+    return match ? match[1] : fallbackState;
   }
-  return states.review;
+  return fallbackState;
 }
 
 /** Parse on_fail to label */

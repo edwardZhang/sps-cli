@@ -10,8 +10,7 @@ import { mkdtempSync, mkdirSync, cpSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
-import { ExecutionEngine } from './ExecutionEngine.js';
-import { CloseoutEngine } from './CloseoutEngine.js';
+import { StageEngine } from './StageEngine.js';
 import { MonitorEngine } from './MonitorEngine.js';
 import { SchedulerEngine } from './SchedulerEngine.js';
 import { SPSEventHandler } from './EventHandler.js';
@@ -52,7 +51,7 @@ function makeConfig(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
     PM_TOOL: 'plane',
     MR_MODE: 'create',
     WORKER_TOOL: 'claude',
-    WORKER_TRANSPORT: 'proc',
+    WORKER_TRANSPORT: 'acp-sdk',
     MAX_CONCURRENT_WORKERS: 2,
     WORKER_RESTART_LIMIT: 3,
     MAX_ACTIONS_PER_TICK: 5,
@@ -307,7 +306,7 @@ describe('SchedulerEngine uses adapter states', () => {
   });
 });
 
-describe('ExecutionEngine uses adapter states', () => {
+describe('StageEngine (first stage) uses adapter states', () => {
   let tempDir: string;
   let taskBackend: TaskBackend;
   let repoBackend: RepoBackend;
@@ -330,14 +329,15 @@ describe('ExecutionEngine uses adapter states', () => {
     const state = makeDefaultState(2);
     writeState(ctx.paths.stateFile, state, 'test');
 
-    const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, adapter);
+    const firstStage = adapter.stages[0];
+    const engine = new StageEngine(ctx, firstStage, 0, adapter.stages.length, taskBackend, repoBackend, workerManager, adapter);
     await engine.tick({ dryRun: true });
 
     // Should query custom states: 'Working' (active), 'Queue' (backlog), 'Ready' (ready)
     const calls = (taskBackend.listByState as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]);
-    expect(calls).toContain('Working');  // listRuntimeAwareInprogressCards
+    expect(calls).toContain('Working');  // listRuntimeAwareActiveCards
     expect(calls).toContain('Queue');    // backlog cards
-    expect(calls).toContain('Ready');    // todo cards (at least 2 calls)
+    expect(calls).toContain('Ready');    // ready cards (at least 2 calls)
   });
 
   it('prepares card: moves to custom ready state', async () => {
@@ -353,7 +353,8 @@ describe('ExecutionEngine uses adapter states', () => {
       return Promise.resolve([]);
     });
 
-    const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, adapter);
+    const firstStage = adapter.stages[0];
+    const engine = new StageEngine(ctx, firstStage, 0, adapter.stages.length, taskBackend, repoBackend, workerManager, adapter);
     await engine.tick();
 
     // prepare phase should move Backlog → Ready (custom states)
@@ -373,7 +374,8 @@ describe('ExecutionEngine uses adapter states', () => {
       return Promise.resolve([]);
     });
 
-    const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, adapter);
+    const firstStage = adapter.stages[0];
+    const engine = new StageEngine(ctx, firstStage, 0, adapter.stages.length, taskBackend, repoBackend, workerManager, adapter);
     await engine.tick();
 
     // launch phase should move Ready → Working (custom states)
@@ -381,7 +383,7 @@ describe('ExecutionEngine uses adapter states', () => {
   });
 });
 
-describe('CloseoutEngine uses adapter states', () => {
+describe('StageEngine (last stage) uses adapter states', () => {
   let tempDir: string;
   let taskBackend: TaskBackend;
   let repoBackend: RepoBackend;
@@ -404,7 +406,9 @@ describe('CloseoutEngine uses adapter states', () => {
     const state = makeDefaultState(2);
     writeState(ctx.paths.stateFile, state, 'test');
 
-    const engine = new CloseoutEngine(ctx, taskBackend, repoBackend, workerManager, adapter);
+    const lastIdx = adapter.stages.length - 1;
+    const lastStage = adapter.stages[lastIdx];
+    const engine = new StageEngine(ctx, lastStage, lastIdx, adapter.stages.length, taskBackend, repoBackend, workerManager, adapter);
     await engine.tick();
 
     // Should call listByState with custom 'Review' (not 'QA')
@@ -473,8 +477,8 @@ describe('MonitorEngine uses adapter states', () => {
       worktree: '/tmp/wt-1',
       claimedAt: new Date(Date.now() - 600_000).toISOString(),
       lastHeartbeat: null,
-      mode: 'print',
-      transport: 'proc',
+      mode: 'acp-sdk',
+      transport: 'acp-sdk',
       outputFile: '/tmp/non-existent-output.jsonl',
     };
     state.activeCards['1'] = {
@@ -750,11 +754,11 @@ describe('Full pipeline flow with custom states (dry-run)', () => {
     const scheduler = new SchedulerEngine(ctx, taskBackend, adapter);
     await scheduler.tick();
 
-    const execution = new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, adapter);
-    await execution.tick();
-
-    const closeout = new CloseoutEngine(ctx, taskBackend, repoBackend, workerManager, adapter);
-    await closeout.tick();
+    // Run all stage engines
+    for (let i = 0; i < adapter.stages.length; i++) {
+      const stageEngine = new StageEngine(ctx, adapter.stages[i], i, adapter.stages.length, taskBackend, repoBackend, workerManager, adapter);
+      await stageEngine.tick();
+    }
 
     const supervisor = makeSupervisor();
     const monitor = new MonitorEngine(ctx, taskBackend, repoBackend, undefined, supervisor, adapter);
@@ -772,9 +776,9 @@ describe('Full pipeline flow with custom states (dry-run)', () => {
 
     // Should use custom state names instead
     expect(listCalls).toContain('Planned');   // Scheduler
-    expect(listCalls).toContain('Queue');     // Execution (backlog)
-    expect(listCalls).toContain('Ready');     // Execution (todo)
-    expect(listCalls).toContain('Working');   // Execution (inprogress) + Monitor
-    expect(listCalls).toContain('Review');    // Closeout + Monitor blocked check
+    expect(listCalls).toContain('Queue');     // StageEngine[0] (backlog)
+    expect(listCalls).toContain('Ready');     // StageEngine[0] (ready)
+    expect(listCalls).toContain('Working');   // StageEngine[0] (active) + Monitor
+    expect(listCalls).toContain('Review');    // StageEngine[1] (trigger) + Monitor
   });
 });

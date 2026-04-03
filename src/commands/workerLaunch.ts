@@ -1,6 +1,6 @@
 import { ProjectContext } from '../core/context.js';
-import { workflowUsesAgentRuntime } from '../core/config.js';
-import { ExecutionEngine } from '../engines/ExecutionEngine.js';
+import {} from '../core/config.js';
+import { StageEngine } from '../engines/StageEngine.js';
 import { createTaskBackend, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
@@ -42,7 +42,13 @@ export async function executeWorkerLaunch(
     process.exit(3);
   }
 
-  const taskBackend = createTaskBackend(ctx.config);
+  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+  const allStateNames = [...new Set([
+    pipelineAdapter.states.planning, pipelineAdapter.states.backlog,
+    pipelineAdapter.states.ready, pipelineAdapter.states.done,
+    ...pipelineAdapter.stages.flatMap(s => [s.triggerState, s.activeState, s.onCompleteState]),
+  ].filter(Boolean))];
+  const taskBackend = createTaskBackend(ctx.config, allStateNames);
   const repoBackend = createRepoBackend(ctx.config);
   const notifier = createNotifier(ctx.config);
   const supervisor = new ProcessSupervisor();
@@ -52,20 +58,20 @@ export async function executeWorkerLaunch(
     staggerDelayMs: parseInt(process.env.SPS_MANAGER_STAGGER_MS || '5000', 10),
     maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '90', 10),
   });
-  const agentRuntime = workflowUsesAgentRuntime(ctx.config) ? createAgentRuntime(ctx) : null;
+  const agentRuntime = createAgentRuntime(ctx);
   const workerManager = new WorkerManagerImpl({
     supervisor, completionJudge, resourceLimiter,
     agentRuntime: agentRuntime ?? null,
     stateFile: ctx.paths.stateFile, maxWorkers: ctx.maxWorkers,
   });
-  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
   const runtimeStore = new RuntimeStore({ paths: { stateFile: ctx.paths.stateFile }, maxWorkers: ctx.maxWorkers });
   const raw = ctx.config.raw;
   const eventHandler = new SPSEventHandler({
     taskBackend, notifier, runtimeStore, project, pipelineAdapter,
   });
   workerManager.onEvent((event) => eventHandler.handle(event));
-  const engine = new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, pipelineAdapter, notifier);
+  const firstStage = pipelineAdapter.stages[0];
+  const engine = new StageEngine(ctx, firstStage, 0, pipelineAdapter.stages.length, taskBackend, repoBackend, workerManager, pipelineAdapter, notifier);
   const result = await engine.launchSingle(seq, { dryRun });
 
   if (jsonOutput) {

@@ -1,0 +1,1204 @@
+import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import type { ProjectContext } from '../core/context.js';
+import type { TaskBackend } from '../interfaces/TaskBackend.js';
+import type { RepoBackend } from '../interfaces/RepoBackend.js';
+import type { Notifier } from '../interfaces/Notifier.js';
+import type { CommandResult, ActionRecord, Card, AuxiliaryState, RecommendedAction } from '../models/types.js';
+import type { RuntimeState, TaskLease, WorkerSlotState } from '../core/state.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
+import { resolveGitlabProjectId, resolveWorkflowTransport } from '../core/config.js';
+import { resolveWorktreePath } from '../core/paths.js';
+import { readQueue } from '../core/queue.js';
+import { buildPhasePrompt } from '../core/taskPrompts.js';
+import { Logger } from '../core/logger.js';
+import type { WorkerManager, TaskRunRequest, TaskRunResponse } from '../manager/worker-manager.js';
+import { IntegrationQueue } from '../manager/integration-queue.js';
+import { branchPushed, branchCommitsAhead } from '../providers/outputParser.js';
+import type { ProjectPipelineAdapter, StageDefinition } from '../core/projectPipelineAdapter.js';
+import { buildFullMemoryContext, buildMemoryWriteInstructions } from '../core/memory.js';
+
+const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME'];
+const CLEANUP_LABELS: string[] = [...SKIP_LABELS, 'CLAIMED'];
+
+/**
+ * StageEngine — generic engine that handles any pipeline stage.
+ *
+ * Replaces both ExecutionEngine and CloseoutEngine. Behavior is driven by
+ * the StageDefinition from YAML config + positional flags (isFirstStage / isLastStage).
+ *
+ * First stage: also handles prepare (branch + worktree creation, Backlog → Ready).
+ * Last stage: also handles release (worktree cleanup, resource release).
+ * Any stage with queue: 'fifo' uses IntegrationQueue for serialization.
+ */
+export class StageEngine {
+  private log: Logger;
+  private runtimeStore: RuntimeStore;
+
+  constructor(
+    private ctx: ProjectContext,
+    private stage: StageDefinition,
+    private stageIndex: number,
+    private totalStages: number,
+    private taskBackend: TaskBackend,
+    private repoBackend: RepoBackend,
+    private workerManager: WorkerManager,
+    private pipelineAdapter: ProjectPipelineAdapter,
+    private notifier?: Notifier,
+  ) {
+    this.log = new Logger(`stage-${stage.name}`, ctx.projectName, ctx.paths.logsDir);
+    this.runtimeStore = new RuntimeStore(ctx);
+  }
+
+  /** Stage name from YAML */
+  get name(): string { return this.stage.name; }
+
+  /** Whether this is the first stage (responsible for prepare: branch + worktree) */
+  get isFirstStage(): boolean { return this.stageIndex === 0; }
+
+  /** Whether this is the last stage (responsible for release: worktree cleanup) */
+  get isLastStage(): boolean { return this.stageIndex === this.totalStages - 1; }
+
+  /** Whether this stage uses FIFO queue for serialization */
+  get usesQueue(): boolean { return this.stage.queue === 'fifo'; }
+
+  async tick(opts: { dryRun?: boolean } = {}): Promise<CommandResult> {
+    const actions: ActionRecord[] = [];
+    const recommendedActions: RecommendedAction[] = [];
+    const result: CommandResult = {
+      project: this.ctx.projectName,
+      component: `stage-${this.stage.name}`,
+      status: 'ok',
+      exitCode: 0,
+      actions,
+      recommendedActions,
+      details: {},
+    };
+
+    let actionsThisTick = 0;
+    const maxActions = this.ctx.config.MAX_ACTIONS_PER_TICK;
+
+    try {
+      // ── First stage only: reconcile PM states + prepare backlog cards ──
+      if (this.isFirstStage) {
+        actions.push(...await this.reconcilePmStatesWithRuntime());
+
+        // 1. Check active cards for completion (free slots before launching)
+        const activeCards = await this.listRuntimeAwareActiveCards();
+        for (const card of activeCards) {
+          if (this.shouldSkip(card)) continue;
+          const checkResult = await this.checkActiveCard(card, opts);
+          if (checkResult) actions.push(checkResult);
+        }
+
+        // 2. Prepare backlog cards (branch + worktree + move to ready)
+        const backlogCards = await this.taskBackend.listByState(this.pipelineAdapter.states.backlog);
+        const currentState = this.runtimeStore.readState();
+        const idleSlots = Object.values(currentState.workers).filter(w => w.status === 'idle').length;
+        const readyCards0 = await this.taskBackend.listByState(this.pipelineAdapter.states.ready);
+        const readyCount = readyCards0.filter(c => !this.shouldSkip(c)).length;
+        const prepareLimit = Math.max(0, idleSlots - readyCount);
+        let preparedThisTick = 0;
+
+        for (const card of backlogCards) {
+          if (preparedThisTick >= prepareLimit) break;
+          await this.cleanAuxiliaryLabels(card);
+          if (this.shouldSkip(card)) {
+            actions.push({ action: 'skip', entity: `seq:${card.seq}`, result: 'skip', message: 'Has auxiliary state label' });
+            continue;
+          }
+          const prepareResult = await this.prepareCard(card, opts);
+          actions.push(prepareResult);
+          if (prepareResult.result === 'ok') preparedThisTick++;
+        }
+
+        // 3. Launch ready cards (claim + context + worker + move to active)
+        let readyCards = await this.taskBackend.listByState(this.pipelineAdapter.states.ready);
+        const pipelineOrder = readQueue(this.ctx.paths.pipelineOrderFile);
+        if (pipelineOrder.length > 0) {
+          readyCards = readyCards.sort((a, b) => {
+            const aIdx = pipelineOrder.indexOf(parseInt(a.seq, 10));
+            const bIdx = pipelineOrder.indexOf(parseInt(b.seq, 10));
+            if (aIdx >= 0 && bIdx >= 0) return aIdx - bIdx;
+            if (aIdx >= 0) return -1;
+            if (bIdx >= 0) return 1;
+            return parseInt(a.seq, 10) - parseInt(b.seq, 10);
+          });
+        }
+        const failedSlots = new Set<string>();
+        for (const card of readyCards) {
+          if (actionsThisTick >= maxActions) break;
+          if (this.shouldSkip(card)) {
+            actions.push({ action: 'skip', entity: `seq:${card.seq}`, result: 'skip', message: 'Has auxiliary state label' });
+            continue;
+          }
+          const launchResult = await this.launchWorker(card, opts, failedSlots);
+          actions.push(launchResult);
+          if (launchResult.result === 'ok') actionsThisTick++;
+        }
+      } else {
+        // ── Non-first stages: process trigger-state cards ──
+        const triggerCards = await this.taskBackend.listByState(this.stage.triggerState);
+        if (triggerCards.length === 0) {
+          this.log.info(`No ${this.stage.triggerState} cards to process`);
+          result.details = { reason: `no_${this.stage.name}_cards` };
+        } else {
+          this.log.info(`Processing ${triggerCards.length} ${this.stage.triggerState} card(s)`);
+
+          for (const card of triggerCards) {
+            if (card.labels.includes('BLOCKED')) {
+              this.log.debug(`Skipping seq ${card.seq}: BLOCKED`);
+              actions.push({ action: 'skip', entity: `seq:${card.seq}`, result: 'skip', message: 'Card is BLOCKED' });
+              continue;
+            }
+
+            try {
+              await this.processStageCard(card, actions, recommendedActions);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              this.log.error(`Unexpected error processing seq ${card.seq}: ${msg}`);
+              actions.push({
+                action: `stage-${this.stage.name}`,
+                entity: `seq:${card.seq}`,
+                result: 'fail',
+                message: `Unexpected error: ${msg}`,
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`Stage ${this.stage.name} tick failed: ${msg}`);
+      result.status = 'fail';
+      result.exitCode = 1;
+      result.details = { error: msg };
+    }
+
+    // Last stage: always run worktree cleanup
+    if (this.isLastStage) {
+      await this.cleanupWorktrees(actions);
+    }
+
+    if (actions.some((a) => a.result === 'fail') && result.status === 'ok') {
+      result.status = this.isLastStage ? 'degraded' : 'fail';
+      result.exitCode = 1;
+    }
+
+    return result;
+  }
+
+  // ─── Non-first stage: process a card in trigger state ──────────
+
+  private async processStageCard(
+    card: Card,
+    actions: ActionRecord[],
+    recommendedActions: RecommendedAction[],
+  ): Promise<void> {
+    const seq = card.seq;
+    const state = this.runtimeStore.readState();
+    const runtime = this.runtimeStore.getTask(seq, state);
+    const branchName =
+      runtime.lease?.branch ||
+      runtime.evidence?.branch ||
+      this.buildBranchName(card);
+    const worktree =
+      runtime.lease?.worktree ||
+      runtime.evidence?.worktree ||
+      resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
+
+    if (!worktree || !existsSync(worktree)) {
+      await this.markNeedsFix(seq, `${this.stage.name} task has no usable worktree`);
+      actions.push({
+        action: 'mark-needs-fix',
+        entity: `seq:${seq}`,
+        result: 'ok',
+        message: `No usable worktree for ${this.stage.name} task`,
+      });
+      return;
+    }
+
+    // For stages with fast-forward-merge completion: check if already merged
+    if (this.stage.completion === 'fast-forward-merge' && this.isMergedToBase(worktree, branchName)) {
+      this.log.info(`seq ${seq}: integration already complete, proceeding to release`);
+      await this.completeAndAdvance(card, actions);
+      return;
+    }
+
+    // Check if worker is already running for this card
+    const activeStatus = await this.inspectStageWorker(card, runtime.slotName, worktree, branchName, actions);
+    if (activeStatus === 'active' || activeStatus === 'waiting' || activeStatus === 'done') {
+      return;
+    }
+    if (activeStatus === 'failed') {
+      recommendedActions.push({
+        action: `Review ${this.stage.name} task seq:${seq}`,
+        reason: `${this.stage.name} worker exited without completing`,
+        severity: 'warning',
+        autoExecutable: false,
+        requiresConfirmation: true,
+        safeToRetry: true,
+      });
+      return;
+    }
+
+    // Start a new worker for this stage
+    await this.startStageWorker(card, runtime.slotName, worktree, branchName, actions);
+  }
+
+  private async inspectStageWorker(
+    card: Card,
+    slotName: string | null,
+    worktree: string,
+    branchName: string,
+    actions: ActionRecord[],
+  ): Promise<'idle' | 'active' | 'waiting' | 'failed' | 'done'> {
+    if (!slotName) return 'idle';
+
+    const snapshots = this.workerManager.inspect({ taskId: String(card.seq) });
+    if (snapshots.length === 0) return 'idle';
+
+    const snapshot = snapshots[0];
+    if (snapshot.state === 'idle') return 'idle';
+
+    if (snapshot.state === 'waiting_input') {
+      this.log.info(`seq ${card.seq}: ${this.stage.name} worker waiting for input`);
+      actions.push({
+        action: `${this.stage.name}-waiting`,
+        entity: `seq:${card.seq}`,
+        result: 'skip',
+        message: `${this.stage.name} worker waiting_input`,
+      });
+      return 'waiting';
+    }
+
+    if (snapshot.state === 'needs_confirmation') {
+      this.log.warn(`seq ${card.seq}: ${this.stage.name} worker needs confirmation`);
+      actions.push({
+        action: `${this.stage.name}-waiting`,
+        entity: `seq:${card.seq}`,
+        result: 'skip',
+        message: `${this.stage.name} worker needs_confirmation`,
+      });
+      return 'waiting';
+    }
+
+    if (snapshot.state === 'starting' || snapshot.state === 'running') {
+      actions.push({
+        action: `${this.stage.name}-running`,
+        entity: `seq:${card.seq}`,
+        result: 'skip',
+        message: `${this.stage.name} worker ${snapshot.state}`,
+      });
+      return 'active';
+    }
+
+    if (snapshot.state === 'completed') {
+      // For fast-forward-merge: check if actually merged
+      if (this.stage.completion === 'fast-forward-merge') {
+        if (this.isMergedToBase(worktree, branchName)) {
+          await this.completeAndAdvance(card, actions);
+          return 'done';
+        }
+      } else {
+        // Other completion strategies: worker completed = stage done
+        await this.completeAndAdvance(card, actions);
+        return 'done';
+      }
+    }
+
+    // 'failed' or 'completed' without expected completion
+    await this.releaseSlotForStage(card.seq, slotName);
+    await this.markNeedsFix(card.seq, `${this.stage.name} worker ${snapshot.state} before completion`);
+    actions.push({
+      action: 'mark-needs-fix',
+      entity: `seq:${card.seq}`,
+      result: 'ok',
+      message: `${this.stage.name} worker ${snapshot.state} before completion`,
+    });
+    return 'failed';
+  }
+
+  private async startStageWorker(
+    card: Card,
+    _preferredSlot: string | null,
+    worktree: string,
+    branchName: string,
+    actions: ActionRecord[],
+  ): Promise<void> {
+    const seq = card.seq;
+
+    const prompt = this.buildStagePrompt(card, worktree, branchName);
+    const workflowTransport = resolveWorkflowTransport(this.ctx.config);
+    const logsDir = this.ctx.paths.logsDir;
+
+    const runRequest: TaskRunRequest = {
+      taskId: String(card.seq),
+      cardId: String(card.seq),
+      project: this.ctx.projectName,
+      phase: this.stage.name as 'development' | 'integration',
+      prompt,
+      cwd: worktree,
+      branch: branchName,
+      targetBranch: this.ctx.mergeBranch,
+      tool: (this.stage.agent || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
+      transport: 'acp-sdk',
+      outputFile: resolve(logsDir, `${this.ctx.projectName}-${this.stage.name}-${card.seq}-${Date.now()}.jsonl`),
+      completionStrategy: this.stage.completion,
+    };
+
+    const response = await this.workerManager.run(runRequest);
+    if (!response.accepted) {
+      this.log.info(`seq ${seq}: WM rejected ${this.stage.name} run: ${response.rejectReason ?? 'unknown'}`);
+      actions.push({
+        action: `${this.stage.name}-launch`,
+        entity: `seq:${seq}`,
+        result: 'skip',
+        message: `WM rejected: ${response.rejectReason ?? 'unknown'}`,
+      });
+      return;
+    }
+
+    // Queued (fifo mode)
+    if (response.queued) {
+      this.log.info(`seq ${seq}: Queued for ${this.stage.name} (position=${response.queuePosition})`);
+      this.runtimeStore.updateState(`stage-${this.stage.name}-queue`, (draft) => {
+        if (draft.leases[seq]) {
+          draft.leases[seq].phase = 'merging';
+          draft.leases[seq].lastTransitionAt = new Date().toISOString();
+        }
+      });
+      actions.push({
+        action: `${this.stage.name}-launch`,
+        entity: `seq:${seq}`,
+        result: 'ok',
+        message: `Queued for ${this.stage.name} (position=${response.queuePosition})`,
+      });
+      return;
+    }
+
+    // PM claim (best-effort)
+    const slotName = response.slot!;
+    try {
+      await this.taskBackend.claim(seq, slotName);
+    } catch (err) {
+      this.log.warn(`seq ${seq}: PM claim for ${this.stage.name} worker failed: ${err instanceof Error ? err.message : err}`);
+    }
+
+    // Update runtime state
+    this.runtimeStore.updateState(`stage-${this.stage.name}-launch`, (draft) => {
+      draft.activeCards[seq] = {
+        seq: parseInt(seq, 10),
+        state: this.stage.activeState,
+        worker: slotName,
+        mrUrl: draft.activeCards[seq]?.mrUrl || null,
+        conflictDomains: draft.activeCards[seq]?.conflictDomains || [],
+        startedAt: draft.activeCards[seq]?.startedAt || new Date().toISOString(),
+        retryCount: draft.activeCards[seq]?.retryCount ?? draft.leases[seq]?.retryCount ?? 0,
+      };
+
+      draft.leases[seq] = {
+        seq: parseInt(seq, 10),
+        pmStateObserved: this.stage.activeState,
+        phase: this.stage.completion === 'fast-forward-merge' ? 'merging' : 'coding',
+        slot: slotName,
+        branch: branchName,
+        worktree,
+        sessionId: response.sessionId || null,
+        runId: null,
+        claimedAt: new Date().toISOString(),
+        retryCount: draft.leases[seq]?.retryCount ?? 0,
+        lastTransitionAt: new Date().toISOString(),
+      };
+    });
+
+    actions.push({
+      action: `${this.stage.name}-launch`,
+      entity: `seq:${seq}`,
+      result: 'ok',
+      message: `Started ${this.stage.name} worker on ${slotName}`,
+    });
+    this.logEvent(`${this.stage.name}-launch`, seq, 'ok', { worker: slotName });
+  }
+
+  // ─── Completion: advance card to next state or release ─────────
+
+  private async completeAndAdvance(card: Card, actions: ActionRecord[]): Promise<void> {
+    if (this.isLastStage) {
+      await this.releaseAndDone(card, actions);
+    } else {
+      // Move card to next state
+      const seq = card.seq;
+      try {
+        await this.taskBackend.move(seq, this.stage.onCompleteState);
+        this.log.ok(`seq ${seq}: ${this.stage.name} complete → ${this.stage.onCompleteState}`);
+        // Release the current slot so next stage can use it
+        const state = this.runtimeStore.readState();
+        const runtime = this.runtimeStore.getTask(seq, state);
+        if (runtime.slotName) {
+          await this.releaseSlotForStage(seq, runtime.slotName);
+        }
+        actions.push({
+          action: `${this.stage.name}-complete`,
+          entity: `seq:${seq}`,
+          result: 'ok',
+          message: `${this.stage.activeState} → ${this.stage.onCompleteState}`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.error(`seq ${seq}: Failed to advance: ${msg}`);
+        actions.push({
+          action: `${this.stage.name}-complete`,
+          entity: `seq:${seq}`,
+          result: 'fail',
+          message: `Advance failed: ${msg}`,
+        });
+      }
+    }
+  }
+
+  /**
+   * Release resources after final stage completion.
+   * Order: Move Done → Release claim → Release slot → Stop worker → Mark worktree cleanup
+   */
+  private async releaseAndDone(card: Card, actions: ActionRecord[]): Promise<void> {
+    const seq = card.seq;
+    const errors: string[] = [];
+
+    // Clean auxiliary labels
+    for (const label of this.pipelineAdapter.auxiliaryLabels) {
+      if (card.labels.includes(label)) {
+        try { await this.taskBackend.removeLabel(seq, label); } catch { /* best effort */ }
+      }
+    }
+
+    // Step 1: Move card to Done
+    try {
+      await this.taskBackend.move(seq, this.pipelineAdapter.states.done);
+      this.log.ok(`seq ${seq}: Moved to ${this.pipelineAdapter.states.done}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`seq ${seq}: Failed to move to Done: ${msg}`);
+      errors.push(`move-done: ${msg}`);
+    }
+
+    // Step 2: Release claim
+    try {
+      await this.taskBackend.releaseClaim(seq);
+      this.log.ok(`seq ${seq}: Claim released`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`seq ${seq}: Failed to release claim: ${msg}`);
+      errors.push(`release-claim: ${msg}`);
+    }
+
+    // Step 3: Release worker slot
+    const state = this.runtimeStore.readState();
+    const runtime = this.runtimeStore.getTask(seq, state);
+    const slotEntry = runtime.slotName && runtime.slot ? [runtime.slotName, runtime.slot] as const : null;
+
+    if (slotEntry) {
+      const [slotName] = slotEntry;
+      try {
+        this.runtimeStore.updateState('stage-release', (draft) => {
+          this.runtimeStore.releaseTaskProjection(draft, seq, { dropLease: true });
+        });
+        this.log.ok(`seq ${seq}: Worker slot ${slotName} released`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.error(`seq ${seq}: Failed to release slot: ${msg}`);
+        errors.push(`release-slot: ${msg}`);
+      }
+    } else {
+      if (state.activeCards[seq] || state.leases[seq]) {
+        try {
+          this.runtimeStore.updateState('stage-release', (draft) => {
+            this.runtimeStore.releaseTaskProjection(draft, seq, { dropLease: true });
+          });
+        } catch { /* non-fatal */ }
+      }
+    }
+
+    // Step 4: Stop worker process
+    try {
+      const snapshots = this.workerManager.inspect({ taskId: seq });
+      for (const snap of snapshots) {
+        if (snap.pid && snap.pid > 0) {
+          try { process.kill(snap.pid, 'SIGTERM'); } catch { /* already dead */ }
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.debug(`seq ${seq}: Worker cleanup: ${msg}`);
+    }
+
+    // Step 4b: Clear from IntegrationQueue
+    if (this.usesQueue) {
+      try {
+        const iq = new IntegrationQueue(this.ctx.paths.stateFile, this.ctx.config.MAX_CONCURRENT_WORKERS);
+        const active = iq.getActive(this.ctx.projectName, this.ctx.mergeBranch);
+        if (active && active.taskId === seq) {
+          iq.dequeueNext(this.ctx.projectName, this.ctx.mergeBranch);
+          this.log.ok(`seq ${seq}: Integration queue advanced`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.warn(`seq ${seq}: Failed to advance integration queue: ${msg}`);
+      }
+    }
+
+    // Step 5: Mark worktree for cleanup
+    try {
+      const freshState = this.runtimeStore.readState();
+      const branchName = this.buildBranchName(card);
+      const worktreePath =
+        runtime.lease?.worktree ||
+        runtime.evidence?.worktree ||
+        resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
+      const cleanup = freshState.worktreeCleanup ?? [];
+      const alreadyMarked = cleanup.some((e) => e.branch === branchName);
+      if (!alreadyMarked) {
+        cleanup.push({ branch: branchName, worktreePath, markedAt: new Date().toISOString() });
+        this.runtimeStore.updateState('stage-worktree-mark', (draft) => {
+          draft.worktreeCleanup = cleanup;
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`seq ${seq}: Failed to mark worktree for cleanup: ${msg}`);
+      errors.push(`worktree-mark: ${msg}`);
+    }
+
+    // Notify
+    if (errors.length === 0) {
+      await this.notifySafe(`✅ [${this.ctx.projectName}] seq:${seq} completed and released successfully`);
+    } else {
+      await this.notifySafe(`⚠️ [${this.ctx.projectName}] seq:${seq} completed but release had errors: ${errors.join('; ')}`);
+    }
+
+    const actionResult = errors.length === 0 ? 'ok' as const : 'fail' as const;
+    actions.push({
+      action: 'stage-complete',
+      entity: `seq:${seq}`,
+      result: actionResult,
+      message: errors.length === 0
+        ? `Completed → ${this.pipelineAdapter.states.done}, resources released`
+        : `Completed → ${this.pipelineAdapter.states.done} with errors: ${errors.join('; ')}`,
+    });
+    this.logEvent('stage-complete', seq, actionResult, errors.length > 0 ? { errors } : undefined);
+  }
+
+  // ─── First stage: active card check (detect completion) ────────
+
+  private async checkActiveCard(
+    card: Card,
+    _opts: { dryRun?: boolean },
+  ): Promise<ActionRecord | null> {
+    const seq = card.seq;
+    const state = this.runtimeStore.readState();
+    const lease = state.leases[seq] || null;
+    const slotName = this.findRuntimeSlotName(state, seq, lease);
+
+    if (!slotName) return null;
+
+    const snapshots = this.workerManager.inspect({ project: this.ctx.projectName, taskId: seq });
+    const snapshot = snapshots[0];
+
+    if (snapshot && (snapshot.state === 'running' || snapshot.state === 'starting')) {
+      try {
+        this.runtimeStore.updateState('stage-heartbeat', (freshState) => {
+          if (freshState.workers[slotName]) {
+            freshState.workers[slotName].lastHeartbeat = new Date().toISOString();
+          }
+        });
+      } catch { /* non-fatal */ }
+      return null;
+    }
+
+    if (snapshot && (snapshot.state === 'waiting_input' || snapshot.state === 'needs_confirmation')) {
+      return null;
+    }
+
+    if (snapshot && snapshot.state === 'completed') {
+      this.log.ok(`seq ${seq}: Completed (handled by WM exit callback)`);
+      return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Completed via WM exit callback' };
+    }
+
+    if (snapshot && snapshot.state === 'failed') {
+      this.log.info(`seq ${seq}: Failed (handled by WM exit callback)`);
+      return { action: 'complete', entity: `seq:${seq}`, result: 'fail', message: 'Failed via WM exit callback' };
+    }
+
+    const freshState = this.runtimeStore.readState();
+    if (!freshState.workers[slotName] || freshState.workers[slotName].status === 'idle') {
+      return { action: 'complete', entity: `seq:${seq}`, result: 'ok', message: 'Completed (WM processed)' };
+    }
+    return null;
+  }
+
+  // ─── First stage: prepare (Backlog → Ready) ────────────────────
+
+  private async prepareCard(card: Card, opts: { dryRun?: boolean }): Promise<ActionRecord> {
+    const seq = card.seq;
+    const branchName = this.buildBranchName(card);
+    const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
+
+    if (opts.dryRun) {
+      return { action: 'prepare', entity: `seq:${seq}`, result: 'ok', message: 'dry-run' };
+    }
+
+    // Step 1: Create branch
+    try {
+      await this.repoBackend.ensureBranch(this.ctx.paths.repoDir, branchName, this.ctx.mergeBranch);
+      this.log.ok(`Step 1: Branch ${branchName} created for seq ${seq}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`Step 1 failed (branch) for seq ${seq}: ${msg}`);
+      this.logEvent('prepare-branch', seq, 'fail', { error: msg });
+      return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Branch creation failed: ${msg}` };
+    }
+
+    // Step 2: Create worktree
+    try {
+      await this.repoBackend.ensureWorktree(this.ctx.paths.repoDir, branchName, worktreePath);
+      this.log.ok(`Step 2: Worktree created for seq ${seq} at ${worktreePath}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`Step 2 failed (worktree) for seq ${seq}: ${msg}`);
+      this.logEvent('prepare-worktree', seq, 'fail', { error: msg });
+      return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Worktree creation failed: ${msg}` };
+    }
+
+    // Step 3: Move card to Ready
+    try {
+      await this.taskBackend.move(seq, this.pipelineAdapter.states.ready);
+      this.log.ok(`Step 3: Moved seq ${seq} ${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready}`);
+      this.logEvent('prepare', seq, 'ok');
+      await this.notifySafe(`ℹ️ [${this.ctx.projectName}] seq:${seq} environment ready (${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready})`);
+      return { action: 'prepare', entity: `seq:${seq}`, result: 'ok', message: `${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready}` };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`Step 3 failed (move) for seq ${seq}: ${msg}`);
+      this.logEvent('prepare-move', seq, 'fail', { error: msg });
+      return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Move to ${this.pipelineAdapter.states.ready} failed: ${msg}` };
+    }
+  }
+
+  // ─── First stage: launch worker (Ready → Active) ───────────────
+
+  private async launchWorker(
+    card: Card,
+    opts: { dryRun?: boolean },
+    failedSlots: Set<string> = new Set(),
+  ): Promise<ActionRecord> {
+    const seq = card.seq;
+    const branchName = this.buildBranchName(card);
+    const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
+    const workflowTransport = resolveWorkflowTransport(this.ctx.config);
+
+    if (opts.dryRun) {
+      return { action: 'launch', entity: `seq:${seq}`, result: 'ok', message: 'dry-run' };
+    }
+
+    // PM claim
+    try {
+      await this.taskBackend.claim(seq, `pending-wm`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.warn(`PM claim for seq ${seq} failed (non-fatal): ${msg}`);
+    }
+
+    // Build prompt
+    let prompt: string;
+    try {
+      prompt = this.buildStagePrompt(card, worktreePath, branchName);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`Prompt build failed for seq ${seq}: ${msg}`);
+      this.logEvent('launch-context', seq, 'fail', { error: msg });
+      return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Context build failed: ${msg}` };
+    }
+
+    // Launch worker
+    const logsDir = this.ctx.config.raw.LOGS_DIR || `/tmp/sps-${this.ctx.projectName}`;
+    const runRequest: TaskRunRequest = {
+      taskId: String(card.seq),
+      cardId: String(card.seq),
+      project: this.ctx.projectName,
+      phase: 'development',
+      prompt,
+      cwd: worktreePath,
+      branch: branchName,
+      targetBranch: this.ctx.mergeBranch,
+      tool: (this.stage.agent || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
+      transport: 'acp-sdk',
+      outputFile: resolve(logsDir, `${this.ctx.projectName}-worker-${card.seq}-${Date.now()}.jsonl`),
+      timeoutSec: this.ctx.config.WORKER_LAUNCH_TIMEOUT_S,
+      maxRetries: this.ctx.config.WORKER_RESTART_LIMIT,
+      completionStrategy: this.stage.completion,
+    };
+
+    let response: TaskRunResponse;
+    try {
+      response = await this.workerManager.run(runRequest);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`WM.run failed for seq ${seq}: ${msg}`);
+      failedSlots.add(`wm-error-${seq}`);
+      this.logEvent('launch-worker', seq, 'fail', { error: msg });
+      return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Worker launch failed: ${msg}` };
+    }
+
+    if (!response.accepted) {
+      this.log.warn(`WM rejected seq ${seq}: ${response.rejectReason}`);
+      return {
+        action: 'launch',
+        entity: `seq:${seq}`,
+        result: response.rejectReason === 'resource_exhausted' ? 'skip' : 'fail',
+        message: `WM rejected: ${response.rejectReason}`,
+      };
+    }
+
+    const slotName = response.slot!;
+    this.log.ok(`WM launched worker for seq ${seq} (slot=${slotName}, pid=${response.pid ?? 'n/a'})`);
+    await this.notifySafe(`▶️ [${this.ctx.projectName}] seq:${seq} worker started (${slotName})`);
+
+    // Move card to active state
+    try {
+      await this.taskBackend.move(seq, this.stage.activeState);
+      this.runtimeStore.updateState('stage-launch', (freshState) => {
+        if (freshState.activeCards[seq]) {
+          freshState.activeCards[seq].state = this.stage.activeState;
+          if (freshState.leases[seq]) {
+            freshState.leases[seq].pmStateObserved = this.stage.activeState;
+            if (freshState.leases[seq].phase === 'preparing' || freshState.leases[seq].phase === 'queued') {
+              freshState.leases[seq].phase = 'coding';
+            }
+            freshState.leases[seq].lastTransitionAt = new Date().toISOString();
+          }
+        }
+      });
+      this.log.ok(`Moved seq ${seq} ${this.pipelineAdapter.states.ready} → ${this.stage.activeState}`);
+      this.logEvent('launch', seq, 'ok', { worker: slotName });
+      return { action: 'launch', entity: `seq:${seq}`, result: 'ok', message: `${this.pipelineAdapter.states.ready} → ${this.stage.activeState} (${slotName})` };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.error(`Move failed for seq ${seq}: ${msg}`);
+      try {
+        await this.workerManager.cancel({ taskId: String(card.seq), project: this.ctx.projectName, reason: 'anomaly' });
+      } catch { /* best effort */ }
+      this.releaseSlot(slotName, seq);
+      this.logEvent('launch-move', seq, 'fail', { error: msg });
+      return { action: 'launch', entity: `seq:${seq}`, result: 'fail', message: `Move to ${this.stage.activeState} failed: ${msg}` };
+    }
+  }
+
+  // ─── Runtime helpers ───────────────────────────────────────────
+
+  private async listRuntimeAwareActiveCards(): Promise<Card[]> {
+    const cards = await this.taskBackend.listByState(this.stage.activeState);
+    const bySeq = new Map(cards.map(card => [card.seq, card]));
+    const state = this.runtimeStore.readState();
+
+    for (const [seq, lease] of Object.entries(state.leases)) {
+      const slot = lease.slot ? state.workers[lease.slot] || null : null;
+      if (this.derivePmStateFromLease(lease, slot) !== this.stage.activeState || bySeq.has(seq)) continue;
+      const card = await this.taskBackend.getBySeq(seq);
+      if (card) bySeq.set(seq, card);
+    }
+
+    return Array.from(bySeq.values()).sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10));
+  }
+
+  private async reconcilePmStatesWithRuntime(): Promise<ActionRecord[]> {
+    const state = this.runtimeStore.readState();
+    const actions: ActionRecord[] = [];
+
+    for (const [seq, lease] of Object.entries(state.leases)) {
+      const slot = lease.slot ? state.workers[lease.slot] || null : null;
+      const targetState = this.derivePmStateFromLease(lease, slot);
+      if (!targetState) continue;
+
+      const card = await this.taskBackend.getBySeq(seq);
+      if (!card || card.state === targetState) continue;
+
+      try {
+        await this.taskBackend.move(seq, targetState);
+        this.log.info(`Reconciled seq ${seq} ${card.state} → ${targetState} to match runtime state`);
+        actions.push({
+          action: 'pm-reconcile',
+          entity: `seq:${seq}`,
+          result: 'ok',
+          message: `${card.state} → ${targetState}`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.warn(`Failed to reconcile PM state for seq ${seq}: ${msg}`);
+        actions.push({
+          action: 'pm-reconcile',
+          entity: `seq:${seq}`,
+          result: 'skip',
+          message: msg,
+        });
+      }
+    }
+
+    return actions;
+  }
+
+  private derivePmStateFromLease(
+    lease: TaskLease,
+    slot: WorkerSlotState | null,
+  ): string | null {
+    const s = this.pipelineAdapter.states;
+    if (lease.phase === 'queued' || lease.phase === 'preparing') {
+      return s.ready;
+    }
+    if (lease.phase === 'coding') {
+      return this.stage.activeState;
+    }
+    if (lease.phase === 'waiting_confirmation') {
+      // If in a later stage (merging context), keep current observed state
+      if (lease.pmStateObserved && lease.pmStateObserved !== this.stage.activeState
+          && slot?.status !== 'merging' && slot?.status !== 'resolving') {
+        return this.stage.activeState;
+      }
+      return lease.pmStateObserved || this.stage.activeState;
+    }
+    if (['merging', 'resolving_conflict', 'closing'].includes(lease.phase)) {
+      // Find the stage that handles merging (has fast-forward-merge completion)
+      const mergeStage = this.pipelineAdapter.stages.find(st => st.completion === 'fast-forward-merge');
+      return mergeStage?.activeState || this.stage.activeState;
+    }
+    return null;
+  }
+
+  // ─── Prompt building ───────────────────────────────────────────
+
+  private buildStagePrompt(card: Card, worktreePath: string, branchName: string): string {
+    const skillContent = this.loadSkillProfiles(card);
+
+    let projectRules = '';
+    const claudeMdPath = resolve(worktreePath, 'CLAUDE.md');
+    const agentsMdPath = resolve(worktreePath, 'AGENTS.md');
+    if (existsSync(claudeMdPath)) {
+      projectRules = readFileSync(claudeMdPath, 'utf-8').trim();
+    }
+    if (existsSync(agentsMdPath)) {
+      const agentsRules = readFileSync(agentsMdPath, 'utf-8').trim();
+      projectRules = projectRules ? `${projectRules}\n\n${agentsRules}` : agentsRules;
+    }
+
+    // Memory system: inject user + project memories + write instructions
+    const memoryContext = buildFullMemoryContext({ project: this.ctx.projectName, cardSeq: card.seq });
+    const memoryInstructions = buildMemoryWriteInstructions(this.ctx.projectName);
+    const knowledge = [memoryContext, memoryInstructions].filter(Boolean).join('\n\n---\n\n');
+
+    // Determine phase for prompt generation (legacy compatibility)
+    const phase = this.stage.completion === 'fast-forward-merge' ? 'integration' : 'development';
+
+    const prompt = buildPhasePrompt({
+      taskSeq: card.seq,
+      taskTitle: card.name,
+      taskDescription: card.desc || '(no description)',
+      cardId: card.id,
+      worktreePath,
+      branchName,
+      targetBranch: this.ctx.mergeBranch,
+      mergeMode: this.ctx.mrMode,
+      gitlabProjectId: resolveGitlabProjectId(this.ctx.config),
+      skillContent,
+      projectRules: projectRules || undefined,
+      knowledge,
+      phase,
+    });
+
+    // Archive to .sps/ for debugging
+    try {
+      const spsDir = resolve(worktreePath, '.sps');
+      if (!existsSync(spsDir)) mkdirSync(spsDir, { recursive: true });
+      writeFileSync(resolve(spsDir, `${this.stage.name}_prompt.txt`), prompt);
+    } catch { /* archive failure should never block worker launch */ }
+
+    return prompt;
+  }
+
+  private loadSkillProfiles(card: Card): string {
+    let skills = card.labels
+      .filter(l => l.startsWith('skill:'))
+      .map(l => l.slice('skill:'.length));
+
+    if (skills.length === 0 && this.stage.profile) {
+      skills = this.stage.profile.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    if (skills.length === 0) {
+      const defaultSkills = this.ctx.config.raw.DEFAULT_WORKER_SKILLS;
+      if (defaultSkills) {
+        skills = defaultSkills.split(',').map(s => s.trim()).filter(Boolean);
+      }
+    }
+
+    if (skills.length === 0) return '';
+
+    this.log.ok(`Skill labels: ${skills.join(', ')}`);
+    return `# Required Skills\n\nThis task requires the following skills: ${skills.join(', ')}.\nLoad the dev-worker skill and read the corresponding references.`;
+  }
+
+  // loadProjectKnowledge removed — replaced by memory system (buildMemoryContext)
+
+  // ─── Worktree cleanup (last stage only) ────────────────────────
+
+  private async cleanupWorktrees(actions: ActionRecord[]): Promise<void> {
+    const state = this.runtimeStore.readState();
+    const queue = state.worktreeCleanup ?? [];
+    if (queue.length === 0) return;
+
+    const now = Date.now();
+    const ready = queue.filter(e => now - new Date(e.markedAt).getTime() >= 30_000);
+    const deferred = queue.filter(e => now - new Date(e.markedAt).getTime() < 30_000);
+
+    if (ready.length === 0) {
+      if (deferred.length > 0) {
+        this.log.debug(`${deferred.length} worktree(s) deferred — waiting for worker shutdown`);
+      }
+      return;
+    }
+
+    this.log.info(`Cleaning up ${ready.length} worktree(s)`);
+    const remaining: typeof queue = [...deferred];
+
+    for (const entry of ready) {
+      try {
+        await this.repoBackend.removeWorktree(this.ctx.paths.repoDir, entry.worktreePath, entry.branch);
+        this.log.ok(`Cleaned up worktree: ${entry.branch}`);
+        actions.push({
+          action: 'worktree-cleanup',
+          entity: entry.branch,
+          result: 'ok',
+          message: `Removed worktree ${entry.worktreePath}`,
+        });
+        this.logEvent('worktree-cleanup', entry.branch, 'ok');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.warn(`Failed to clean up worktree ${entry.branch}: ${msg}`);
+        remaining.push(entry);
+        actions.push({
+          action: 'worktree-cleanup',
+          entity: entry.branch,
+          result: 'fail',
+          message: `Cleanup failed: ${msg}`,
+        });
+      }
+    }
+
+    this.runtimeStore.updateState('stage-worktree-cleanup', (freshState) => {
+      freshState.worktreeCleanup = remaining;
+    });
+  }
+
+  // ─── Merge detection ───────────────────────────────────────────
+
+  private isMergedToBase(worktree: string, branchName: string): boolean {
+    try {
+      execFileSync('git', ['-C', worktree, 'fetch', 'origin', this.ctx.mergeBranch], { stdio: 'ignore' });
+    } catch { /* best effort */ }
+
+    try {
+      execFileSync(
+        'git',
+        ['-C', worktree, 'merge-base', '--is-ancestor', branchName, `origin/${this.ctx.mergeBranch}`],
+        { stdio: 'ignore' },
+      );
+    } catch {
+      return false;
+    }
+
+    const pushed = branchPushed(worktree, branchName);
+    const localAhead = branchCommitsAhead(worktree, branchName, this.ctx.mergeBranch);
+    if (pushed || localAhead > 0) return true;
+
+    this.log.debug(`branch ${branchName}: ancestor of ${this.ctx.mergeBranch} but no artifacts — not a real merge`);
+    return false;
+  }
+
+  // ─── Common helpers ────────────────────────────────────────────
+
+  private shouldSkip(card: Card): boolean {
+    return SKIP_LABELS.some((label) => card.labels.includes(label));
+  }
+
+  private async cleanAuxiliaryLabels(card: Card): Promise<void> {
+    for (const label of CLEANUP_LABELS) {
+      if (card.labels.includes(label)) {
+        try {
+          await this.taskBackend.removeLabel(card.seq, label);
+          card.labels = card.labels.filter(l => l !== label);
+          this.log.ok(`Removed stale label "${label}" from seq ${card.seq}`);
+        } catch {
+          this.log.warn(`Failed to remove label "${label}" from seq ${card.seq}`);
+        }
+      }
+    }
+  }
+
+  private buildBranchName(card: Card): string {
+    const slug = card.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40);
+    return `feature/${card.seq}-${slug}`;
+  }
+
+  private findRuntimeSlotName(
+    state: RuntimeState,
+    seq: string,
+    lease: TaskLease | null,
+  ): string | null {
+    if (lease?.slot && state.workers[lease.slot]) return lease.slot;
+    const slotEntry = Object.entries(state.workers).find(
+      ([, worker]) => worker.seq === parseInt(seq, 10) && worker.status !== 'idle',
+    );
+    return slotEntry?.[0] || null;
+  }
+
+  private releaseSlot(slotName: string, seq: string): void {
+    try {
+      this.runtimeStore.updateState('stage-release-slot', (state) => {
+        this.runtimeStore.releaseTaskProjection(state, seq, { dropLease: true });
+      });
+      this.taskBackend.releaseClaim(seq).catch(() => {});
+    } catch {
+      this.log.warn(`Failed to release slot ${slotName} for seq ${seq}`);
+    }
+  }
+
+  private async releaseSlotForStage(seq: string, slotName: string): Promise<void> {
+    try {
+      await this.workerManager.cancel({ taskId: seq, project: this.ctx.projectName, reason: 'anomaly' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.warn(`seq ${seq}: WM cancel failed: ${msg}`);
+    }
+
+    this.runtimeStore.updateState(`stage-${this.stage.name}-release`, (draft) => {
+      this.runtimeStore.releaseTaskProjection(draft, seq, {
+        dropLease: false,
+        phase: this.stage.completion === 'fast-forward-merge' ? 'merging' : 'coding',
+        keepWorktree: true,
+        pmStateObserved: this.stage.activeState,
+      });
+    });
+
+    try {
+      await this.taskBackend.releaseClaim(seq);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.warn(`seq ${seq}: Failed to release claim for ${slotName}: ${msg}`);
+    }
+  }
+
+  private async markNeedsFix(seq: string, reason: string): Promise<void> {
+    const label = this.stage.onFailLabel || 'NEEDS-FIX';
+    const comment = this.stage.onFailComment || reason;
+    await this.addLabelSafe(seq, label);
+    await this.commentSafe(seq, `${label}: ${comment}`);
+    await this.notifySafe(`⚠️ [${this.ctx.projectName}] seq:${seq} marked ${label}: ${reason}`);
+  }
+
+  private async addLabelSafe(seq: string, label: string): Promise<void> {
+    try { await this.taskBackend.addLabel(seq, label); } catch (err) {
+      this.log.error(`Failed to add label ${label} to seq ${seq}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  private async commentSafe(seq: string, text: string): Promise<void> {
+    try { await this.taskBackend.comment(seq, text); } catch (err) {
+      this.log.error(`Failed to comment on seq ${seq}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  private async notifySafe(message: string): Promise<void> {
+    if (!this.notifier) return;
+    try { await this.notifier.send(message); } catch { /* non-fatal */ }
+  }
+
+  private logEvent(action: string, seq: string, result: 'ok' | 'fail', meta?: Record<string, unknown>): void {
+    this.log.event({
+      component: `stage-${this.stage.name}`,
+      action,
+      entity: `seq:${seq}`,
+      result,
+      meta,
+    });
+  }
+
+  // ─── Public: single-card launch (for sps worker launch) ────────
+
+  /**
+   * Launch a single card (for `sps worker launch <project> <seq>`).
+   * Only available on the first stage.
+   */
+  async launchSingle(seq: string, opts: { dryRun?: boolean } = {}): Promise<CommandResult> {
+    const result: CommandResult = {
+      project: this.ctx.projectName,
+      component: 'worker-launch',
+      status: 'ok',
+      exitCode: 0,
+      actions: [],
+      recommendedActions: [],
+      details: {},
+    };
+
+    if (!this.isFirstStage) {
+      result.status = 'fail';
+      result.exitCode = 2;
+      result.details = { error: 'launchSingle only available on first stage' };
+      return result;
+    }
+
+    const card = await this.taskBackend.getBySeq(seq);
+    if (!card) {
+      result.status = 'fail';
+      result.exitCode = 1;
+      result.details = { error: `Card seq:${seq} not found` };
+      return result;
+    }
+
+    // If card is in Backlog, do prepare first
+    if (card.state === this.pipelineAdapter.states.backlog) {
+      const prepareAction = await this.prepareCard(card, opts);
+      result.actions.push(prepareAction);
+      if (prepareAction.result === 'fail') {
+        result.status = 'fail';
+        result.exitCode = 1;
+        return result;
+      }
+      const updated = await this.taskBackend.getBySeq(seq);
+      if (!updated || updated.state !== this.pipelineAdapter.states.ready) {
+        result.status = 'fail';
+        result.exitCode = 1;
+        result.details = { error: `Card not in ${this.pipelineAdapter.states.ready} after prepare` };
+        return result;
+      }
+    }
+
+    if (card.state !== this.pipelineAdapter.states.ready && card.state !== this.pipelineAdapter.states.backlog) {
+      result.status = 'fail';
+      result.exitCode = 2;
+      result.details = { error: `Card seq:${seq} is in ${card.state}, expected ${this.pipelineAdapter.states.backlog} or ${this.pipelineAdapter.states.ready}` };
+      return result;
+    }
+
+    const launchAction = await this.launchWorker(card, opts);
+    result.actions.push(launchAction);
+    if (launchAction.result === 'fail') {
+      result.status = 'fail';
+      result.exitCode = 1;
+    }
+
+    return result;
+  }
+}

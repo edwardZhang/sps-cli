@@ -1,6 +1,6 @@
 import { ProjectContext } from '../core/context.js';
-import { workflowUsesAgentRuntime } from '../core/config.js';
-import { CloseoutEngine } from '../engines/CloseoutEngine.js';
+import {} from '../core/config.js';
+import { StageEngine } from '../engines/StageEngine.js';
 import { createTaskBackend, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
@@ -31,10 +31,16 @@ export async function executeQaTick(
     process.exit(3);
   }
 
-  const taskBackend = createTaskBackend(ctx.config);
+  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+  const allStateNames = [...new Set([
+    pipelineAdapter.states.planning, pipelineAdapter.states.backlog,
+    pipelineAdapter.states.ready, pipelineAdapter.states.done,
+    ...pipelineAdapter.stages.flatMap(s => [s.triggerState, s.activeState, s.onCompleteState]),
+  ].filter(Boolean))];
+  const taskBackend = createTaskBackend(ctx.config, allStateNames);
   const repoBackend = createRepoBackend(ctx.config);
   const notifier = createNotifier(ctx.config);
-  const agentRuntime = workflowUsesAgentRuntime(ctx.config) ? createAgentRuntime(ctx) : null;
+  const agentRuntime = createAgentRuntime(ctx);
 
   // Build WorkerManager for standalone QA tick
   const supervisor = new ProcessSupervisor();
@@ -51,7 +57,6 @@ export async function executeQaTick(
     stateFile: ctx.paths.stateFile,
     maxWorkers: ctx.maxWorkers,
   });
-  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
   const runtimeStore = new RuntimeStore({ paths: { stateFile: ctx.paths.stateFile }, maxWorkers: ctx.maxWorkers });
   const raw = ctx.config.raw;
   const eventHandler = new SPSEventHandler({
@@ -59,7 +64,10 @@ export async function executeQaTick(
   });
   workerManager.onEvent((event) => eventHandler.handle(event));
 
-  const engine = new CloseoutEngine(ctx, taskBackend, repoBackend, workerManager, pipelineAdapter, notifier);
+  // Run last stage (handles integration/merge — equivalent to old CloseoutEngine)
+  const lastIdx = pipelineAdapter.stages.length - 1;
+  const lastStage = pipelineAdapter.stages[lastIdx];
+  const engine = new StageEngine(ctx, lastStage, lastIdx, pipelineAdapter.stages.length, taskBackend, repoBackend, workerManager, pipelineAdapter, notifier);
   const result = await engine.tick();
 
   if (jsonOutput) {

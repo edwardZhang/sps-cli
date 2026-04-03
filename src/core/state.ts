@@ -13,7 +13,7 @@ export interface WorkerSlotState {
   /** Worker execution mode — null for legacy state files */
   mode?: 'print' | 'acp' | 'acp-sdk' | null;
   /** Underlying worker transport */
-  transport?: 'proc' | 'acp' | 'acp-sdk' | null;
+  transport?: 'acp-sdk' | null;
   /** Worker tool currently bound to the slot */
   agent?: 'claude' | 'codex' | null;
   /** Claude/Codex session ID for resume chains (print mode) */
@@ -121,7 +121,7 @@ export interface IntegrationQueueEntry {
   branch: string;
   targetBranch: string;
   tool: 'claude' | 'codex';
-  transport: 'proc' | 'acp-sdk';
+  transport: 'acp-sdk';
   outputFile: string;
   enqueuedAt: string;
 }

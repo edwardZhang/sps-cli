@@ -1,12 +1,11 @@
 import { ProjectContext } from '../core/context.js';
-import { workflowUsesAgentRuntime } from '../core/config.js';
+import {} from '../core/config.js';
 import { acquireTickLock, releaseTickLock } from '../core/lock.js';
 import { readState } from '../core/state.js';
 import { Logger } from '../core/logger.js';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 import { SchedulerEngine } from '../engines/SchedulerEngine.js';
-import { ExecutionEngine } from '../engines/ExecutionEngine.js';
-import { CloseoutEngine } from '../engines/CloseoutEngine.js';
+import { StageEngine } from '../engines/StageEngine.js';
 import { MonitorEngine } from '../engines/MonitorEngine.js';
 import { createTaskBackend, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
@@ -67,8 +66,7 @@ interface ProjectRunner {
   agentRuntime: ReturnType<typeof createAgentRuntime> | null;
   workerManager: import('../manager/worker-manager-impl.js').WorkerManagerImpl;
   scheduler: SchedulerEngine;
-  closeout: CloseoutEngine;
-  execution: ExecutionEngine;
+  stages: StageEngine[];
   monitor: MonitorEngine;
   done: boolean;
   fatalError: boolean;
@@ -100,16 +98,30 @@ function createRunner(project: string): ProjectRunner | null {
   // Rotate logs — each tick session gets a clean log file
   fullLog.rotateLogs();
 
+  // Pipeline adapter: reads YAML config or returns defaults (created early to inform provider states)
+  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+
+  // Collect all unique state names for PM backend
+  const allStateNames = [
+    ...new Set([
+      pipelineAdapter.states.planning,
+      pipelineAdapter.states.backlog,
+      pipelineAdapter.states.ready,
+      pipelineAdapter.states.done,
+      ...pipelineAdapter.stages.map(s => s.triggerState),
+      ...pipelineAdapter.stages.map(s => s.activeState),
+      ...pipelineAdapter.stages.map(s => s.onCompleteState),
+    ].filter(Boolean)),
+  ];
+
   // Create providers
   let taskBackend, repoBackend, notifier;
   let agentRuntime: ReturnType<typeof createAgentRuntime> | null = null;
   try {
-    taskBackend = createTaskBackend(ctx.config);
+    taskBackend = createTaskBackend(ctx.config, allStateNames);
     repoBackend = createRepoBackend(ctx.config);
     notifier = createNotifier(ctx.config);
-    if (workflowUsesAgentRuntime(ctx.config)) {
-      agentRuntime = createAgentRuntime(ctx);
-    }
+    agentRuntime = createAgentRuntime(ctx);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     fullLog.error(`Fatal: provider init failed for ${project}: ${msg}`);
@@ -129,9 +141,6 @@ function createRunner(project: string): ProjectRunner | null {
     stateFile: ctx.paths.stateFile,
     maxWorkers: ctx.maxWorkers,
   });
-
-  // Pipeline adapter: reads YAML config or returns defaults
-  const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
 
   // Register SPSEventHandler for PM operations on worker lifecycle events
   const runtimeStore = new RuntimeStore({
@@ -158,8 +167,12 @@ function createRunner(project: string): ProjectRunner | null {
     agentRuntime,
     workerManager,
     scheduler: new SchedulerEngine(ctx, taskBackend, pipelineAdapter, notifier),
-    closeout: new CloseoutEngine(ctx, taskBackend, repoBackend, workerManager, pipelineAdapter, notifier),
-    execution: new ExecutionEngine(ctx, taskBackend, repoBackend, workerManager, pipelineAdapter, notifier),
+    stages: pipelineAdapter.stages.map((stage, i) =>
+      new StageEngine(
+        ctx, stage, i, pipelineAdapter.stages.length,
+        taskBackend, repoBackend, workerManager, pipelineAdapter, notifier,
+      ),
+    ),
     monitor: new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter),
     done: false,
     fatalError: false,
@@ -342,7 +355,7 @@ async function runOneTick(
   runner: ProjectRunner,
   dryRun: boolean,
 ): Promise<TickResult> {
-  const { project, scheduler, closeout, execution, monitor, log } = runner;
+  const { project, scheduler, stages, monitor, log } = runner;
 
   // Hot-reload project conf at the start of each tick cycle
   // so changes to branch, worker settings, etc. take effect without restart
@@ -358,15 +371,15 @@ async function runOneTick(
   const schedulerResult = await runStep('scheduler', () => scheduler.tick(opts), log);
   steps.push(schedulerResult);
 
-  const qaResult = await runStep('qa', () => closeout.tick(), log);
-  steps.push(qaResult);
-
-  let pipelineResult = await runStep('pipeline', () => execution.tick(opts), log);
-  if (schedulerResult.status === 'fail') {
-    pipelineResult.status = pipelineResult.status === 'ok' ? 'degraded' : pipelineResult.status;
-    pipelineResult.note = 'scheduler failed — no new cards launched';
+  // Execute all stage engines sequentially
+  for (const stage of stages) {
+    let stageResult = await runStep(`stage-${stage.name}`, () => stage.tick(opts), log);
+    if (stage.isFirstStage && schedulerResult.status === 'fail') {
+      stageResult.status = stageResult.status === 'ok' ? 'degraded' : stageResult.status;
+      stageResult.note = 'scheduler failed — no new cards launched';
+    }
+    steps.push(stageResult);
   }
-  steps.push(pipelineResult);
 
   const monitorResult = await runStep('monitor', () => monitor.tick(), log);
   steps.push(monitorResult);

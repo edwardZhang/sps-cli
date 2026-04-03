@@ -109,11 +109,9 @@ export class SPSEventHandler {
       completionResult?.reason === 'already_merged';
 
     // Resolve the stage definition for this phase
-    const stage = isIntegration
-      ? this.pipelineAdapter.integrateStage
-      : this.pipelineAdapter.developStage;
-    const targetState = stage?.onCompleteState
-      || (isIntegration ? this.pipelineAdapter.states.done : this.pipelineAdapter.states.review);
+    const stage = this.pipelineAdapter.getStage(phase || 'develop')
+      || this.pipelineAdapter.stages[isIntegration ? this.pipelineAdapter.stages.length - 1 : 0];
+    const targetState = stage?.onCompleteState || this.pipelineAdapter.states.done;
 
     // Release slot in runtime state first (never blocks on PM)
     this.releaseSlot(event);
@@ -140,15 +138,14 @@ export class SPSEventHandler {
       completionResult?.reason === 'already_merged';
 
     // Resolve the stage definition for this phase
-    const stage = isIntegration
-      ? this.pipelineAdapter.integrateStage
-      : this.pipelineAdapter.developStage;
+    const stage = this.pipelineAdapter.getStage(phase || 'develop')
+      || this.pipelineAdapter.stages[isIntegration ? this.pipelineAdapter.stages.length - 1 : 0];
     const failLabel = stage?.onFailLabel ?? 'NEEDS-FIX';
     const failComment = stage?.onFailComment
       ?? `Worker ${reason} (exit ${exitCode ?? 1}). Marked as ${failLabel}.`;
 
     // Release slot in runtime state — keep lease in merging phase so the
-    // reconciler can advance the card to QA. CloseoutEngine will check
+    // reconciler can advance the card. The last StageEngine will check
     // for actual merge evidence and either finalize or mark NEEDS-FIX.
     this.releaseSlot(event);
 

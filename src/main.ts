@@ -94,6 +94,11 @@ const COMMANDS: Record<string, CommandInfo> = {
     run: '执行自定义管线',
     use: '切换项目的活动管线',
   }, examples: ['sps pipeline start my-project', 'sps pipeline list', 'sps pipeline use my-project develop'] },
+  memory:    { desc: '项目记忆管理', usage: 'sps memory <子命令> <project>', subs: {
+    context: '生成记忆注入内容（供 worker prompt 使用）',
+    list: '列出项目记忆索引',
+    add: '添加记忆条目',
+  }, examples: ['sps memory context my-project', 'sps memory context my-project --card 42', 'sps memory list my-project'] },
   worker:    { desc: 'Worker 生命周期管理', usage: 'sps worker <子命令> <project> [seq]', subs: {
     ps: '查看 Worker 进程状态',
     kill: '终止指定 Worker',
@@ -195,20 +200,29 @@ interface ParsedArgs {
 }
 
 // Commands that always have subcommands
-const SUBCOMMAND_COMMANDS = new Set(['scheduler', 'pipeline', 'worker', 'acp', 'pm', 'qa', 'monitor', 'project', 'card', 'skill']);
+const SUBCOMMAND_COMMANDS = new Set(['scheduler', 'pipeline', 'worker', 'acp', 'pm', 'qa', 'monitor', 'project', 'card', 'skill', 'memory']);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const flags: Record<string, boolean> = {};
   const positionals: string[] = [];
 
-  for (const arg of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
     if (arg.startsWith('--')) {
       const eqIdx = arg.indexOf('=');
       if (eqIdx > 0) {
-        // --key=value → treat as boolean true (value parsed by command if needed)
-        flags[arg.slice(2, eqIdx)] = true;
+        // --key=value → store value
+        flags[arg.slice(2, eqIdx)] = arg.slice(eqIdx + 1) as any;
       } else {
-        flags[arg.slice(2)] = true;
+        const key = arg.slice(2);
+        // Peek next arg: if it exists and doesn't start with --, treat as value
+        const next = argv[i + 1];
+        if (next && !next.startsWith('--')) {
+          flags[key] = next as any;
+          i++; // skip next
+        } else {
+          flags[key] = true;
+        }
       }
     } else {
       positionals.push(arg);
@@ -623,6 +637,92 @@ async function main() {
     }
     await executePmCommand(args.project, args.subcommand, args.positionals, args.flags);
     return;
+  }
+
+  // ─── memory ─────────────────────────────────────────────────
+  if (args.command === 'memory') {
+    const { buildFullMemoryContext, readMemoryIndex, addMemory, ensureMemoryDir, MEMORY_TYPES, getProjectMemoryDir } = await import('./core/memory.js');
+
+    if (args.subcommand === 'context') {
+      if (!args.project) {
+        console.error('Usage: sps memory context <project> [--card <seq>] [--agent <id>]');
+        process.exit(2);
+      }
+      const cardSeq = args.flags.card as unknown as string | undefined;
+      const agentId = args.flags.agent as unknown as string | undefined;
+      const context = buildFullMemoryContext({ project: args.project, cardSeq, agentId });
+      if (context) {
+        console.log(context);
+      } else {
+        console.log('(no project memories found)');
+      }
+      return;
+    }
+
+    if (args.subcommand === 'list') {
+      const { getUserMemoryDir, getAgentMemoryDir } = await import('./core/memory.js');
+
+      // Show all layers
+      const userIndex = readMemoryIndex(getUserMemoryDir());
+      if (userIndex) {
+        console.log('── User Memory ──');
+        console.log(userIndex);
+        console.log('');
+      }
+
+      const agentId = args.flags.agent as unknown as string | undefined;
+      if (agentId) {
+        const agentIndex = readMemoryIndex(getAgentMemoryDir(agentId));
+        if (agentIndex) {
+          console.log(`── Agent Memory (${agentId}) ──`);
+          console.log(agentIndex);
+          console.log('');
+        }
+      }
+
+      if (args.project) {
+        const projectIndex = readMemoryIndex(getProjectMemoryDir(args.project));
+        if (projectIndex) {
+          console.log(`── Project Memory (${args.project}) ──`);
+          console.log(projectIndex);
+        } else {
+          console.log(`── Project Memory (${args.project}) ──`);
+          console.log('(no memories yet)');
+        }
+      } else {
+        if (!userIndex) console.log('(no memories found)');
+      }
+      return;
+    }
+
+    if (args.subcommand === 'add') {
+      if (!args.project) {
+        console.error('Usage: sps memory add <project> --type <type> --name <name> [--body <text>]');
+        process.exit(2);
+      }
+      const type = (args.flags.type as unknown as string) || '';
+      const name = (args.flags.name as unknown as string) || args.positionals[0] || '';
+      const body = (args.flags.body as unknown as string) || args.positionals.slice(1).join(' ') || '';
+      const description = (args.flags.description as unknown as string) || name;
+
+      if (!type || !MEMORY_TYPES.includes(type as any) || !name) {
+        console.error(`Usage: sps memory add <project> --type <${MEMORY_TYPES.join('|')}> --name "<title>" [--body "<content>"]`);
+        process.exit(2);
+      }
+
+      ensureMemoryDir(args.project);
+      const filePath = addMemory(args.project, {
+        name,
+        description,
+        type: type as any,
+        body: body || name,
+      });
+      console.log(`Memory saved: ${filePath}`);
+      return;
+    }
+
+    console.error('Usage: sps memory <context|list|add> <project>');
+    process.exit(2);
   }
 
   // ─── card ───────────────────────────────────────────────────

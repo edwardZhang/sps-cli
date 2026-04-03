@@ -77,7 +77,7 @@ export class SchedulerEngine {
 
       // 4. Walk ordered list and promote eligible cards
       //    Scheduler promotion (Planning → Backlog) is lightweight — it only
-      //    changes card state in PM. The real throttle is in ExecutionEngine
+      //    changes card state in PM. The real throttle is in StageEngine
       //    which launches actual workers. We allow promoting up to
       //    MAX_CONCURRENT_WORKERS cards per tick so the pipeline stays fed.
       let actionsThisTick = 0;

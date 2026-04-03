@@ -33,7 +33,7 @@ function makeEntry(taskId: string, project = 'myapp', targetBranch = 'main'): Qu
     cwd: `/tmp/wt-${taskId}`,
     branch: `feat-${taskId}`,
     targetBranch,
-    tool: 'claude', transport: 'proc',
+    tool: 'claude', transport: 'acp-sdk',
     outputFile: `/tmp/out-${taskId}.jsonl`,
     enqueuedAt: new Date().toISOString(),
   };

@@ -58,11 +58,11 @@ describe('ProcessSupervisor', () => {
     });
 
     it('registerAcpHandle adds a handle', () => {
-      const handle = makeHandle('test:worker-1:5', { transport: 'acp' as any });
+      const handle = makeHandle('test:worker-1:5', { transport: 'acp-sdk' as any });
       sup.registerAcpHandle(handle);
       expect(sup.activeCount).toBe(1);
       expect(sup.get('test:worker-1:5')).toBeDefined();
-      expect(sup.get('test:worker-1:5')!.transport).toBe('acp');
+      expect(sup.get('test:worker-1:5')!.transport).toBe('acp-sdk');
     });
 
     it('getByProject filters by project', () => {
@@ -147,7 +147,7 @@ describe('ProcessSupervisor', () => {
     it('normalizes transport to acp', () => {
       const handle = makeHandle('test:w1:1');
       const registered = sup.registerAcpHandle(handle);
-      expect(registered.transport).toBe('acp');
+      expect(registered.transport).toBe('acp-sdk');
       expect(registered.pid).toBeNull();
     });
 
@@ -192,50 +192,6 @@ describe('ProcessSupervisor', () => {
     });
   });
 
-  describe('spawn (codex — fast exit)', () => {
-    let tempDir: string;
-
-    beforeEach(() => {
-      tempDir = makeTempDir();
-    });
-
-    afterEach(() => {
-      for (const h of sup.getAll()) {
-        if (h.pid && h.pid > 0) {
-          try { process.kill(h.pid, 'SIGKILL'); } catch { /* ignore */ }
-        }
-      }
-      rmSync(tempDir, { recursive: true, force: true });
-    });
-
-    it('creates output file and tracks handle on spawn', () => {
-      const outputFile = join(tempDir, 'output.jsonl');
-      // codex likely not installed — spawn will throw ENOENT
-      // but the fd/outputFile setup happens before spawn
-      try {
-        sup.spawn({
-          id: 'test:w1:1',
-          project: 'test',
-          seq: '1',
-          slot: 'worker-1',
-          worktree: tempDir,
-          branch: 'feat-1',
-          prompt: 'test',
-          outputFile,
-          tool: 'codex',
-          onExit: () => {},
-        });
-        // If spawn succeeds (codex installed), handle should be tracked
-        expect(sup.get('test:w1:1')).toBeDefined();
-      } catch {
-        // spawn throws ENOENT — expected when codex not installed
-        // The output file was still created by the fd redirect
-        const { existsSync } = require('node:fs');
-        expect(existsSync(outputFile)).toBe(true);
-      }
-    });
-  });
-
   describe('reloadGlobalEnv', () => {
     it('reloads without error', () => {
       expect(() => sup.reloadGlobalEnv()).not.toThrow();
@@ -244,7 +200,7 @@ describe('ProcessSupervisor', () => {
 
   describe('monitorOrphanPid', () => {
     it('registers orphan handle and tracks it', () => {
-      const handle = { ...makeHandle('test:w1:1', { pid: 99999 }), transport: 'proc' as const };
+      const handle = { ...makeHandle('test:w1:1', { pid: 99999 }), transport: 'acp-sdk' as const };
       sup.monitorOrphanPid(
         'test:w1:1',
         99999,
@@ -258,7 +214,7 @@ describe('ProcessSupervisor', () => {
 
     it('calls onDead when PID dies (dead PID detected on first poll)', async () => {
       const deadPid = 4_000_000;
-      const handle = { ...makeHandle('test:w1:dead', { pid: deadPid }), transport: 'proc' as const };
+      const handle = { ...makeHandle('test:w1:dead', { pid: deadPid }), transport: 'acp-sdk' as const };
 
       const deadPromise = new Promise<number>((resolve) => {
         sup.monitorOrphanPid(

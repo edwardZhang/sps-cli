@@ -2,7 +2,7 @@
  * PMClient — lightweight PM operations for PostActions.
  *
  * Only the 5 methods needed by post-completion/failure flows.
- * Full TaskBackend remains for SchedulerEngine/ExecutionEngine use.
+ * Full TaskBackend remains for SchedulerEngine/StageEngine use.
  *
  * Supports Plane, Trello, and Markdown backends.
  */

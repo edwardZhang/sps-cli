@@ -7,22 +7,12 @@ import type { ProjectConfig } from '../core/config.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { Card, CardState } from '../models/types.js';
 
-const ALL_STATES: CardState[] = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA', 'Done'];
+/** Legacy default states (used when no custom states provided). */
+const DEFAULT_STATES: CardState[] = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA', 'Done'];
 
-/** Map CardState to directory name (lowercase for filesystem friendliness). */
-const STATE_DIR: Record<CardState, string> = {
-  Planning: 'planning',
-  Backlog: 'backlog',
-  Todo: 'todo',
-  Inprogress: 'inprogress',
-  QA: 'qa',
-  Done: 'done',
-};
-
-/** Reverse map: directory name → CardState. */
-const DIR_STATE: Record<string, CardState> = {};
-for (const [state, dir] of Object.entries(STATE_DIR)) {
-  DIR_STATE[dir] = state as CardState;
+/** Convert state name to filesystem-friendly directory name. */
+function stateToDirName(state: string): string {
+  return state.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
 /**
@@ -45,15 +35,32 @@ for (const [state, dir] of Object.entries(STATE_DIR)) {
 export class MarkdownTaskBackend implements TaskBackend {
   private readonly cardsDir: string;
   private readonly seqFile: string;
+  private readonly allStates: CardState[];
+  /** state name → directory name */
+  private readonly stateDir: Map<string, string>;
+  /** directory name → state name */
+  private readonly dirState: Map<string, string>;
 
-  constructor(config: ProjectConfig) {
+  constructor(config: ProjectConfig, customStates?: string[]) {
     const home = process.env.HOME || '/home/coral';
     this.cardsDir = resolve(home, '.coral', 'projects', config.PROJECT_NAME, 'cards');
     this.seqFile = resolve(this.cardsDir, 'seq.txt');
+
+    // Build state ↔ directory mappings
+    this.allStates = (customStates && customStates.length > 0
+      ? customStates
+      : DEFAULT_STATES) as CardState[];
+    this.stateDir = new Map();
+    this.dirState = new Map();
+    for (const state of this.allStates) {
+      const dir = stateToDirName(state);
+      this.stateDir.set(state, dir);
+      this.dirState.set(dir, state);
+    }
   }
 
   async bootstrap(): Promise<void> {
-    for (const dir of Object.values(STATE_DIR)) {
+    for (const dir of this.stateDir.values()) {
       const path = resolve(this.cardsDir, dir);
       if (!existsSync(path)) mkdirSync(path, { recursive: true });
     }
@@ -65,7 +72,8 @@ export class MarkdownTaskBackend implements TaskBackend {
   // ─── Query ─────────────────────────────────────────────────────
 
   async listByState(state: CardState): Promise<Card[]> {
-    const dir = resolve(this.cardsDir, STATE_DIR[state]);
+    const dirName = this.stateDir.get(state) || stateToDirName(state);
+    const dir = resolve(this.cardsDir, dirName);
     if (!existsSync(dir)) return [];
     const files = readdirSync(dir).filter((f) => f.endsWith('.md')).sort();
     return files.map((f) => this.readCard(resolve(dir, f), state));
@@ -73,15 +81,16 @@ export class MarkdownTaskBackend implements TaskBackend {
 
   async listAll(): Promise<Card[]> {
     const cards: Card[] = [];
-    for (const state of ALL_STATES) {
+    for (const state of this.allStates) {
       cards.push(...await this.listByState(state));
     }
     return cards.sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10));
   }
 
   async getBySeq(seq: string): Promise<Card | null> {
-    for (const state of ALL_STATES) {
-      const dir = resolve(this.cardsDir, STATE_DIR[state]);
+    for (const state of this.allStates) {
+      const dirName = this.stateDir.get(state) || stateToDirName(state);
+      const dir = resolve(this.cardsDir, dirName);
       if (!existsSync(dir)) continue;
       const file = readdirSync(dir).find((f) => f.startsWith(`${seq}-`));
       if (file) return this.readCard(resolve(dir, file), state);
@@ -94,7 +103,8 @@ export class MarkdownTaskBackend implements TaskBackend {
   async move(seq: string, targetState: CardState): Promise<void> {
     const { filePath, currentState } = this.findCardFile(seq);
     if (currentState === targetState) return;
-    const targetDir = resolve(this.cardsDir, STATE_DIR[targetState]);
+    const targetDirName = this.stateDir.get(targetState) || stateToDirName(targetState);
+    const targetDir = resolve(this.cardsDir, targetDirName);
     if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
     const targetPath = resolve(targetDir, basename(filePath));
     renameSync(filePath, targetPath);
@@ -173,7 +183,8 @@ export class MarkdownTaskBackend implements TaskBackend {
       .replace(/^-|-$/g, '')
       .slice(0, 40);
     const filename = `${seq}-${slug || 'task'}.md`;
-    const dir = resolve(this.cardsDir, STATE_DIR[state]);
+    const dirName = this.stateDir.get(state) || stateToDirName(state);
+    const dir = resolve(this.cardsDir, dirName);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     const frontmatter: Record<string, unknown> = {
@@ -262,11 +273,25 @@ export class MarkdownTaskBackend implements TaskBackend {
    * Find the card file by seq across all state directories.
    */
   private findCardFile(seq: string): { filePath: string; currentState: CardState } {
-    for (const state of ALL_STATES) {
-      const dir = resolve(this.cardsDir, STATE_DIR[state]);
+    // Search known states first
+    for (const state of this.allStates) {
+      const dirName = this.stateDir.get(state) || stateToDirName(state);
+      const dir = resolve(this.cardsDir, dirName);
       if (!existsSync(dir)) continue;
       const file = readdirSync(dir).find((f) => f.startsWith(`${seq}-`) && f.endsWith('.md'));
       if (file) return { filePath: resolve(dir, file), currentState: state };
+    }
+    // Fallback: scan all subdirectories (handles cards in legacy state dirs)
+    if (existsSync(this.cardsDir)) {
+      for (const entry of readdirSync(this.cardsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name === '.') continue;
+        const dir = resolve(this.cardsDir, entry.name);
+        const file = readdirSync(dir).find((f) => f.startsWith(`${seq}-`) && f.endsWith('.md'));
+        if (file) {
+          const state = (this.dirState.get(entry.name) || entry.name) as CardState;
+          return { filePath: resolve(dir, file), currentState: state };
+        }
+      }
     }
     throw new Error(`Card seq:${seq} not found in cards/`);
   }

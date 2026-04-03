@@ -415,7 +415,7 @@ function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
       const isPrintMode = slot.mode === 'print';
-      const isAcpMode = slot.mode === 'acp' || slot.mode === 'acp-sdk' || slot.transport === 'acp' || slot.transport === 'acp-sdk';
+      const isAcpMode = slot.mode === 'acp' || slot.mode === 'acp-sdk' || slot.transport === 'acp-sdk';
 
       let sessionAlive: boolean;
       let paneLines: string[];
@@ -695,7 +695,7 @@ function buildJsonOutput(projects: string[], snapshots: SnapshotMap): DashboardJ
 
     for (const [slotName, slot] of Object.entries(state.workers)) {
       const isPrintMode = slot.mode === 'print';
-      const isAcpMode = slot.mode === 'acp' || slot.mode === 'acp-sdk' || slot.transport === 'acp' || slot.transport === 'acp-sdk';
+      const isAcpMode = slot.mode === 'acp' || slot.mode === 'acp-sdk' || slot.transport === 'acp-sdk';
       const acpSession = state.sessions[slotName];
       const sessionAlive = isAcpMode
         ? isPersistedSessionAlive(slot, acpSession)

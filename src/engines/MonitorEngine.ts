@@ -96,7 +96,7 @@ export class MonitorEngine {
       if (this.supervisor.get(workerId)) continue;
 
       if (
-        (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk') &&
+        (slotState.transport === 'acp-sdk' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk') &&
         this.isAcpSessionAlive(state.sessions[slotName])
       ) {
         continue;
@@ -213,7 +213,7 @@ export class MonitorEngine {
 
       const slotState = runtime.slot;
 
-      if (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk') {
+      if (slotState.transport === 'acp-sdk' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk') {
         const session = runtime.slotName ? state.sessions[runtime.slotName] : undefined;
         if (this.isAcpSessionAlive(session)) {
           continue;
@@ -270,8 +270,12 @@ export class MonitorEngine {
   }
 
   private async listRuntimeAwareInprogressCards(): Promise<{ seq: string; name: string; labels: string[] }[]> {
-    const cards = await this.taskBackend.listByState(this.pipelineAdapter.states.active);
-    const bySeq = new Map(cards.map(card => [card.seq, card]));
+    // Collect cards from all stage activeStates (not just the first stage)
+    const bySeq = new Map<string, import('../models/types.js').Card>();
+    for (const stage of this.pipelineAdapter.stages) {
+      const cards = await this.taskBackend.listByState(stage.activeState);
+      for (const card of cards) bySeq.set(card.seq, card);
+    }
     const state = this.runtimeStore.readState();
 
     for (const [seq, lease] of Object.entries(state.leases)) {
@@ -416,7 +420,6 @@ export class MonitorEngine {
       const slotState = state.workers[slotName];
       if (!slotState) continue;
       const isAgentTransport =
-        slotState.transport === 'acp' ||
         slotState.transport === 'acp-sdk' ||
         slotState.mode === 'acp' ||
         slotState.mode === 'acp-sdk';
@@ -511,7 +514,7 @@ export class MonitorEngine {
         continue;
       }
 
-      if (slotState.transport === 'acp' || slotState.transport === 'acp-sdk' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk') {
+      if (slotState.transport === 'acp-sdk' || slotState.mode === 'acp' || slotState.mode === 'acp-sdk') {
         const session = state.sessions[slotName];
         if (this.isAcpSessionAlive(session)) continue;
       }

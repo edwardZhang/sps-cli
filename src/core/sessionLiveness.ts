@@ -15,7 +15,6 @@ export function isProcessAlive(pid: number | null | undefined): boolean {
 
 export function isACPBackedSlot(slot: Pick<WorkerSlotState, 'transport' | 'mode'>): boolean {
   return (
-    slot.transport === 'acp' ||
     slot.transport === 'acp-sdk' ||
     slot.mode === 'acp' ||
     slot.mode === 'acp-sdk'

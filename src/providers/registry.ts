@@ -11,11 +11,11 @@ import { MatrixNotifier } from './MatrixNotifier.js';
 import { ProjectContext } from '../core/context.js';
 import { ACPWorkerRuntime } from './ACPWorkerRuntime.js';
 
-export function createTaskBackend(config: ProjectConfig): TaskBackend {
+export function createTaskBackend(config: ProjectConfig, customStates?: string[]): TaskBackend {
   switch (config.PM_TOOL) {
     case 'plane': return new PlaneTaskBackend(config);
     case 'trello': return new TrelloTaskBackend(config);
-    case 'markdown': return new MarkdownTaskBackend(config);
+    case 'markdown': return new MarkdownTaskBackend(config, customStates);
     default: throw new Error(`Unknown PM_TOOL: ${config.PM_TOOL}`);
   }
 }

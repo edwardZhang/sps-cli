@@ -29,7 +29,7 @@ export interface ProjectConfig {
 
   // Worker
   WORKER_TOOL: 'claude' | 'codex';
-  WORKER_TRANSPORT: 'proc' | 'acp' | 'acp-sdk';
+  WORKER_TRANSPORT: 'acp-sdk';
   MAX_CONCURRENT_WORKERS: number;
   WORKER_RESTART_LIMIT: number;
   MAX_ACTIONS_PER_TICK: number;
@@ -54,23 +54,11 @@ export interface ProjectConfig {
 
 /**
  * Resolve the worker transport for SPS workflow execution.
- *
- * Default is 'acp-sdk' — uses ACP JSON-RPC over stdio via @agentclientprotocol/sdk.
- * Override via WORKER_TRANSPORT in project conf:
- *   - 'acp-sdk' (default): ACP SDK structured protocol
- *   - 'acp': maps to 'acp-sdk' (legacy alias)
- *   - 'proc': one-shot process spawn (legacy fallback)
+ * Always returns 'acp-sdk' — the only supported transport.
+ * Legacy 'acp' alias is mapped to 'acp-sdk'.
  */
-export function resolveWorkflowTransport(config: ProjectConfig): ProjectConfig['WORKER_TRANSPORT'] {
-  const transport = config.raw.WORKER_TRANSPORT;
-  if (!transport) return 'acp-sdk';
-  if (transport === 'acp') return 'acp-sdk';
-  if (transport === 'proc' || transport === 'acp-sdk') return transport;
+export function resolveWorkflowTransport(_config: ProjectConfig): 'acp-sdk' {
   return 'acp-sdk';
-}
-
-export function workflowUsesAgentRuntime(config: ProjectConfig): boolean {
-  return resolveWorkflowTransport(config) !== 'proc';
 }
 
 const REQUIRED_FIELDS = [

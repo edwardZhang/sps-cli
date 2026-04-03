@@ -1,15 +1,13 @@
 /**
- * ProcessSupervisor — manages worker process lifecycle.
+ * ProcessSupervisor — manages worker handle lifecycle.
  *
- * Replaces ClaudePrintProvider's spawn logic with:
- * - fd redirect (not Node pipe) for reliable output
- * - Held child handles (no unref) for reliable exit detection
- * - Three-layer env merge (system + global creds + project conf)
- * - Exit callbacks that fire immediately in the tick process
+ * Tracks ACP worker handles, provides kill/query/orphan monitoring.
+ * Worker spawning is handled by AgentRuntime (ACP transport).
+ * Three-layer env merge (system + global creds + project conf) for environment.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
-import { openSync, closeSync, mkdirSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { isProcessAlive, killProcessGroup, parseClaudeSessionId, parseCodexSessionId, extractLastAssistantText } from '../providers/outputParser.js';
 import { parseShellConf, sourceCombinedConf } from '../core/shellEnv.js';
@@ -42,7 +40,7 @@ export interface ExitEvent {
 
 export interface WorkerHandle {
   id: string;
-  transport: 'proc' | 'acp';
+  transport: 'acp-sdk';
   pid: number | null;
   child: ChildProcess | null;
   outputFile: string | null;
@@ -78,96 +76,14 @@ export class ProcessSupervisor {
     this.globalEnv = this.loadGlobalEnv();
   }
 
-  // ─── Spawn ──────────────────────────────────────────────────
-
-  spawn(opts: SpawnOpts): WorkerHandle {
-    // Load project conf (Layer 3) and merge
-    const projectEnv = this.loadProjectEnv(opts.project);
-    const env = { ...this.globalEnv, ...projectEnv };
-
-    // Build CLI args
-    const args = this.buildArgs(opts);
-
-    // Ensure output directory exists
-    mkdirSync(dirname(opts.outputFile), { recursive: true });
-
-    // fd redirect: OS kernel writes stdout/stderr directly to file
-    const fd = openSync(opts.outputFile, 'a');
-    let child: ChildProcess;
-
-    try {
-      child = spawn(opts.tool === 'claude' ? 'claude' : 'codex', args, {
-        cwd: opts.worktree,
-        stdio: ['pipe', fd, fd],
-        detached: true,
-        env,
-      });
-
-      // Write prompt to stdin and close
-      child.stdin!.write(opts.prompt);
-      child.stdin!.end();
-    } finally {
-      // Close fd on Node side — child inherits it, OS guarantees write
-      // Always close to prevent fd leak even if spawn throws (H4 fix)
-      closeSync(fd);
-    }
-
-    // DO NOT call child.unref() — tick process holds the handle
-    // This ensures exit callback fires reliably
-
-    const handle: WorkerHandle = {
-      id: opts.id,
-      transport: 'proc',
-      pid: child.pid ?? 0,
-      child,
-      outputFile: opts.outputFile,
-      project: opts.project,
-      seq: opts.seq,
-      slot: opts.slot,
-      branch: opts.branch,
-      worktree: opts.worktree,
-      tool: opts.tool,
-      exitCode: null,
-      sessionId: opts.resumeSessionId || null,
-      runId: null,
-      sessionState: null,
-      remoteStatus: null,
-      lastEventAt: null,
-      startedAt: new Date().toISOString(),
-      exitedAt: null,
-    };
-
-    this.upsertHandle(handle);
-
-    child.on('exit', (code) => {
-      handle.exitCode = code ?? 1;
-      handle.exitedAt = new Date().toISOString();
-
-      // Extract session ID for potential --resume retry
-      if (!handle.sessionId) {
-        handle.sessionId = this.extractSessionId(handle);
-      }
-
-      // Queue PostActions as tracked promise (not fire-and-forget)
-      const result = opts.onExit(handle.exitCode);
-      if (result && typeof (result as Promise<void>).then === 'function') {
-        const promise = (result as Promise<void>).catch(err => {
-          this.log(`PostActions error for ${opts.id}: ${err}`);
-        });
-        this.pendingActions.push(promise);
-      }
-    });
-
-    this.log(`Spawned ${opts.tool} for ${opts.id} (pid=${child.pid}), output=${opts.outputFile}`);
-    return handle;
-  }
+  // ─── Spawn (removed — all workers use ACP transport via AgentRuntime) ──
 
   // ─── Kill / Query ───────────────────────────────────────────
 
   async kill(id: string): Promise<void> {
     const handle = this.workers.get(id);
     if (!handle) return;
-    if (handle.transport === 'proc' && handle.pid && handle.pid > 0 && isProcessAlive(handle.pid)) {
+    if (handle.pid && handle.pid > 0 && isProcessAlive(handle.pid)) {
       await killProcessGroup(handle.pid);
     }
     this.workers.delete(id);
@@ -199,7 +115,7 @@ export class ProcessSupervisor {
   }
 
   registerAcpHandle(
-    handle: Omit<WorkerHandle, 'child' | 'transport'> & { child?: ChildProcess | null; transport?: 'acp' },
+    handle: Omit<WorkerHandle, 'child' | 'transport'> & { child?: ChildProcess | null; transport?: 'acp-sdk' },
   ): WorkerHandle {
     return this.upsertHandle(this.normalizeAcpHandle(handle));
   }
@@ -245,7 +161,7 @@ export class ProcessSupervisor {
     // Store handle without child reference
     const orphanHandle: WorkerHandle = {
       ...handle,
-      transport: 'proc',
+      transport: 'acp-sdk',
       child: null,
       pid,
       outputFile: handle.outputFile ?? null,
@@ -329,23 +245,6 @@ export class ProcessSupervisor {
 
   // ─── Helpers ────────────────────────────────────────────────
 
-  private buildArgs(opts: SpawnOpts): string[] {
-    if (opts.tool === 'claude') {
-      const args = ['-p', '--verbose', '--output-format', 'stream-json', '--dangerously-skip-permissions'];
-      if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
-      return args;
-    }
-
-    // Codex workers need full local access in SPS worktrees.
-    // `--full-auto` is still too restrictive for git worktrees because git
-    // metadata lives under the source repo's .git/worktrees/... path, and some
-    // local proxy setups also require localhost access from inside the worker.
-    if (opts.resumeSessionId) {
-      return ['exec', 'resume', opts.resumeSessionId, '-', '--json', '--sandbox', 'danger-full-access'];
-    }
-    return ['exec', '-', '--json', '--sandbox', 'danger-full-access'];
-  }
-
   private extractSessionId(handle: WorkerHandle): string | null {
     if (!handle.outputFile) return null;
     if (handle.tool === 'claude') return parseClaudeSessionId(handle.outputFile);
@@ -357,11 +256,11 @@ export class ProcessSupervisor {
   }
 
   private normalizeAcpHandle(
-    handle: Omit<WorkerHandle, 'transport' | 'child'> & { child?: ChildProcess | null; transport?: 'acp' | 'proc' },
+    handle: Omit<WorkerHandle, 'transport' | 'child'> & { child?: ChildProcess | null; transport?: 'acp-sdk' },
   ): WorkerHandle {
     return {
       ...handle,
-      transport: 'acp',
+      transport: 'acp-sdk',
       pid: null,
       child: handle.child ?? null,
       outputFile: handle.outputFile ?? null,

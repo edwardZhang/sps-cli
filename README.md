@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.33.0**
+**v0.34.0**
 
 SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Two modes:
 
@@ -230,6 +230,29 @@ Skills are loaded from `~/.coral/skills/` via symlink to agent directories:
 sps skill sync                        # sync skills to ~/.claude/skills/ + ~/.codex/skills/
 ```
 
+### Memory System
+
+Three-layer persistent memory at `~/.coral/memory/`:
+
+```
+~/.coral/memory/
+├── user/                    # Cross-project user preferences
+├── agents/<id>/             # Per-daemon instance experience
+└── projects/<name>/         # Project-specific knowledge
+```
+
+```bash
+sps memory context my-project                  # generate prompt injection (user + project)
+sps memory context my-project --agent daemon-1 # include agent memory
+sps memory list my-project                     # show all memory indexes
+sps memory list my-project --agent daemon-1    # include agent layer
+sps memory add my-project --type convention --name "API naming" --body "Use camelCase"
+```
+
+Memory types: `convention` (no decay), `decision` (slow decay), `lesson` (30-day decay), `reference` (no decay).
+
+Workers receive memory in their prompt and can write new memories directly to the filesystem. Frontmatter format: `name`, `description`, `type`. Each directory has a `MEMORY.md` index file.
+
 ### Global Configuration
 
 Set default agent in `~/.coral/env`:
@@ -252,10 +275,15 @@ SPS CLI
 │        ├── codex-acp (Zed Rust binary)
 │        └── gemini --acp (native)
 │
-└── Pipeline Mode (sps pipeline)
-    ├── WorkerManager + CompletionJudge
-    ├── 4-Engine Tick Loop (Scheduler → Closeout → Execution → Monitor)
-    └── AcpSdkAdapter (shared with harness)
+├── Pipeline Mode (sps pipeline)
+│   ├── WorkerManager + CompletionJudge
+│   ├── 3-Layer Engine: Scheduler → StageEngine × N → Monitor
+│   └── AcpSdkAdapter (shared with harness)
+│
+└── Memory System (~/.coral/memory/)
+    ├── user/          (cross-project preferences)
+    ├── agents/<id>/   (per-daemon experience)
+    └── projects/<name>/ (conventions, decisions, lessons, references)
 ```
 
 ACP SDK transport: structured JSON-RPC over stdio. No terminal scraping. Deterministic state detection via protocol events.
