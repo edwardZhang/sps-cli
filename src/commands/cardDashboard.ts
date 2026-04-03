@@ -105,8 +105,52 @@ function stripAnsi(text: string): string {
   return text.replace(STRIP_ANSI_RE, '');
 }
 
+/** Calculate visible terminal width, accounting for CJK full-width characters (2 columns each) */
 function visibleLength(text: string): number {
-  return stripAnsi(text).length;
+  const stripped = stripAnsi(text);
+  let width = 0;
+  for (const ch of stripped) {
+    const code = ch.codePointAt(0) || 0;
+    // CJK Unified Ideographs, CJK Compatibility, Fullwidth Forms, Hangul, Kana, etc.
+    if (
+      (code >= 0x1100 && code <= 0x115F) ||   // Hangul Jamo
+      (code >= 0x2E80 && code <= 0x303E) ||   // CJK Radicals + Symbols
+      (code >= 0x3040 && code <= 0x33BF) ||   // Hiragana, Katakana, CJK Compatibility
+      (code >= 0x3400 && code <= 0x4DBF) ||   // CJK Unified Extension A
+      (code >= 0x4E00 && code <= 0x9FFF) ||   // CJK Unified Ideographs
+      (code >= 0xA000 && code <= 0xA4CF) ||   // Yi
+      (code >= 0xAC00 && code <= 0xD7AF) ||   // Hangul Syllables
+      (code >= 0xF900 && code <= 0xFAFF) ||   // CJK Compatibility Ideographs
+      (code >= 0xFE30 && code <= 0xFE6F) ||   // CJK Compatibility Forms
+      (code >= 0xFF01 && code <= 0xFF60) ||   // Fullwidth Forms
+      (code >= 0xFFE0 && code <= 0xFFE6) ||   // Fullwidth Signs
+      (code >= 0x20000 && code <= 0x2FA1F)    // CJK Extension B-F + Compatibility Supplement
+    ) {
+      width += 2;
+    } else {
+      width += 1;
+    }
+  }
+  return width;
+}
+
+function charWidth(ch: string): number {
+  const code = ch.codePointAt(0) || 0;
+  if (
+    (code >= 0x1100 && code <= 0x115F) ||
+    (code >= 0x2E80 && code <= 0x303E) ||
+    (code >= 0x3040 && code <= 0x33BF) ||
+    (code >= 0x3400 && code <= 0x4DBF) ||
+    (code >= 0x4E00 && code <= 0x9FFF) ||
+    (code >= 0xA000 && code <= 0xA4CF) ||
+    (code >= 0xAC00 && code <= 0xD7AF) ||
+    (code >= 0xF900 && code <= 0xFAFF) ||
+    (code >= 0xFE30 && code <= 0xFE6F) ||
+    (code >= 0xFF01 && code <= 0xFF60) ||
+    (code >= 0xFFE0 && code <= 0xFFE6) ||
+    (code >= 0x20000 && code <= 0x2FA1F)
+  ) return 2;
+  return 1;
 }
 
 function padOrTruncate(text: string, width: number): string {
@@ -126,12 +170,16 @@ function padOrTruncate(text: string, width: number): string {
         if (/[a-zA-Z]/.test(ch)) inEscape = false;
         continue;
       }
-      if (visible >= width - 1) {
+      const cw = charWidth(ch);
+      if (visible + cw > width - 1) {
         result += '…';
+        // Pad if we stopped before a double-width char left a gap
+        const finalLen = visibleLength(result);
+        if (finalLen < width) result += ' '.repeat(width - finalLen);
         break;
       }
       result += ch;
-      visible++;
+      visible += cw;
     }
     return result;
   }
