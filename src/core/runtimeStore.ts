@@ -1,16 +1,16 @@
 import { existsSync, readFileSync } from 'node:fs';
+import type { ACPSessionRecord, ACPState } from '../models/acp.js';
 import type { ProjectContext } from './context.js';
 import {
-  createIdleWorkerSlot,
-  readState,
-  writeState,
   type ActiveCardState,
+  createIdleWorkerSlot,
   type RuntimeState,
+  readState,
   type TaskLease,
   type WorkerSlotState,
   type WorktreeEvidence,
+  writeState,
 } from './state.js';
-import type { ACPState, ACPSessionRecord } from '../models/acp.js';
 
 export interface TaskRuntimeView {
   seq: string;

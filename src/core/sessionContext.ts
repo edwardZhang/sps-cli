@@ -6,8 +6,8 @@
  */
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { resolveSessionPaths, type SessionPaths } from './paths.js';
 import type { ACPTool } from '../models/acp.js';
+import { resolveSessionPaths, type SessionPaths } from './paths.js';
 
 export interface SessionContext {
   projectName: string;

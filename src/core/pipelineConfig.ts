@@ -6,8 +6,8 @@
  *   - mode: steps  — linear agent+shell orchestration
  *   - mode: project — event-driven PM workflow (future Phase C)
  */
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { resolve, basename } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 
 // ─── Types ──────────────────────────────────────────────────────

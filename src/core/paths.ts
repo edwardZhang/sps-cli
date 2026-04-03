@@ -1,5 +1,5 @@
-import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const HOME = process.env.HOME || '/home/coral';
 

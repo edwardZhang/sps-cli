@@ -1,5 +1,5 @@
-import { loadProjectConf, validateConfig, type ProjectConfig } from './config.js';
-import { resolveProjectPaths, type ProjectPaths } from './paths.js';
+import { loadProjectConf, type ProjectConfig, validateConfig } from './config.js';
+import { type ProjectPaths, resolveProjectPaths } from './paths.js';
 
 export class ProjectContext {
   readonly projectName: string;

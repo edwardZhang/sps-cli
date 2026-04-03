@@ -7,7 +7,7 @@
  *
  * Engines use this adapter instead of hardcoded string literals.
  */
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ProjectConfig } from './config.js';

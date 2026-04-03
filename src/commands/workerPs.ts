@@ -1,6 +1,6 @@
 import { ProjectContext } from '../core/context.js';
-import { readState, writeState, createIdleWorkerSlot } from '../core/state.js';
 import { Logger } from '../core/logger.js';
+import { createIdleWorkerSlot, readState, writeState } from '../core/state.js';
 
 /**
  * sps worker ps <project>
@@ -49,7 +49,7 @@ export async function executeWorkerPs(
 
     // Find lease for this worker
     let leasePhase: string | null = null;
-    let leaseSeq: number | null = slotState.seq;
+    const leaseSeq: number | null = slotState.seq;
     if (leaseSeq != null) {
       const lease = state.leases[String(leaseSeq)];
       if (lease) leasePhase = lease.phase;

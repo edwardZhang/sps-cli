@@ -5,13 +5,13 @@
  * Worker spawning is handled by AgentRuntime (ACP transport).
  * Three-layer env merge (system + global creds + project conf) for environment.
  */
-import { type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { isProcessAlive, killProcessGroup, parseClaudeSessionId, parseCodexSessionId, extractLastAssistantText } from '../providers/outputParser.js';
-import { parseShellConf, sourceCombinedConf } from '../core/shellEnv.js';
+import { resolve } from 'node:path';
 import type { RawConfig } from '../core/config.js';
+import { parseShellConf, sourceCombinedConf } from '../core/shellEnv.js';
+import { extractLastAssistantText, isProcessAlive, killProcessGroup, parseClaudeSessionId, parseCodexSessionId } from '../providers/outputParser.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 

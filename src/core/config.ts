@@ -1,7 +1,7 @@
+import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { execSync } from 'node:child_process';
-import { sourceShellConf, sourceCombinedConf as sourceCombinedConfImpl } from './shellEnv.js';
+import { sourceCombinedConf as sourceCombinedConfImpl, sourceShellConf } from './shellEnv.js';
 
 /** Cache for resolved GitLab project IDs to avoid repeated API calls */
 const gitlabIdCache = new Map<string, string>();

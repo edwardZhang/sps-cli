@@ -5,7 +5,7 @@
  *   sps stop <project>       # stop tick for a specific project
  *   sps stop --all           # stop ticks for all projects
  */
-import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Logger } from '../core/logger.js';
 

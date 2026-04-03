@@ -9,16 +9,17 @@
  *   sps agent status                        # show sessions
  *   sps agent close [--name NAME]           # close session
  */
-import * as readline from 'node:readline/promises';
+
 import * as childProcess from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import * as readline from 'node:readline/promises';
 import { createSessionContext } from '../core/sessionContext.js';
 import { readState, writeState } from '../core/state.js';
+import type { ACPTool } from '../models/acp.js';
+import { loadAgentRegistry } from '../providers/adapters/AcpSdkAdapter.js';
 import { createSessionRuntime } from '../providers/registry.js';
 import { waitAndStream } from './agentRenderer.js';
-import { loadAgentRegistry } from '../providers/adapters/AcpSdkAdapter.js';
-import type { ACPTool } from '../models/acp.js';
 
 const DIM = '\x1b[90m';
 const RESET = '\x1b[0m';

@@ -9,13 +9,14 @@
  * PID:    ~/.coral/sessions/daemon.pid
  * State:  ~/.coral/sessions/state.json (shared with clients)
  */
-import { createServer, type Socket, type Server } from 'node:net';
-import { writeFileSync, unlinkSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
+
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createServer, type Server, type Socket } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { createSessionContext, type SessionContext } from '../core/sessionContext.js';
-import { createSessionRuntime } from '../providers/registry.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type { ACPTool } from '../models/acp.js';
+import { createSessionRuntime } from '../providers/registry.js';
 
 export interface DaemonRequest {
   id?: number;

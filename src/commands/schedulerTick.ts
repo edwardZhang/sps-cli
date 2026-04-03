@@ -1,8 +1,8 @@
 import { ProjectContext } from '../core/context.js';
-import { SchedulerEngine } from '../engines/SchedulerEngine.js';
-import { createTaskBackend, createNotifier } from '../providers/registry.js';
-import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 import { Logger } from '../core/logger.js';
+import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+import { SchedulerEngine } from '../engines/SchedulerEngine.js';
+import { createNotifier, createTaskBackend } from '../providers/registry.js';
 
 export async function executeSchedulerTick(
   project: string,

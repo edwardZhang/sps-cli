@@ -4,11 +4,12 @@
  * Lightweight: sends NDJSON requests, waits for responses.
  * Used by `sps agent --chat` to delegate session management to daemon.
  */
-import { createConnection, type Socket } from 'node:net';
+
 import { existsSync } from 'node:fs';
+import { createConnection, type Socket } from 'node:net';
 import { resolve } from 'node:path';
+import type { ACPSessionRecord, ACPState, ACPTool } from '../models/acp.js';
 import type { DaemonRequest, DaemonResponse } from './sessionDaemon.js';
-import type { ACPState, ACPSessionRecord, ACPTool } from '../models/acp.js';
 
 const DEFAULT_SOCKET = process.env.SPS_DAEMON_SOCKET || resolve(process.env.HOME || '/home/coral', '.coral', 'sessions', 'daemon.sock');
 

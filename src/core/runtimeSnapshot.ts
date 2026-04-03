@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { ProjectContext } from './context.js';
-import { readState, type RuntimeState } from './state.js';
-import { isProcessAlive } from './sessionLiveness.js';
+import { RuntimeCoordinator } from '../manager/runtime-coordinator.js';
 import type { ACPState } from '../models/acp.js';
 import { createTaskBackend } from '../providers/registry.js';
-import { RuntimeCoordinator } from '../manager/runtime-coordinator.js';
+import { ProjectContext } from './context.js';
+import { isProcessAlive } from './sessionLiveness.js';
+import { type RuntimeState, readState } from './state.js';
 
 export interface ProjectRuntimeSnapshot {
   ctx: ProjectContext;

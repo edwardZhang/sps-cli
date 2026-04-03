@@ -1,13 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  readState,
-  writeState,
   createIdleWorkerSlot,
   type RuntimeState,
+  readState,
   type WorkerSlotState,
+  writeState,
 } from './state.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { CardState } from '../models/types.js';
 import type { ACPSessionRecord } from '../models/acp.js';
+import type { CardState } from '../models/types.js';
 
 export interface WorkerSlotState {
   status: 'idle' | 'active' | 'merging' | 'resolving' | 'releasing';

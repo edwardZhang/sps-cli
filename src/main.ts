@@ -32,29 +32,29 @@ if (typeof globalThis.fetch === 'undefined') {
 }
 
 import { existsSync, readdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import { executeDoctor } from './commands/doctor.js';
-import { executeTick } from './commands/tick.js';
-import { executeSchedulerTick } from './commands/schedulerTick.js';
-import { executePipelineTick } from './commands/pipelineTick.js';
-import { executeWorkerLaunch } from './commands/workerLaunch.js';
-import { executeProjectInit } from './commands/projectInit.js';
-import { executeQaTick } from './commands/qaTick.js';
-import { executeMonitorTick } from './commands/monitorTick.js';
-import { executePmCommand } from './commands/pmCommand.js';
-import { executeCardAdd } from './commands/cardAdd.js';
-import { executeCardDashboard } from './commands/cardDashboard.js';
-import { executeSetup } from './commands/setup.js';
-import { executeWorkerDashboard } from './commands/workerDashboard.js';
-import { executeWorkerPs, executeWorkerKill } from './commands/workerPs.js';
-import { executeLogs } from './commands/logs.js';
-import { executeStop } from './commands/stop.js';
-import { executeReset } from './commands/reset.js';
-import { executeStatus } from './commands/status.js';
 import { executeAcpCommand } from './commands/acpCommand.js';
 import { executeAgentCommand } from './commands/agentCommand.js';
+import { executeCardAdd } from './commands/cardAdd.js';
+import { executeCardDashboard } from './commands/cardDashboard.js';
+import { executeDoctor } from './commands/doctor.js';
+import { executeLogs } from './commands/logs.js';
+import { executeMonitorTick } from './commands/monitorTick.js';
+import { executePipelineTick } from './commands/pipelineTick.js';
+import { executePmCommand } from './commands/pmCommand.js';
+import { executeProjectInit } from './commands/projectInit.js';
+import { executeQaTick } from './commands/qaTick.js';
+import { executeReset } from './commands/reset.js';
+import { executeSchedulerTick } from './commands/schedulerTick.js';
+import { executeSetup } from './commands/setup.js';
+import { executeStatus } from './commands/status.js';
+import { executeStop } from './commands/stop.js';
+import { executeTick } from './commands/tick.js';
+import { executeWorkerDashboard } from './commands/workerDashboard.js';
+import { executeWorkerLaunch } from './commands/workerLaunch.js';
+import { executeWorkerKill, executeWorkerPs } from './commands/workerPs.js';
 
-import { createRequire } from 'node:module';
 const _require = createRequire(import.meta.url);
 const VERSION: string = (_require('../package.json') as { version: string }).version;
 

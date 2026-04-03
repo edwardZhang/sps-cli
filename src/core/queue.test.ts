@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { readQueue, writeQueue, removeFromQueue } from './queue.js';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { readQueue, removeFromQueue, writeQueue } from './queue.js';
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'sps-queue-test-'));

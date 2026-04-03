@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, chmodSync, readdirSync, copyFileSync, symlinkSync, readlinkSync, lstatSync, unlinkSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { Logger } from '../core/logger.js';
 
 const HOME = process.env.HOME || '/home/coral';

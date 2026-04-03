@@ -1,9 +1,9 @@
 import { ProjectContext } from '../core/context.js';
+import { Logger } from '../core/logger.js';
+import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 import { MonitorEngine } from '../engines/MonitorEngine.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
-import { createTaskBackend, createRepoBackend, createNotifier } from '../providers/registry.js';
-import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
-import { Logger } from '../core/logger.js';
+import { createNotifier, createRepoBackend, createTaskBackend } from '../providers/registry.js';
 
 export async function executeMonitorTick(
   project: string,

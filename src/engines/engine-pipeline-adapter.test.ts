@@ -5,24 +5,25 @@
  * Uses a custom pipeline YAML with non-default state names to prove
  * configurability end-to-end.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, cpSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
-import { StageEngine } from './StageEngine.js';
-import { MonitorEngine } from './MonitorEngine.js';
-import { SchedulerEngine } from './SchedulerEngine.js';
-import { SPSEventHandler } from './EventHandler.js';
-import { RuntimeStore } from '../core/runtimeStore.js';
-import { writeState, type RuntimeState, createIdleWorkerSlot } from '../core/state.js';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectConfig } from '../core/config.js';
 import type { ProjectContext } from '../core/context.js';
-import type { TaskBackend } from '../interfaces/TaskBackend.js';
+import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
+import { createIdleWorkerSlot, type RuntimeState, writeState } from '../core/state.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
-import type { Card } from '../models/types.js';
-import type { WorkerManager, TaskRunResponse } from '../manager/worker-manager.js';
+import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { ProcessSupervisor } from '../manager/supervisor.js';
+import type { TaskRunResponse, WorkerManager } from '../manager/worker-manager.js';
+import type { Card } from '../models/types.js';
+import { SPSEventHandler } from './EventHandler.js';
+import { MonitorEngine } from './MonitorEngine.js';
+import { SchedulerEngine } from './SchedulerEngine.js';
+import { StageEngine } from './StageEngine.js';
 
 // ─── Custom state names (must match __fixtures__/custom-pipeline.yaml) ──
 

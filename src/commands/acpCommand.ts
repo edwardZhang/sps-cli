@@ -1,7 +1,7 @@
 import { ProjectContext } from '../core/context.js';
-import { createAgentRuntime } from '../providers/registry.js';
 import { Logger } from '../core/logger.js';
 import type { ACPTool } from '../models/acp.js';
+import { createAgentRuntime } from '../providers/registry.js';
 
 function parseTool(value: string | undefined): ACPTool | undefined {
   if (!value) return undefined;

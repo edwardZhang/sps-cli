@@ -4,15 +4,16 @@
  * Called immediately when a worker process exits (via Supervisor exit callback).
  * Checks git artifacts and phase-specific completion evidence.
  */
-import { existsSync } from 'node:fs';
+
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { WorkerTaskPhase } from '../core/taskPrompts.js';
 import {
-  branchPushed,
   branchCommitsAhead,
+  branchPushed,
   extractLastAssistantText,
 } from '../providers/outputParser.js';
-import type { WorkerTaskPhase } from '../core/taskPrompts.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 

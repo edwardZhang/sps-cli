@@ -1,12 +1,12 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { type CardStates, ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+import { loadRuntimeSnapshot } from '../core/runtimeSnapshot.js';
 import { isPersistedSessionAlive } from '../core/sessionLiveness.js';
+import type { TaskLease, WorktreeEvidence } from '../core/state.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import type { Card, CardState } from '../models/types.js';
-import type { TaskLease, WorktreeEvidence } from '../core/state.js';
-import { loadRuntimeSnapshot } from '../core/runtimeSnapshot.js';
 import { createTaskBackend } from '../providers/registry.js';
-import { ProjectPipelineAdapter, type CardStates } from '../core/projectPipelineAdapter.js';
 
 const HOME = process.env.HOME || '/home/coral';
 
@@ -47,7 +47,7 @@ const FG = {
   gray: '\x1b[90m',
 };
 
-const STRIP_ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b\[[\?]?[0-9;]*[hlm]/g;
+const STRIP_ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b\[[?]?[0-9;]*[hlm]/g;
 
 interface CardSnapshot {
   seq: string;

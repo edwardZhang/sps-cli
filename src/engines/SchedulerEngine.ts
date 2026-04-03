@@ -1,11 +1,11 @@
 import type { ProjectContext } from '../core/context.js';
-import type { TaskBackend } from '../interfaces/TaskBackend.js';
-import type { Notifier } from '../interfaces/Notifier.js';
-import type { CommandResult, ActionRecord, Card } from '../models/types.js';
-import { readState } from '../core/state.js';
-import { readQueue, removeFromQueue } from '../core/queue.js';
 import { Logger } from '../core/logger.js';
 import type { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+import { readQueue, removeFromQueue } from '../core/queue.js';
+import { readState } from '../core/state.js';
+import type { Notifier } from '../interfaces/Notifier.js';
+import type { TaskBackend } from '../interfaces/TaskBackend.js';
+import type { ActionRecord, Card, CommandResult } from '../models/types.js';
 
 export class SchedulerEngine {
   private log: Logger;

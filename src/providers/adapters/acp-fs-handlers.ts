@@ -4,7 +4,7 @@
  * Handles fs/read_text_file and fs/write_text_file ACP Client callbacks.
  * Enforces cwd sandbox and supports line-range slicing.
  */
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { PermissionMode } from './acp-permissions.js';
 

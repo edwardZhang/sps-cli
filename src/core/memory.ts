@@ -17,9 +17,9 @@
  * Types: convention (no decay), decision (slow decay), lesson (normal decay), reference (no decay)
  */
 
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
-import { resolve, basename, relative } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { basename, relative, resolve } from 'node:path';
 
 // ─── Types ──────────────────────────────────────────────────────
 

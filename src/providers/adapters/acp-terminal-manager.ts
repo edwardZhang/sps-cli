@@ -4,7 +4,7 @@
  * Handles terminal/create, output, wait_for_exit, kill, release ACP Client callbacks.
  * Spawns subprocesses, captures stdout+stderr with byte-limit truncation, graceful kill.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { PermissionMode } from './acp-permissions.js';
 

@@ -1,4 +1,4 @@
-import { appendFileSync, renameSync, readdirSync, mkdirSync, existsSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const COLORS = {

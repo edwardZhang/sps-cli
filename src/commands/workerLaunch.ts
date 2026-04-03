@@ -1,15 +1,15 @@
-import { ProjectContext } from '../core/context.js';
 import {} from '../core/config.js';
+import { ProjectContext } from '../core/context.js';
+import { Logger } from '../core/logger.js';
+import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
+import { SPSEventHandler } from '../engines/EventHandler.js';
 import { StageEngine } from '../engines/StageEngine.js';
-import { createTaskBackend, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
-import { ProcessSupervisor } from '../manager/supervisor.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
 import { ResourceLimiter } from '../manager/resource-limiter.js';
+import { ProcessSupervisor } from '../manager/supervisor.js';
 import { WorkerManagerImpl } from '../manager/worker-manager-impl.js';
-import { SPSEventHandler } from '../engines/EventHandler.js';
-import { RuntimeStore } from '../core/runtimeStore.js';
-import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
-import { Logger } from '../core/logger.js';
+import { createAgentRuntime, createNotifier, createRepoBackend, createTaskBackend } from '../providers/registry.js';
 
 export async function executeWorkerLaunch(
   project: string,

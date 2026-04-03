@@ -35,15 +35,16 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@biomejs/biome": "^2.4.10",
     "@types/node": "^25.5.0",
     "@vitest/coverage-v8": "^4.1.2",
+    "knip": "^6.3.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.2"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.0",
-    "strip-ansi": "^7.2.0",
     "yaml": "^2.8.3",
     "zod": "^3.25.0"
   }

@@ -2,16 +2,16 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
-// ACP SDK handles all worker interaction
-import { readState, type WorkerSlotState } from '../core/state.js';
-import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
+import { loadRuntimeSnapshot, type ProjectRuntimeSnapshot } from '../core/runtimeSnapshot.js';
 import {
   hasPersistedActiveRun,
   isACPBackedSlot,
-  isProcessAlive,
   isPersistedSessionAlive,
+  isProcessAlive,
 } from '../core/sessionLiveness.js';
-import { loadRuntimeSnapshot, type ProjectRuntimeSnapshot } from '../core/runtimeSnapshot.js';
+// ACP SDK handles all worker interaction
+import { readState, type WorkerSlotState } from '../core/state.js';
+import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import type { ACPSessionRecord } from '../models/acp.js';
 import { tailFile } from '../providers/outputParser.js';
 import { renderClaudeStreamLines, renderCodexStreamLines } from '../providers/streamRenderer.js';
@@ -37,7 +37,7 @@ const FG = {
 const BG = {
   black: '\x1b[40m',
 };
-const STRIP_ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b\[[\?]?[0-9;]*[hlm]/g;
+const STRIP_ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b\[[?]?[0-9;]*[hlm]/g;
 
 function statusColor(status: string): string {
   switch (status) {

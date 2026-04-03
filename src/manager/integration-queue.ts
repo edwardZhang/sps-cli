@@ -8,8 +8,8 @@
  * State is persisted to state.json under the `integrationQueues` field.
  */
 
-import { readState, writeState } from '../core/state.js';
 import type { RuntimeState } from '../core/state.js';
+import { readState, writeState } from '../core/state.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 

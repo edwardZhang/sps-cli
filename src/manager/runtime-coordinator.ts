@@ -1,29 +1,29 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import type { ProjectContext } from '../core/context.js';
-import {
-  createIdleWorkerSlot,
-  type RuntimeState,
-  type TaskLease,
-  type TaskLeasePhase,
-  type WorktreeEvidence,
-  type WorktreeEvidenceStatus,
-  type WorkerSlotState,
-} from '../core/state.js';
-import { RuntimeStore } from '../core/runtimeStore.js';
 import { resolveWorktreePath } from '../core/paths.js';
-import {
-  branchPushed,
-  isProcessAlive as isProcAlive,
-} from '../providers/outputParser.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
 import {
   getPersistedRunStatus,
   hasPersistedActiveRun,
   isPersistedSessionAlive,
 } from '../core/sessionLiveness.js';
+import {
+  createIdleWorkerSlot,
+  type RuntimeState,
+  type TaskLease,
+  type TaskLeasePhase,
+  type WorkerSlotState,
+  type WorktreeEvidence,
+  type WorktreeEvidenceStatus,
+} from '../core/state.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
-import type { ACPSessionRecord, ACPRunStatus } from '../models/acp.js';
+import type { ACPRunStatus, ACPSessionRecord } from '../models/acp.js';
 import type { Card, CardState } from '../models/types.js';
+import {
+  branchPushed,
+  isProcessAlive as isProcAlive,
+} from '../providers/outputParser.js';
 
 const TERMINAL_RUN_STATUSES = new Set<ACPRunStatus>(['completed', 'failed', 'cancelled', 'lost']);
 

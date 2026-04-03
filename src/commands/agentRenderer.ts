@@ -2,10 +2,10 @@
  * Agent output renderer — polls AgentRuntime.inspect() and streams
  * incremental output to stdout. Shared by sps agent (one-shot + chat).
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import { readState, writeState } from '../core/state.js';
+import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 
 export interface StreamResult {
   status: 'completed' | 'failed' | 'cancelled' | 'lost';

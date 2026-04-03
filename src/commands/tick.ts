@@ -1,26 +1,26 @@
-import { ProjectContext } from '../core/context.js';
 import {} from '../core/config.js';
+import { ProjectContext } from '../core/context.js';
 import { acquireTickLock, releaseTickLock } from '../core/lock.js';
-import { readState } from '../core/state.js';
 import { Logger } from '../core/logger.js';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
+import { readState } from '../core/state.js';
+import { SPSEventHandler } from '../engines/EventHandler.js';
+import { MonitorEngine } from '../engines/MonitorEngine.js';
 import { SchedulerEngine } from '../engines/SchedulerEngine.js';
 import { StageEngine } from '../engines/StageEngine.js';
-import { MonitorEngine } from '../engines/MonitorEngine.js';
-import { createTaskBackend, createRepoBackend, createNotifier, createAgentRuntime } from '../providers/registry.js';
-import { ProcessSupervisor } from '../manager/supervisor.js';
+import type { Notifier } from '../interfaces/Notifier.js';
+import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
+import { createPMClient } from '../manager/pm-client.js';
 import { ResourceLimiter } from '../manager/resource-limiter.js';
-import { SPSEventHandler } from '../engines/EventHandler.js';
-import { RuntimeStore } from '../core/runtimeStore.js';
+import { RuntimeCoordinator } from '../manager/runtime-coordinator.js';
+import { ProcessSupervisor } from '../manager/supervisor.js';
 // PostActions and Recovery are no longer used directly — WM handles recovery
 // and SPSEventHandler handles PM operations via the event system.
 import { WorkerManagerImpl } from '../manager/worker-manager-impl.js';
-import { createPMClient } from '../manager/pm-client.js';
-import { RuntimeCoordinator } from '../manager/runtime-coordinator.js';
-import type { TaskBackend } from '../interfaces/TaskBackend.js';
-import type { Notifier } from '../interfaces/Notifier.js';
-import type { TickResult, StepResult, CommandResult } from '../models/types.js';
+import type { CommandResult, StepResult, TickResult } from '../models/types.js';
+import { createAgentRuntime, createNotifier, createRepoBackend, createTaskBackend } from '../providers/registry.js';
 
 const DEFAULT_INTERVAL_S = 30;
 
@@ -373,7 +373,7 @@ async function runOneTick(
 
   // Execute all stage engines sequentially
   for (const stage of stages) {
-    let stageResult = await runStep(`stage-${stage.name}`, () => stage.tick(opts), log);
+    const stageResult = await runStep(`stage-${stage.name}`, () => stage.tick(opts), log);
     if (stage.isFirstStage && schedulerResult.status === 'fail') {
       stageResult.status = stageResult.status === 'ok' ? 'degraded' : stageResult.status;
       stageResult.note = 'scheduler failed — no new cards launched';

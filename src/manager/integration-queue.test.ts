@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createIdleWorkerSlot, type RuntimeState, writeState } from '../core/state.js';
 import { IntegrationQueue, type QueueEntry } from './integration-queue.js';
-import { writeState, createIdleWorkerSlot, type RuntimeState } from '../core/state.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

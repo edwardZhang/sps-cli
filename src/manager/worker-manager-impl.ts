@@ -8,19 +8,19 @@
  * Phase 4: recover() fully implemented with decision matrix from doc-09 §11.3.
  */
 import { execFileSync } from 'node:child_process';
-import { readState, writeState, createIdleWorkerSlot } from '../core/state.js';
 import type { RuntimeState, TaskLease, WorktreeEvidence } from '../core/state.js';
-import type { ProcessSupervisor } from './supervisor.js';
-import type { CompletionJudge, CompletionResult } from './completion-judge.js';
-import type { ResourceLimiter } from './resource-limiter.js';
+import { createIdleWorkerSlot, readState, writeState } from '../core/state.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
-import { IntegrationQueue } from './integration-queue.js';
+import type { CompletionJudge, CompletionResult } from './completion-judge.js';
 import type { QueueEntry } from './integration-queue.js';
-import type {
-  WorkerManager, TaskRunRequest, TaskResumeRequest, TaskCancelRequest,
-  TaskInputRequest, TaskConfirmRequest, InspectQuery, TaskRunResponse,
-  WorkerSnapshot, WorkerEvent, WorkerEventHandler, WorkerPhase,
-  RecoveryContext, RecoveryResult,
+import { IntegrationQueue } from './integration-queue.js';
+import type { ResourceLimiter } from './resource-limiter.js';
+import type { ProcessSupervisor } from './supervisor.js';
+import type {InspectQuery, 
+  RecoveryContext, RecoveryResult,TaskCancelRequest,TaskConfirmRequest, 
+  TaskInputRequest, TaskResumeRequest, TaskRunRequest, TaskRunResponse,WorkerEvent, WorkerEventHandler, 
+  WorkerManager, WorkerPhase,
+  WorkerSnapshot, 
 } from './worker-manager.js';
 
 // ─── Dependencies ──────────────────────────────────────────────

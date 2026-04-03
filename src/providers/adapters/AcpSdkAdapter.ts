@@ -9,30 +9,29 @@
  *   Claude: npx @agentclientprotocol/claude-agent-acp (Anthropic official SDK)
  *   Codex:  npx @zed-industries/codex-acp (Rust native binary)
  */
-import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
-import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 import type * as schema from '@agentclientprotocol/sdk';
+import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 import type {
   ACPClient,
   EnsureSessionInput,
   EnsureSessionResult,
-  StartRunInput,
-  StartRunResult,
-  InspectSessionInput,
-  InspectSessionResult,
   InspectRunInput,
   InspectRunResult,
+  InspectSessionInput,
+  InspectSessionResult,
+  StartRunInput,
+  StartRunResult,
   StopSessionInput,
 } from '../../interfaces/ACPClient.js';
 import type { ACPRunStatus, ACPTool } from '../../models/acp.js';
-import { SessionUpdateAccumulator } from './acp-session-accumulator.js';
-import { resolvePermission, type PermissionMode } from './acp-permissions.js';
 import { FileSystemHandlers } from './acp-fs-handlers.js';
+import { type PermissionMode, resolvePermission } from './acp-permissions.js';
+import { SessionUpdateAccumulator } from './acp-session-accumulator.js';
 import { TerminalManager } from './acp-terminal-manager.js';
-
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 
 export interface AgentRegistryEntry { command: string; args: string[] }
 

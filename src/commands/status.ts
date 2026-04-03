@@ -5,13 +5,13 @@
  *   sps status           # list all projects with tick/worker status
  *   sps status --json    # JSON output
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadProjectConf } from '../core/config.js';
-import { readState } from '../core/state.js';
-import { isProcessAlive } from '../core/sessionLiveness.js';
-import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import { loadRuntimeSnapshot } from '../core/runtimeSnapshot.js';
+import { isProcessAlive } from '../core/sessionLiveness.js';
+import { readState } from '../core/state.js';
+import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 
 const HOME = process.env.HOME || '/home/coral';
 const PROJECTS_DIR = resolve(HOME, '.coral', 'projects');

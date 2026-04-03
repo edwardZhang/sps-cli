@@ -8,11 +8,11 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { StepsPipelineConfig, StepConfig } from '../core/pipelineConfig.js';
+import type { StepConfig, StepsPipelineConfig } from '../core/pipelineConfig.js';
 import { parseOnFail, parseTimeout } from '../core/pipelineConfig.js';
-import { waitAndStream, type StreamResult } from './agentRenderer.js';
 import { createSessionContext } from '../core/sessionContext.js';
 import type { ACPTool } from '../models/acp.js';
+import { type StreamResult, waitAndStream } from './agentRenderer.js';
 
 const DIM = '\x1b[90m';
 const RESET = '\x1b[0m';

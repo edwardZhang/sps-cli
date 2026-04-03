@@ -3,8 +3,9 @@
  *
  * Shared by config.ts (project loading) and supervisor.ts (worker env).
  */
-import { readFileSync, existsSync } from 'node:fs';
+
 import { execSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 
 export interface RawEnv {
   [key: string]: string;

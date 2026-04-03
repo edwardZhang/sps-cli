@@ -1,4 +1,4 @@
-import type { ACPSessionStatus, ACPRunStatus, ACPTool } from '../models/acp.js';
+import type { ACPRunStatus, ACPSessionStatus, ACPTool } from '../models/acp.js';
 
 export interface McpServerConfig {
   name: string;

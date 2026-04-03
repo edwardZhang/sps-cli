@@ -285,7 +285,6 @@ export class TrelloTaskBackend implements TaskBackend {
         try {
           return JSON.parse(text.replace('[JARVIS-META]', '').trim());
         } catch {
-          continue;
         }
       }
     }

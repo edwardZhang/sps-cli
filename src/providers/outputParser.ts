@@ -2,8 +2,9 @@
  * Shared utilities for print-mode worker providers.
  * Handles output file tailing, session ID parsing, and process inspection.
  */
-import { readFileSync, existsSync, statSync } from 'node:fs';
+
 import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 
 /**
  * Read the last N lines from a file efficiently.

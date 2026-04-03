@@ -1,13 +1,13 @@
-import type { ProjectContext } from '../core/context.js';
-import type { TaskBackend } from '../interfaces/TaskBackend.js';
-import type { RepoBackend } from '../interfaces/RepoBackend.js';
-import type { Notifier } from '../interfaces/Notifier.js';
-import type { CommandResult, ActionRecord, CheckResult, RecommendedAction } from '../models/types.js';
-import type { ProcessSupervisor } from '../manager/supervisor.js';
 import { existsSync, statSync } from 'node:fs';
-import { RuntimeStore } from '../core/runtimeStore.js';
+import type { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import type { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+import { RuntimeStore } from '../core/runtimeStore.js';
+import type { Notifier } from '../interfaces/Notifier.js';
+import type { RepoBackend } from '../interfaces/RepoBackend.js';
+import type { TaskBackend } from '../interfaces/TaskBackend.js';
+import type { ProcessSupervisor } from '../manager/supervisor.js';
+import type { ActionRecord, CheckResult, CommandResult, RecommendedAction } from '../models/types.js';
 
 /**
  * MonitorEngine performs anomaly detection and health checks.
@@ -442,7 +442,6 @@ export class MonitorEngine {
           prompt: pending.prompt,
         });
         waitingCount++;
-        continue;
       }
 
       // ACP SDK handles permission requests via requestPermission callback in AcpSdkAdapter.

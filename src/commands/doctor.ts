@@ -1,13 +1,13 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ProjectContext } from '../core/context.js';
 import { resolveGitlabProjectId } from '../core/config.js';
+import { ProjectContext } from '../core/context.js';
+import { Logger } from '../core/logger.js';
 import { checkPathExists } from '../core/paths.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
-import { writeState, createIdleWorkerSlot } from '../core/state.js';
 import type { RuntimeState } from '../core/state.js';
-import { Logger } from '../core/logger.js';
+import { createIdleWorkerSlot, writeState } from '../core/state.js';
 import type { CheckResult, CommandResult } from '../models/types.js';
 
 interface DoctorFlags {

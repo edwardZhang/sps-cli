@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { resolvePermission, inferToolKind, type PermissionMode } from './acp-permissions.js';
+import { describe, expect, it } from 'vitest';
+import { inferToolKind, type PermissionMode, resolvePermission } from './acp-permissions.js';
 
 function makeParams(kind?: string, title?: string, options?: Array<{ optionId: string; kind: string; name?: string }>) {
   return {

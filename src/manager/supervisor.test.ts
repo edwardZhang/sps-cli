@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { ProcessSupervisor, type WorkerHandle, type SpawnOpts } from './supervisor.js';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ProcessSupervisor, type SpawnOpts, type WorkerHandle } from './supervisor.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

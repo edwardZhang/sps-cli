@@ -1,13 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { WorkerManagerImpl, type WorkerManagerDeps } from './worker-manager-impl.js';
-import { ProcessSupervisor } from './supervisor.js';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createIdleWorkerSlot, type RuntimeState, writeState } from '../core/state.js';
 import { CompletionJudge } from './completion-judge.js';
 import { ResourceLimiter } from './resource-limiter.js';
-import { writeState, createIdleWorkerSlot, type RuntimeState } from '../core/state.js';
+import { ProcessSupervisor } from './supervisor.js';
 import type { WorkerEvent, WorkerPhase } from './worker-manager.js';
+import { type WorkerManagerDeps, WorkerManagerImpl } from './worker-manager-impl.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

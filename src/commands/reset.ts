@@ -14,13 +14,14 @@
  *   4. Move cards back to Planning
  *   5. Report summary
  */
-import { existsSync, readFileSync, readdirSync, unlinkSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+
 import { execFileSync } from 'node:child_process';
-import { Logger } from '../core/logger.js';
+import { existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { loadProjectConf } from '../core/config.js';
-import { readState, writeState, createIdleWorkerSlot } from '../core/state.js';
+import { Logger } from '../core/logger.js';
 import { resolveWorktreePath } from '../core/paths.js';
+import { createIdleWorkerSlot, readState, writeState } from '../core/state.js';
 import { createTaskBackend } from '../providers/registry.js';
 
 const HOME = process.env.HOME || '/home/coral';

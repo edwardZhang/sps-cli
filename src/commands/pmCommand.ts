@@ -1,7 +1,7 @@
 import { ProjectContext } from '../core/context.js';
-import { createTaskBackend } from '../providers/registry.js';
 import { Logger } from '../core/logger.js';
 import type { CardState } from '../models/types.js';
+import { createTaskBackend } from '../providers/registry.js';
 
 const VALID_STATES: CardState[] = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA', 'Done'];
 

@@ -8,7 +8,7 @@
  *   sps logs --err               # error logs only
  *   sps logs --no-follow         # dump and exit (no tailing)
  */
-import { existsSync, readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const HOME = process.env.HOME || '/home/coral';
