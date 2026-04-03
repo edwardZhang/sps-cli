@@ -69,10 +69,6 @@ export function resolveWorktreePath(projectName: string, seq: string | number, w
   return resolve(root, String(seq));
 }
 
-export function resolveWorkerCardFile(projectName: string, slot: number): string {
-  return resolve(HOME, '.coral', 'projects', projectName, `worker-${slot}.card`);
-}
-
 export interface SessionPaths {
   /** ~/.coral/sessions/ */
   stateDir: string;

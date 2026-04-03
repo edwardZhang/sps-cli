@@ -1,11 +1,4 @@
-import type { CardState } from '../models/types.js';
-import type { TaskLeasePhase } from './state.js';
-
 export type WorkerTaskPhase = 'development' | 'integration';
-
-export const DEVELOPMENT_PROMPT_FILE = 'development_prompt.txt';
-export const INTEGRATION_PROMPT_FILE = 'integration_prompt.txt';
-export const LEGACY_TASK_PROMPT_FILE = 'task_prompt.txt';
 
 interface SharedPromptContext {
   taskSeq: string;
@@ -24,22 +17,6 @@ interface SharedPromptContext {
 
 interface PhasePromptContext extends SharedPromptContext {
   phase: WorkerTaskPhase;
-}
-
-export function selectWorkerPhase(
-  pmState: CardState | null | undefined,
-  leasePhase?: TaskLeasePhase | null,
-): WorkerTaskPhase {
-  if (pmState === 'QA') return 'integration';
-  if (pmState === 'Inprogress') return 'development';
-  if (leasePhase && ['merging', 'resolving_conflict'].includes(leasePhase)) {
-    return 'integration';
-  }
-  return 'development';
-}
-
-export function promptFileForPhase(phase: WorkerTaskPhase): string {
-  return phase === 'integration' ? INTEGRATION_PROMPT_FILE : DEVELOPMENT_PROMPT_FILE;
 }
 
 export function buildPhasePrompt(ctx: PhasePromptContext): string {
@@ -168,32 +145,3 @@ Completion rule:
 - Do NOT push to ${ctx.targetBranch} — a separate integration worker handles merging.`;
 }
 
-export function buildResumePrompt(
-  phase: WorkerTaskPhase,
-  worktreePath: string,
-  branchName: string,
-  originalPrompt: string | null,
-): string {
-  const phaseLabel = phase === 'integration' ? 'QA' : 'Inprogress';
-  const phaseGoal = phase === 'integration'
-    ? 'Continue the integration work for this task in the current worktree.'
-    : 'Continue the development work for this task in the current worktree.';
-
-  const header = [
-    'The previous SPS tick process stopped. The old worker session is gone.',
-    'Recover this task at the task level in the existing worktree.',
-    `Current PM State: ${phaseLabel}`,
-    `Worktree: ${worktreePath}`,
-    `Branch: ${branchName}`,
-    '',
-    phaseGoal,
-    'First inspect the current repository state yourself before changing anything.',
-    'Then continue the same task from the current repository state instead of starting over.',
-  ].join('\n');
-
-  if (!originalPrompt?.trim()) {
-    return header;
-  }
-
-  return `${header}\n\nPhase task context:\n---\n${originalPrompt.trim()}`;
-}
