@@ -402,7 +402,7 @@ async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promi
     await ensureDaemon();
   }
 
-  const slot = `session-${args.name}`;
+  const slot = args.name.startsWith('session-') ? args.name : `session-${args.name}`;
   const stateFile = ctx.paths.stateFile;
 
   // Remote mode: don't send local cwd — let daemon use its own cwd
@@ -439,7 +439,7 @@ async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promi
 async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
   const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
   const mcpConfigs = resolveMcpServers(args.mcp);
-  const slot = `session-${args.name}`;
+  const slot = args.name.startsWith('session-') ? args.name : `session-${args.name}`;
   const stateFile = ctx.paths.stateFile;
 
   // Try daemon mode: auto-start daemon if not running
@@ -581,7 +581,7 @@ async function agentAttach(args: ReturnType<typeof parseAgentArgs>): Promise<voi
     process.exit(1);
   }
 
-  const slot = `session-${args.name}`;
+  const slot = args.name.startsWith('session-') ? args.name : `session-${args.name}`;
   process.stderr.write(`${DIM}Attached to session "${args.name}" (read-only, Ctrl+C to detach)${RESET}\n\n`);
 
   // Show existing output first
@@ -667,7 +667,7 @@ async function agentStatus(args: ReturnType<typeof parseAgentArgs>): Promise<voi
 async function agentClose(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
   const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
   const runtime = createSessionRuntime(ctx);
-  const slot = `session-${args.name}`;
+  const slot = args.name.startsWith('session-') ? args.name : `session-${args.name}`;
 
   try {
     await runtime.stopSession(slot);

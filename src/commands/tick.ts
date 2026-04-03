@@ -391,8 +391,12 @@ async function runOneTick(
   const schedulerResult = await runStep('scheduler', () => scheduler.tick(opts), log);
   steps.push(schedulerResult);
 
-  // Execute all stage engines sequentially
-  for (const stage of stages) {
+  // Execute stage engines in REVERSE order — later stages run first.
+  // This ensures QA/integrate cards get workers before new develop cards,
+  // preventing starvation where all slots are consumed by new tasks while
+  // nearly-complete tasks sit in QA waiting for a merge worker.
+  const reverseStages = [...stages].reverse();
+  for (const stage of reverseStages) {
     const stageResult = await runStep(`stage-${stage.name}`, () => stage.tick(opts), log);
     if (stage.isFirstStage && schedulerResult.status === 'fail') {
       stageResult.status = stageResult.status === 'ok' ? 'degraded' : stageResult.status;

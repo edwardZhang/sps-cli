@@ -48,7 +48,14 @@ export async function executeCardAdd(
     process.exit(3);
   }
 
-  const taskBackend = createTaskBackend(ctx.config);
+  const { ProjectPipelineAdapter } = await import('../core/projectPipelineAdapter.js');
+  const adapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+  const allStateNames = [...new Set([
+    adapter.states.planning, adapter.states.backlog,
+    adapter.states.ready, adapter.states.done,
+    ...adapter.stages.flatMap(s => [s.triggerState, s.activeState, s.onCompleteState]),
+  ].filter(Boolean))];
+  const taskBackend = createTaskBackend(ctx.config, allStateNames);
   const pipelineLabel = ctx.config.PIPELINE_LABEL || 'AI-PIPELINE';
 
   try {

@@ -253,6 +253,42 @@ stages:
     log.ok(`Created pipelines/ with sample template`);
   }
 
+  // Initialize state.json
+  const stateFile = resolve(instanceDir, 'runtime', 'state.json');
+  if (!existsSync(stateFile)) {
+    const { writeState } = await import('../core/state.js');
+    const maxW = parseInt(String(flags.maxWorkers || '3'), 10) || 3;
+    const { createIdleWorkerSlot } = await import('../core/state.js');
+    const workers: Record<string, any> = {};
+    for (let i = 1; i <= maxW; i++) {
+      workers[`worker-${i}`] = createIdleWorkerSlot();
+    }
+    const initState = {
+      workers, activeCards: {}, leases: {},
+      worktreeEvidence: {}, sessions: {},
+      integrationQueues: {}, worktreeCleanup: [],
+      pendingPMActions: [],
+    };
+    writeState(stateFile, initState as any, 'project-init');
+    log.ok('Initialized state.json');
+  }
+
+  // Cards directory — only create seq.txt; state subdirectories will be
+  // created by MarkdownTaskBackend.bootstrap() based on pipeline YAML config
+  const cardsDir = resolve(instanceDir, 'cards');
+  if (!existsSync(cardsDir)) {
+    mkdirSync(cardsDir, { recursive: true });
+    writeFileSync(resolve(cardsDir, 'seq.txt'), '0\n');
+    log.ok('Initialized cards/ directory (state dirs created on first use)');
+  }
+
+  // Initialize memory directory
+  const memoryDir = resolve(HOME, '.coral', 'memory', 'projects', project);
+  if (!existsSync(memoryDir)) {
+    mkdirSync(memoryDir, { recursive: true });
+    log.ok(`Created project memory at ${memoryDir}`);
+  }
+
   log.ok(`Project ${project} initialized at ${instanceDir}`);
   console.log('\n  Next steps:\n');
   console.log(`  1. Create pipeline config:`);
@@ -260,13 +296,12 @@ stages:
   console.log(`     vim ${resolve(instanceDir, 'pipelines', 'project.yaml')}`);
   console.log(`     Or use: sps agent --chat → "帮我创建 pipeline"`);
   console.log('');
-  console.log(`  2. Run health check:`);
-  console.log(`     sps doctor ${project} --fix`);
-  console.log('');
-  console.log(`  3. Add task cards:`);
+  console.log(`  2. Add task cards:`);
   console.log(`     sps card add ${project} "task title" "description"`);
   console.log('');
-  console.log(`  4. Start pipeline:`);
+  console.log(`  3. Start pipeline:`);
   console.log(`     sps tick ${project}`);
+  console.log('');
+  console.log(`  Optional: sps doctor ${project} --fix  (generate CLAUDE.md in repo)`);
   console.log('');
 }
