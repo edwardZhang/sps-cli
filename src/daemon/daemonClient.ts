@@ -103,8 +103,7 @@ export class DaemonClient {
       });
 
       socket.on('error', (err) => finish(err));
-      // 90s timeout: ACP adapter first-run may need to download + initialize
-      socket.setTimeout(90_000, () => finish(new Error('Daemon request timeout')));
+      socket.setTimeout(30_000, () => finish(new Error('Daemon request timeout')));
     });
   }
 }

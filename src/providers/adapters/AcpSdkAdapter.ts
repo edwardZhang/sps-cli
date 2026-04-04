@@ -125,6 +125,8 @@ export class AcpSdkAdapter implements ACPClient {
     const registry = allAgents[input.tool];
     if (!registry) throw new Error(`Unknown ACP tool: ${input.tool}`);
 
+    process.stderr.write(`[acp-adapter] Spawning ${input.tool}: ${registry.command} ${registry.args.join(' ')} (cwd=${input.cwd})\n`);
+
     // Spawn ACP adapter child process
     const child = spawn(registry.command, registry.args, {
       cwd: input.cwd,
@@ -132,7 +134,27 @@ export class AcpSdkAdapter implements ACPClient {
       env: { ...process.env },
     });
 
-    // Capture stderr to log file for crash diagnosis
+    // IMPORTANT: Register spawn/error listeners and await spawn BEFORE any async
+    // operations (like dynamic imports). Otherwise the spawn event can fire during
+    // an await gap and the once('spawn') listener misses it.
+    const spawnTimeout = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* noop */ }
+    }, 60_000);
+    spawnTimeout.unref();
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', () => resolve());
+        child.once('error', (err) => reject(new Error(`Failed to spawn ${input.tool} ACP adapter: ${err.message}`)));
+      });
+    } catch (err) {
+      clearTimeout(spawnTimeout);
+      throw err;
+    }
+    clearTimeout(spawnTimeout);
+    process.stderr.write(`[acp-adapter] Spawn succeeded (pid=${child.pid}), establishing JSON-RPC...\n`);
+
+    // Capture stderr to log file for crash diagnosis (safe to await here — spawn already resolved)
     const stderrLogFile = input.logsDir
       ? resolve(input.logsDir, `acp-stderr-${input.tool}-${Date.now()}.log`)
       : null;
@@ -150,30 +172,11 @@ export class AcpSdkAdapter implements ACPClient {
           if (stderrFd != null) try { closeSync(stderrFd); } catch { /* noop */ }
         });
       } catch {
-        // Fallback: discard stderr if log file can't be opened
         child.stderr?.on('data', () => { /* discard */ });
       }
     } else {
       child.stderr?.on('data', () => { /* discard */ });
     }
-
-    // Spawn with 60s timeout to prevent indefinite hang if adapter binary is stuck
-    const spawnTimeout = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch { /* noop */ }
-    }, 60_000);
-    spawnTimeout.unref();
-
-    try {
-      await new Promise<void>((resolve, reject) => {
-        child.once('spawn', () => resolve());
-        child.once('error', (err) => reject(new Error(`Failed to spawn ${input.tool} ACP adapter: ${err.message}`)));
-      });
-    } catch (err) {
-      clearTimeout(spawnTimeout);
-      throw err;
-    }
-    // Spawn succeeded — clear the timeout so it doesn't kill the daemon later
-    clearTimeout(spawnTimeout);
 
     // Establish JSON-RPC connection over stdio
     const stream = ndJsonStream(
@@ -229,6 +232,7 @@ export class AcpSdkAdapter implements ACPClient {
     );
 
     // Protocol initialization
+    process.stderr.write(`[acp-adapter] Initializing ${input.tool} ACP protocol...\n`);
     const initResult = await conn.initialize({
       protocolVersion: 1,
       clientCapabilities: {
@@ -236,6 +240,7 @@ export class AcpSdkAdapter implements ACPClient {
         terminal: true,
       },
     });
+    process.stderr.write(`[acp-adapter] Protocol initialized. Creating session...\n`);
 
     // Create new session
     const sessionResult = await conn.newSession({
@@ -247,6 +252,8 @@ export class AcpSdkAdapter implements ACPClient {
         env: s.env ?? [],
       })),
     });
+
+    process.stderr.write(`[acp-adapter] Session created: ${sessionResult.sessionId}\n`);
 
     const session: ActiveSession = {
       tool: input.tool,
