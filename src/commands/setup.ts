@@ -274,9 +274,9 @@ export function syncSkills(log?: Logger): number {
 
   let synced = 0;
   for (const targetDir of AGENT_SKILL_DIRS) {
+    // Create agent skill directory if it doesn't exist
     if (!existsSync(targetDir)) {
-      // Agent not installed — skip
-      continue;
+      mkdirSync(targetDir, { recursive: true });
     }
 
     for (const skill of skillDirs) {
