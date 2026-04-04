@@ -492,17 +492,17 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
   }
 
   // Build SPS memory preamble (injected once on first turn)
+  // Agent chat uses user + agent layers only. Project layer is for pipeline workers.
   let memoryPreamble = '';
   try {
-    const { buildFullMemoryContext, buildMemoryWriteInstructions } = await import('../core/memory.js');
-    const cwd = args.cwd || process.cwd();
-    const projectName = detectProjectFromCwd(cwd);
+    const { buildUserMemoryContext, buildAgentMemoryContext, buildMemoryWriteInstructions } = await import('../core/memory.js');
     const agentId = args.name || 'default';
-    const memCtx = buildFullMemoryContext({ project: projectName || undefined, agentId });
-    const writeRules = buildMemoryWriteInstructions(projectName || '_global', agentId);
     const parts: string[] = [];
-    if (memCtx) parts.push(memCtx);
-    parts.push(writeRules);
+    const userCtx = buildUserMemoryContext();
+    if (userCtx) parts.push(userCtx);
+    const agentCtx = buildAgentMemoryContext(agentId);
+    if (agentCtx) parts.push(agentCtx);
+    parts.push(buildMemoryWriteInstructions('_agent', agentId));
     memoryPreamble = parts.join('\n\n---\n\n');
   } catch { /* memory not available */ }
   let firstTurn = true;

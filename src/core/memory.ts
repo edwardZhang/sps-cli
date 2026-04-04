@@ -375,18 +375,20 @@ export function buildFullMemoryContext(opts: {
  */
 export function buildMemoryWriteInstructions(project: string, agentId?: string): string {
   const userDir = getUserMemoryDir();
-  const projectDir = getProjectMemoryDir(project);
   const agentDir = agentId ? getAgentMemoryDir(agentId) : null;
+  const isAgentMode = project === '_agent';
 
   const agentSection = agentDir ? `
 - **Agent memory** (\`${agentDir}/\`): Your personal experience — interaction patterns, user communication preferences observed by you, pitfalls you encountered. Only you read this.` : '';
 
+  const projectSection = isAgentMode ? '' : `
+- **Project memory** (\`${getProjectMemoryDir(project)}/\`): Project-specific knowledge — conventions, decisions, lessons, references. Shared across all workers on this project.`;
+
   return `# Memory System
 
-You have a three-layer persistent memory system. Write directly to these directories. Use \`mkdir -p <dir>\` if the directory does not exist yet.
+You have a persistent memory system. Write directly to these directories. Use \`mkdir -p <dir>\` if the directory does not exist yet.
 
-- **User memory** (\`${userDir}/\`): Cross-project user preferences — coding style, language, workflow habits. Shared across all projects and agents.${agentSection}
-- **Project memory** (\`${projectDir}/\`): Project-specific knowledge — conventions, decisions, lessons, references. Shared across all workers on this project.
+- **User memory** (\`${userDir}/\`): Cross-project user preferences — coding style, language, workflow habits. Shared across all projects and agents.${agentSection}${projectSection}
 
 ## Memory Types
 
