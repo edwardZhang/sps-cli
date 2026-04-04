@@ -41,7 +41,7 @@ export interface AcquireResult {
 const DEFAULT_CONFIG: ResourceConfig = {
   maxGlobalWorkers: 30,
   staggerDelayMs: 5_000,
-  maxMemoryPercent: 90,
+  maxMemoryPercent: 100,  // Disabled by default — os.freemem() is unreliable on macOS
 };
 
 export class ResourceLimiter {
