@@ -225,23 +225,8 @@ function loadProfile(name: string): string | null {
 function buildPrompt(userPrompt: string, contextFiles: string[], system: string, profile?: string): string {
   const parts: string[] = [];
 
-  // Inject SPS memory context (user + agent + project) into prompt
-  // Memory CONTENT is injected directly so the agent sees it regardless of
-  // its own built-in memory system (e.g. Claude Code's ~/.claude/ memory).
-  try {
-    const { buildFullMemoryContext, buildMemoryWriteInstructions } = require('../core/memory.js');
-    const cwd = process.cwd();
-    const projectName = detectProjectFromCwd(cwd);
-    const sessionName = 'default';
-    const memoryCtx = buildFullMemoryContext({ project: projectName || undefined, agentId: sessionName });
-    const writeInstructions = projectName
-      ? buildMemoryWriteInstructions(projectName, sessionName)
-      : buildMemoryWriteInstructions('_global', sessionName);
-    if (memoryCtx) {
-      parts.push('[SPS Project Memory — read this context before responding]\n' + memoryCtx);
-    }
-    parts.push('[SPS Memory Write Rules]\n' + writeInstructions);
-  } catch { /* memory module not available — skip */ }
+  // Memory is handled by sps-memory skill (loaded via ~/.claude/skills/ or ~/.codex/skills/)
+  // No prompt injection needed — agent reads/writes ~/.coral/memory/ directly
 
   // Load profile as system prompt
   if (profile) {
@@ -271,26 +256,6 @@ function buildPrompt(userPrompt: string, contextFiles: string[], system: string,
   return parts.join('\n');
 }
 
-/** Try to detect which SPS project the cwd belongs to */
-function detectProjectFromCwd(cwd: string): string | null {
-  try {
-    const HOME = process.env.HOME || '/home/coral';
-    const projectsDir = resolve(HOME, '.coral', 'projects');
-    const { readdirSync, readFileSync, existsSync } = require('node:fs');
-    if (!existsSync(projectsDir)) return null;
-    for (const name of readdirSync(projectsDir)) {
-      const confPath = resolve(projectsDir, name, 'conf');
-      if (!existsSync(confPath)) continue;
-      const conf = readFileSync(confPath, 'utf-8');
-      const match = conf.match(/PROJECT_DIR="([^"]+)"/);
-      if (match) {
-        const projectDir = match[1].replace('$HOME', HOME).replace('~', HOME);
-        if (cwd.startsWith(projectDir)) return name;
-      }
-    }
-  } catch { /* ignore */ }
-  return null;
-}
 
 export async function executeAgentCommand(argv: string[]): Promise<void> {
   const args = parseAgentArgs(argv);
