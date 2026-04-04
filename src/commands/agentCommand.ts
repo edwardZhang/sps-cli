@@ -19,7 +19,7 @@
  * @workflow      1. 解析参数 → 2. 创建/恢复会话 → 3. 发送 prompt → 4. 流式渲染输出
  */
 import * as childProcess from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as readline from 'node:readline/promises';
 import { createSessionContext } from '../core/sessionContext.js';
@@ -256,6 +256,26 @@ function buildPrompt(userPrompt: string, contextFiles: string[], system: string,
   return parts.join('\n');
 }
 
+/** Try to detect which SPS project the cwd belongs to */
+function detectProjectFromCwd(cwd: string): string | null {
+  try {
+    const HOME = process.env.HOME || '/home/coral';
+    const projectsDir = resolve(HOME, '.coral', 'projects');
+    if (!existsSync(projectsDir)) return null;
+    for (const name of readdirSync(projectsDir)) {
+      const confPath = resolve(projectsDir, name, 'conf');
+      if (!existsSync(confPath)) continue;
+      const conf = readFileSync(confPath, 'utf-8');
+      const match = conf.match(/PROJECT_DIR="([^"]+)"/);
+      if (match) {
+        const projectDir = match[1].replace('$HOME', HOME).replace('~', HOME);
+        if (cwd.startsWith(projectDir)) return name;
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
 
 export async function executeAgentCommand(argv: string[]): Promise<void> {
   const args = parseAgentArgs(argv);
@@ -471,9 +491,30 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
     process.stderr.write(`${DIM}Session "${args.name}" started (${args.tool}) — type your messages, Ctrl+C to exit${RESET}\n\n`);
   }
 
+  // Build SPS memory preamble (injected once on first turn)
+  let memoryPreamble = '';
+  try {
+    const { buildFullMemoryContext, buildMemoryWriteInstructions } = await import('../core/memory.js');
+    const cwd = args.cwd || process.cwd();
+    const projectName = detectProjectFromCwd(cwd);
+    const agentId = args.name || 'default';
+    const memCtx = buildFullMemoryContext({ project: projectName || undefined, agentId });
+    const writeRules = buildMemoryWriteInstructions(projectName || '_global', agentId);
+    const parts: string[] = [];
+    if (memCtx) parts.push(memCtx);
+    parts.push(writeRules);
+    memoryPreamble = parts.join('\n\n---\n\n');
+  } catch { /* memory not available */ }
+  let firstTurn = true;
+
   // Unified turn runner
   const turn = async (prompt: string) => {
-    const fullPrompt = buildPrompt(prompt, args.context, args.system, args.profile);
+    let fullPrompt = buildPrompt(prompt, args.context, args.system, args.profile);
+    // Inject memory on first turn only
+    if (firstTurn && memoryPreamble) {
+      fullPrompt = memoryPreamble + '\n\n---\n\n' + fullPrompt;
+      firstTurn = false;
+    }
     if (useDaemon) {
       await client.startRun(slot, fullPrompt, args.tool, args.cwd);
       // Poll daemon's state.json for output
