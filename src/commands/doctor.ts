@@ -430,6 +430,13 @@ automatically by the SPS pipeline after you push and say "done".
 - No changes outside task scope
 - Do NOT explore ~/.coral/projects or other system directories
 
+## SPS Memory
+This project uses SPS persistent memory at ~/.coral/memory/.
+Before starting work, read the project memory index:
+  cat ~/.coral/memory/projects/${ctx.config.PROJECT_NAME}/MEMORY.md 2>/dev/null
+When you discover project conventions, architecture decisions, or lessons learned,
+write them as memory files. See the sps-memory skill for format and rules.
+
 ## Project-Specific Rules
 # Add your project's coding standards, architecture constraints,
 # testing requirements, and other conventions below:
