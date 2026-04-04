@@ -383,7 +383,7 @@ export function buildMemoryWriteInstructions(project: string, agentId?: string):
 
   return `# Memory System
 
-You have a three-layer persistent memory system. Write directly to these directories (they exist, do not mkdir).
+You have a three-layer persistent memory system. Write directly to these directories. Use \`mkdir -p <dir>\` if the directory does not exist yet.
 
 - **User memory** (\`${userDir}/\`): Cross-project user preferences — coding style, language, workflow habits. Shared across all projects and agents.${agentSection}
 - **Project memory** (\`${projectDir}/\`): Project-specific knowledge — conventions, decisions, lessons, references. Shared across all workers on this project.

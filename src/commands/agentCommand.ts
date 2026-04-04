@@ -225,20 +225,22 @@ function loadProfile(name: string): string | null {
 function buildPrompt(userPrompt: string, contextFiles: string[], system: string, profile?: string): string {
   const parts: string[] = [];
 
-  // Inject memory context (user + agent + project if detectable)
+  // Inject SPS memory context (user + agent + project) into prompt
+  // Memory CONTENT is injected directly so the agent sees it regardless of
+  // its own built-in memory system (e.g. Claude Code's ~/.claude/ memory).
   try {
     const { buildFullMemoryContext, buildMemoryWriteInstructions } = require('../core/memory.js');
-    // Detect project from cwd (check if inside a known project repo)
     const cwd = process.cwd();
     const projectName = detectProjectFromCwd(cwd);
-    const sessionName = 'default'; // agent daemon session
+    const sessionName = 'default';
     const memoryCtx = buildFullMemoryContext({ project: projectName || undefined, agentId: sessionName });
-    if (memoryCtx) parts.push(memoryCtx);
-    if (projectName) {
-      parts.push(buildMemoryWriteInstructions(projectName, sessionName));
-    } else {
-      parts.push(buildMemoryWriteInstructions('_global', sessionName));
+    const writeInstructions = projectName
+      ? buildMemoryWriteInstructions(projectName, sessionName)
+      : buildMemoryWriteInstructions('_global', sessionName);
+    if (memoryCtx) {
+      parts.push('[SPS Project Memory — read this context before responding]\n' + memoryCtx);
     }
+    parts.push('[SPS Memory Write Rules]\n' + writeInstructions);
   } catch { /* memory module not available — skip */ }
 
   // Load profile as system prompt

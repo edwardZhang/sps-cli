@@ -68,6 +68,7 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
   const dirs = [
     PROJECTS_DIR,
     resolve(HOME, '.coral', 'memory', 'user'),
+    resolve(HOME, '.coral', 'memory', 'agents'),
   ];
   for (const dir of dirs) {
     if (!existsSync(dir)) {
