@@ -76,7 +76,7 @@ export async function executeWorkerLaunch(
   const resourceLimiter = new ResourceLimiter({
     maxGlobalWorkers: parseInt(process.env.SPS_MANAGER_MAX_WORKERS || '30', 10),
     staggerDelayMs: parseInt(process.env.SPS_MANAGER_STAGGER_MS || '5000', 10),
-    maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '90', 10),
+    maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '100', 10),
   });
   const agentRuntime = createAgentRuntime(ctx);
   const workerManager = new WorkerManagerImpl({

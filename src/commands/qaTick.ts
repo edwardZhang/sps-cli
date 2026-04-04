@@ -68,7 +68,7 @@ export async function executeQaTick(
   const resourceLimiter = new ResourceLimiter({
     maxGlobalWorkers: maxWorkers,
     staggerDelayMs: parseInt(process.env.SPS_MANAGER_STAGGER_MS || '5000', 10),
-    maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '90', 10),
+    maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '100', 10),
   });
   const completionJudge = new CompletionJudge();
   const workerManager = new WorkerManagerImpl({
