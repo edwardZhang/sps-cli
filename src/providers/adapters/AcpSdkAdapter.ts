@@ -39,9 +39,20 @@ import { TerminalManager } from './acp-terminal-manager.js';
 
 export interface AgentRegistryEntry { command: string; args: string[] }
 
+/** Check if a command exists in PATH */
+function commandExists(cmd: string): boolean {
+  try { execFileSync('which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; }
+}
+
+/** Resolve agent command: prefer global binary, fallback to npx */
+function resolveAgent(globalBin: string, npxPkg: string): AgentRegistryEntry {
+  if (commandExists(globalBin)) return { command: globalBin, args: [] };
+  return { command: 'npx', args: ['-y', npxPkg] };
+}
+
 const BUILTIN_AGENTS: Record<string, AgentRegistryEntry> = {
-  claude: { command: 'npx', args: ['-y', '@agentclientprotocol/claude-agent-acp'] },
-  codex: { command: 'npx', args: ['-y', '@zed-industries/codex-acp'] },
+  claude: resolveAgent('claude-agent-acp', '@agentclientprotocol/claude-agent-acp'),
+  codex: resolveAgent('codex-acp', '@zed-industries/codex-acp'),
   gemini: { command: 'gemini', args: ['--acp'] },
 };
 
