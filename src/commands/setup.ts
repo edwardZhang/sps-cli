@@ -18,6 +18,7 @@
  * @outputs       ~/.coral/ 目录结构和全局配置文件
  * @workflow      1. 创建目录结构 → 2. 交互式收集配置 → 3. 写入 env 文件 → 4. 安装技能文件
  */
+import { execSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -226,6 +227,30 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
       log.info('No skills to sync (directory empty)');
     } else {
       log.info(`No skills directory at ${SKILLS_SRC_DIR} — skipping sync`);
+    }
+  }
+
+  // ─── Step 4: Install ACP agent adapters globally ────────────────
+  {
+    const adapters = [
+      { name: 'claude-agent-acp', pkg: '@agentclientprotocol/claude-agent-acp' },
+      { name: 'codex-acp', pkg: '@zed-industries/codex-acp' },
+    ];
+    for (const adapter of adapters) {
+      try {
+        execSync(`which ${adapter.name}`, { stdio: 'ignore' });
+        log.ok(`${adapter.name} already installed`);
+      } catch {
+        log.info(`Installing ${adapter.name}...`);
+        try {
+          execSync(`npm install -g ${adapter.pkg}`, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+          log.ok(`Installed ${adapter.name}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(`Failed to install ${adapter.name}: ${msg}`);
+          log.info(`  You can install manually: npm install -g ${adapter.pkg}`);
+        }
+      }
     }
   }
 
