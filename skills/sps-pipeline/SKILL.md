@@ -35,26 +35,44 @@ Ask the user:
 3. **需要什么 skill profile？** — 如 `frontend`、`backend`、`phaser`（可选，留空用默认）
 4. **最大并发 Worker 数？** — 默认 `1`
 
+### CRITICAL: State Chain Rules
+
+When generating multi-stage YAML, follow these rules strictly:
+
+1. **Each stage's `on_complete` MUST point to the NEXT stage's `trigger` state** — never skip stages, never loop back to the same state
+2. **Each stage MUST have a unique `card_state`** — no two stages share the same active state
+3. **The last stage's `on_complete` MUST be `"move_card Done"`**
+4. **The last stage SHOULD have `queue: fifo`** and `completion: fast-forward-merge` for safe merging
+5. **States flow in one direction**: Ready → Stage1Active → Stage2Active → ... → Done
+
+Example state chain for 3 stages:
+```
+Ready → [develop] Inprogress → [code-review] CodeReview → [integrate] QA → Done
+         trigger    card_state    trigger       card_state    trigger   card_state
+```
+
+WRONG patterns to avoid:
+- `on_complete: "move_card Done"` on a non-last stage (skips remaining stages)
+- `trigger: "card_enters 'Done'"` (Done is the terminal state, never trigger from it)
+- Two stages with same `card_state: QA` (ambiguous, both stages compete)
+
 ### Step 3: Generate and deploy
 
 Based on the answers:
 1. Run `sps project init <name>` if project doesn't exist
-2. Generate the pipeline YAML file at `<repo>/.sps/pipelines/project.yaml`
+2. Generate the pipeline YAML file at `~/.coral/projects/<name>/pipelines/project.yaml`
 3. Update project conf at `~/.coral/projects/<name>/conf`
 4. Run `sps doctor <name> --fix` to validate
 5. Show the user the generated YAML and explain each section
 
 ### Pipeline YAML location
 
-The YAML file goes in the **project repository** (not ~/.coral/):
+The YAML file lives in `~/.coral/projects/<name>/pipelines/`:
 ```
-<project-repo>/
-└── .sps/
-    └── pipelines/
-        └── project.yaml    ← pipeline definition
+~/.coral/projects/<name>/
+└── pipelines/
+    └── project.yaml    ← pipeline definition
 ```
-
-`.sps/` should be in `.gitignore` (sps doctor --fix handles this automatically).
 
 ### Example conversation
 
