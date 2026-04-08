@@ -29,7 +29,7 @@ import type { ProjectPipelineAdapter, StageDefinition } from '../core/projectPip
 import { readQueue } from '../core/queue.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import type { RuntimeState, TaskLease, WorkerSlotState } from '../core/state.js';
-import { buildPhasePrompt } from '../core/taskPrompts.js';
+import { buildPhasePrompt, buildTaskPrompt } from '../core/taskPrompts.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
@@ -227,7 +227,7 @@ export class StageEngine {
       runtime.evidence?.worktree ||
       resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
 
-    if (!worktree || !existsSync(worktree)) {
+    if (this.pipelineAdapter.gitEnabled && (!worktree || !existsSync(worktree))) {
       await this.markNeedsFix(seq, `${this.stage.name} task has no usable worktree`);
       actions.push({
         action: 'mark-needs-fix',
@@ -238,8 +238,8 @@ export class StageEngine {
       return;
     }
 
-    // For stages with fast-forward-merge completion: check if already merged
-    if (this.stage.completion === 'fast-forward-merge' && this.isMergedToBase(worktree, branchName)) {
+    // For stages with fast-forward-merge completion: check if already merged (git only)
+    if (this.pipelineAdapter.gitEnabled && this.stage.completion === 'fast-forward-merge' && this.isMergedToBase(worktree, branchName)) {
       this.log.info(`seq ${seq}: integration already complete, proceeding to release`);
       await this.completeAndAdvance(card, actions);
       return;
@@ -567,8 +567,10 @@ export class StageEngine {
       }
     }
 
-    // Step 5: Mark worktree for cleanup
-    try {
+    // Step 5: Mark worktree for cleanup (git only)
+    if (!this.pipelineAdapter.gitEnabled) {
+      // No worktree to clean up
+    } else try {
       const freshState = this.runtimeStore.readState();
       const branchName = this.buildBranchName(card);
       const worktreePath =
@@ -660,36 +662,40 @@ export class StageEngine {
 
   private async prepareCard(card: Card, opts: { dryRun?: boolean }): Promise<ActionRecord> {
     const seq = card.seq;
-    const branchName = this.buildBranchName(card);
-    const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
+    const gitEnabled = this.pipelineAdapter.gitEnabled;
 
     if (opts.dryRun) {
       return { action: 'prepare', entity: `seq:${seq}`, result: 'ok', message: 'dry-run' };
     }
 
-    // Step 1: Create branch
-    try {
-      await this.repoBackend.ensureBranch(this.ctx.paths.repoDir, branchName, this.ctx.mergeBranch);
-      this.log.ok(`Step 1: Branch ${branchName} created for seq ${seq}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`Step 1 failed (branch) for seq ${seq}: ${msg}`);
-      this.logEvent('prepare-branch', seq, 'fail', { error: msg });
-      return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Branch creation failed: ${msg}` };
+    if (gitEnabled) {
+      const branchName = this.buildBranchName(card);
+      const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
+
+      // Step 1: Create branch
+      try {
+        await this.repoBackend.ensureBranch(this.ctx.paths.repoDir, branchName, this.ctx.mergeBranch);
+        this.log.ok(`Step 1: Branch ${branchName} created for seq ${seq}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.error(`Step 1 failed (branch) for seq ${seq}: ${msg}`);
+        this.logEvent('prepare-branch', seq, 'fail', { error: msg });
+        return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Branch creation failed: ${msg}` };
+      }
+
+      // Step 2: Create worktree
+      try {
+        await this.repoBackend.ensureWorktree(this.ctx.paths.repoDir, branchName, worktreePath);
+        this.log.ok(`Step 2: Worktree created for seq ${seq} at ${worktreePath}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.error(`Step 2 failed (worktree) for seq ${seq}: ${msg}`);
+        this.logEvent('prepare-worktree', seq, 'fail', { error: msg });
+        return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Worktree creation failed: ${msg}` };
+      }
     }
 
-    // Step 2: Create worktree
-    try {
-      await this.repoBackend.ensureWorktree(this.ctx.paths.repoDir, branchName, worktreePath);
-      this.log.ok(`Step 2: Worktree created for seq ${seq} at ${worktreePath}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`Step 2 failed (worktree) for seq ${seq}: ${msg}`);
-      this.logEvent('prepare-worktree', seq, 'fail', { error: msg });
-      return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Worktree creation failed: ${msg}` };
-    }
-
-    // Step 3: Move card to Ready
+    // Move card to Ready (git or not)
     try {
       await this.taskBackend.move(seq, this.pipelineAdapter.states.ready);
       this.log.ok(`Step 3: Moved seq ${seq} ${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready}`);
@@ -712,9 +718,11 @@ export class StageEngine {
     failedSlots: Set<string> = new Set(),
   ): Promise<ActionRecord> {
     const seq = card.seq;
-    const branchName = this.buildBranchName(card);
-    const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
-    const workflowTransport = resolveWorkflowTransport(this.ctx.config);
+    const gitEnabled = this.pipelineAdapter.gitEnabled;
+    const branchName = gitEnabled ? this.buildBranchName(card) : `task-${seq}`;
+    const worktreePath = gitEnabled
+      ? resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR)
+      : this.ctx.paths.repoDir;
 
     if (opts.dryRun) {
       return { action: 'launch', entity: `seq:${seq}`, result: 'ok', message: 'dry-run' };
@@ -914,10 +922,7 @@ export class StageEngine {
     const memoryInstructions = buildMemoryWriteInstructions(this.ctx.projectName);
     const knowledge = [memoryContext, memoryInstructions].filter(Boolean).join('\n\n---\n\n');
 
-    // Determine phase for prompt generation (legacy compatibility)
-    const phase = this.stage.completion === 'fast-forward-merge' ? 'integration' : 'development';
-
-    const prompt = buildPhasePrompt({
+    const promptCtx = {
       taskSeq: card.seq,
       taskTitle: card.name,
       taskDescription: card.desc || '(no description)',
@@ -930,8 +935,15 @@ export class StageEngine {
       skillContent,
       projectRules: projectRules || undefined,
       knowledge,
-      phase,
-    });
+    };
+
+    let prompt: string;
+    if (this.pipelineAdapter.gitEnabled) {
+      const phase = this.stage.completion === 'fast-forward-merge' ? 'integration' : 'development';
+      prompt = buildPhasePrompt({ ...promptCtx, phase });
+    } else {
+      prompt = buildTaskPrompt(promptCtx);
+    }
 
     return prompt;
   }

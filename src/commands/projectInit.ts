@@ -288,6 +288,11 @@ export CONFLICT_DEFAULT="serial"
 #   - steps: Linear step sequence, runs once then exits
 mode: project
 
+# git: Enable/disable git operations (branch, worktree, merge). Default: true.
+#   true  = each task gets an isolated git branch + worktree (code development)
+#   false = workers operate in PROJECT_DIR directly, no git (document processing, data tasks)
+# git: true
+
 # ── Card States ──────────────────────────────────────────────────
 # Define card state names as they appear in your PM board.
 # Only 3 fixed roles required: backlog (entry), ready (prepared), done (finished).

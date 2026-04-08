@@ -27,13 +27,19 @@ Ask the user:
 ### Step 2: Design the pipeline stages
 
 Ask the user:
-1. **你的开发流程有几个阶段？** 常见选择：
-   - **简单**（1 stage）：开发完直接 Done
-   - **标准**（2 stages）：开发 → 合并
+1. **项目类型** — 是否需要 git（代码开发 = git: true，文档/数据处理 = git: false）
+2. **你的开发流程有几个阶段？** 常见选择：
+   - **简单**（1 stage）：处理完直接 Done
+   - **标准**（2 stages）：开发 → 合并（git）/ 提取 → 汇总（非 git）
    - **完整**（3+ stages）：开发 → Code Review → 测试 → 合并
-2. **每个阶段用什么 Agent？** — `claude`（默认）/ `codex` / `gemini`
-3. **需要什么 skill profile？** — 如 `frontend`、`backend`、`phaser`（可选，留空用默认）
-4. **最大并发 Worker 数？** — 默认 `1`
+3. **每个阶段用什么 Agent？** — `claude`（默认）/ `codex` / `gemini`
+4. **需要什么 skill profile？** — 如 `frontend`、`backend`、`tax-worker`（可选）
+5. **最大并发 Worker 数？** — 默认 `1`
+
+**If git: false:**
+- All stages MUST use `completion: exit-code` (no git-evidence or fast-forward-merge)
+- Workers operate directly in PROJECT_DIR, no branch/worktree isolation
+- Recommend MAX_CONCURRENT_WORKERS=1 or task-specific subdirectories to avoid conflicts
 
 ### CRITICAL: State Chain Rules
 

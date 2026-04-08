@@ -57,6 +57,8 @@ export interface StageDefinition {
 }
 
 export interface ProjectPipelineSettings {
+  /** Whether git operations (branch, worktree, merge) are enabled. Default true. */
+  gitEnabled: boolean;
   states: CardStates;
   stages: StageDefinition[];
   /** All non-Done states to check for pipeline completion */
@@ -118,6 +120,11 @@ export class ProjectPipelineAdapter {
     } else {
       this.settings = buildDefaults(config);
     }
+  }
+
+  /** Whether git operations are enabled */
+  get gitEnabled(): boolean {
+    return this.settings.gitEnabled;
   }
 
   /** Get card state names */
@@ -320,7 +327,29 @@ function buildFromYaml(yaml: any, config: ProjectConfig): ProjectPipelineSetting
   }
   const activeStates = Array.from(activeStateSet);
 
+  // Git mode: default true, can be disabled via YAML
+  const gitEnabled = yaml.git !== false;
+
+  // Validate: git-dependent completion strategies require git
+  if (!gitEnabled) {
+    for (const stage of stages) {
+      if (stage.completion === 'git-evidence' || stage.completion === 'fast-forward-merge') {
+        throw new Error(
+          `Stage "${stage.name}" uses completion: ${stage.completion} but git is disabled (git: false). ` +
+          `Use completion: exit-code when git: false.`
+        );
+      }
+    }
+    // Default completion for git:false — override any implicit git-evidence defaults
+    for (const stage of stages) {
+      if (!stage.completion || stage.completion === 'git-evidence') {
+        stage.completion = 'exit-code';
+      }
+    }
+  }
+
   return {
+    gitEnabled,
     states,
     stages,
     activeStates,
@@ -330,6 +359,7 @@ function buildFromYaml(yaml: any, config: ProjectConfig): ProjectPipelineSetting
 
 function buildDefaults(config: ProjectConfig): ProjectPipelineSettings {
   return {
+    gitEnabled: true,
     states: { ...DEFAULT_STATES },
     stages: defaultStages(config),
     activeStates: ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA'],

@@ -128,8 +128,8 @@ export class SPSEventHandler {
 
     await this.safeAction({ type: 'move', taskId, project: this.project, target: targetState });
 
-    if (isIntegration) {
-      // Mark worktree for cleanup — the task is fully done
+    if (isIntegration && this.pipelineAdapter.gitEnabled) {
+      // Mark worktree for cleanup — the task is fully done (git mode only)
       this.markWorktreeCleanup(taskId, event);
     }
 

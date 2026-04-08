@@ -160,3 +160,53 @@ Completion rule:
 - Do NOT push to ${ctx.targetBranch} — a separate integration worker handles merging.`;
 }
 
+/**
+ * Build prompt for non-git task (git: false pipeline).
+ * No branch, worktree, push, or merge instructions.
+ */
+export function buildTaskPrompt(ctx: SharedPromptContext): string {
+  const sections: string[] = [];
+
+  if (ctx.skillContent?.trim()) {
+    sections.push(ctx.skillContent.trim());
+    sections.push('---');
+  }
+
+  if (ctx.projectRules?.trim()) {
+    sections.push(ctx.projectRules.trim());
+    sections.push('---');
+  }
+
+  if (ctx.knowledge?.trim()) {
+    sections.push(ctx.knowledge.trim());
+    sections.push('---');
+  }
+
+  sections.push(`# Current Task
+
+Task ID: ${ctx.taskSeq}
+Task: ${ctx.taskTitle}
+Working Directory: ${ctx.worktreePath}
+
+Description:
+${ctx.taskDescription || '(no description)'}`);
+
+  sections.push(`# Task Instructions
+
+You are working on a task in: ${ctx.worktreePath}
+
+Rules:
+1. Work only in the specified directory
+2. Complete the task as described
+3. Output results to the appropriate files
+4. Validate your output before finishing
+5. Do NOT modify files outside the working directory
+6. Say "done" when finished
+
+Completion rule:
+- All required output files are created and validated
+- Say "done" after confirming the results are correct`);
+
+  return sections.join('\n\n').trim() + '\n';
+}
+
