@@ -34,16 +34,20 @@ const HOME = process.env.HOME || '/home/coral';
 const DEFAULT_STATES: CardState[] = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA', 'Done'];
 
 /** Build ordered state list from adapter */
-function buildStateList(adapterStates?: CardStates): CardState[] {
-  if (!adapterStates) return DEFAULT_STATES;
-  return [
-    adapterStates.planning,
-    adapterStates.backlog,
-    adapterStates.ready,
-    adapterStates.active,
-    adapterStates.review,
-    adapterStates.done,
-  ];
+function buildStateList(adapter?: ProjectPipelineAdapter): CardState[] {
+  if (!adapter) return DEFAULT_STATES;
+  const states = adapter.states;
+  // Build ordered list: planning → backlog → ready → [stage active states] → done
+  const ordered: string[] = [states.planning, states.backlog, states.ready];
+  for (const stage of adapter.stages) {
+    if (!ordered.includes(stage.activeState)) {
+      ordered.push(stage.activeState);
+    }
+  }
+  if (!ordered.includes(states.done)) {
+    ordered.push(states.done);
+  }
+  return ordered as CardState[];
 }
 
 /** Build display labels from state names */
@@ -311,7 +315,7 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
       };
     }).sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10));
 
-    const projectStates = buildStateList(adapter.states);
+    const projectStates = buildStateList(adapter);
     const counts = Object.fromEntries(projectStates.map(s => [s, 0])) as Record<CardState, number>;
     for (const card of snapshots) {
       if (counts[card.state] !== undefined) counts[card.state] += 1;
