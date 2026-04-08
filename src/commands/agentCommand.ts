@@ -484,6 +484,8 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
   let runtime: Awaited<ReturnType<typeof createSessionRuntime>> | null = null;
   if (useDaemon) {
     await client.ensureSession(slot, args.tool, args.cwd);
+    // Clear any stale run from a previous detached session
+    try { await client.clearRun(slot); } catch { /* no stale run */ }
     process.stderr.write(`${DIM}Session "${args.name}" started via daemon (${args.tool}) — type your messages, Ctrl+C to exit${RESET}\n\n`);
   } else {
     runtime = createSessionRuntime(ctx);
@@ -547,9 +549,10 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
   const cleanup = async () => {
     rl.close();
     process.stderr.write(`\n${DIM}Detaching from session (daemon keeps it alive)...${RESET}\n`);
-    // Don't stop session — daemon keeps it alive
-    // Only stop if running locally (no daemon)
-    if (!useDaemon && runtime) {
+    // Clear any active run so the slot is reusable on reconnect
+    if (useDaemon) {
+      try { await client.clearRun(slot); } catch { /* best effort */ }
+    } else if (runtime) {
       try { await runtime.stopSession(slot); } catch { /* cleanup */ }
     }
     process.exit(0);
