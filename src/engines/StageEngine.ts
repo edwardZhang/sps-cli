@@ -850,6 +850,15 @@ export class StageEngine {
       const card = await this.taskBackend.getBySeq(seq);
       if (!card || card.state === targetState) continue;
 
+      // Never pull a card BACK from Done — Done is terminal
+      if (card.state === this.pipelineAdapter.states.done) {
+        // Stale lease for a completed card — clean it up
+        this.runtimeStore.updateState('reconcile-cleanup-done', (draft) => {
+          this.runtimeStore.releaseTaskProjection(draft, seq, { dropLease: true });
+        });
+        continue;
+      }
+
       try {
         await this.taskBackend.move(seq, targetState);
         this.log.info(`Reconciled seq ${seq} ${card.state} → ${targetState} to match runtime state`);
