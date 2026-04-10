@@ -305,8 +305,8 @@ function buildFromYaml(yaml: any, config: ProjectConfig): ProjectPipelineSetting
         triggerState = prevComplete || states.ready;
       }
 
-      // Determine active state
-      const activeState = s.card_state || triggerState;
+      // Determine active state (must differ from trigger to show progress)
+      const activeState = s.card_state || (idx === 0 ? states.active : triggerState);
 
       // Default on_complete: next stage trigger or Done for last
       const nextTrigger = idx < yamlStages.length - 1
