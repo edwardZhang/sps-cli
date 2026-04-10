@@ -7,7 +7,7 @@ description: |
   Proactively use when the user discusses project setup, task planning, or CI/CD automation. (🪸 Coral SPS)
 ---
 
-# SPS Pipeline Management (v0.34.0)
+# SPS Pipeline Management (v0.37.0 — Single Worker Model)
 
 Manage the full lifecycle of SPS development pipelines: project setup, YAML configuration, task cards, memory system, and pipeline execution.
 
@@ -242,27 +242,35 @@ Workers receive memory in their prompt and can write new memories directly to `~
 sps skill sync
 ```
 
-## Architecture
+## Architecture (Single Worker Model)
 
 ```
 SchedulerEngine (orchestration)
   → Backlog cards with AI-PIPELINE label → Ready
 
-StageEngine × N (execution, YAML-driven)
-  → Each stage: trigger → launch worker → completion → state transition
-  → First stage: creates branch + worktree
-  → Last stage: releases resources + cleans worktree
+StageEngine × N (serial execution)
+  → Single worker processes one card at a time
+  → Each stage: launch worker → wait completion → move card
+  → Worker runs directly in PROJECT_DIR (no worktree/branch)
+  → Failure halts pipeline until resolved
 
 MonitorEngine (monitoring)
-  → Heartbeat / stale detection across all stages
+  → Worker health check
 ```
+
+## Failure Handling
+
+- Card fails → mark NEEDS-FIX → pipeline halts (halt: true)
+- Retry up to N times (retryCount in card frontmatter)
+- All retries exhausted → halt, wait for manual fix
+- Remove NEEDS-FIX label to resume
 
 ## Card State Flow
 
-Fully configurable. Only 3 fixed roles:
-
 ```
-Backlog → Ready → [Stage 1] → [Stage 2] → ... → Done
+Planning → Backlog → Ready → [Stage 1] → [Stage 2] → ... → Done
+                                ↓ fail
+                          NEEDS-FIX (halt)
 ```
 
 ## Key Config Fields (conf)

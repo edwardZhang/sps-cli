@@ -275,120 +275,65 @@ export CONFLICT_DEFAULT="serial"
   {
     const samplePath = resolve(pipelinesDir, 'sample.yaml.example');
     writeFileSync(samplePath, `# ══════════════════════════════════════════════════════════════════
-# SPS Pipeline Configuration
+# SPS Pipeline Configuration (v0.37.0 — Single Worker Model)
 # ══════════════════════════════════════════════════════════════════
 # To activate: copy this file to project.yaml
 #   cp sample.yaml.example project.yaml
-#
-# Docs: sps-pipeline skill or docs/design/17-pipeline-configuration-design.md
 # ══════════════════════════════════════════════════════════════════
 
-# mode: Pipeline execution mode
-#   - project: Event-driven state machine, continuous card-driven pipeline (this template)
-#   - steps: Linear step sequence, runs once then exits
 mode: project
 
-# git: Enable/disable git operations (branch, worktree, merge). Default: true.
-#   true  = each task gets an isolated git branch + worktree (code development)
-#   false = workers operate in PROJECT_DIR directly, no git (document processing, data tasks)
+# git: true  = code project (worker commits + pushes to current branch)
+# git: false = non-code project (document processing, data tasks)
 # git: true
 
-# ── Card States ──────────────────────────────────────────────────
-# Define card state names as they appear in your PM board.
-# Only 3 fixed roles required: backlog (entry), ready (prepared), done (finished).
-# Intermediate states are defined by each stage's card_state and on_complete.
+# ── Stages ───────────────────────────────────────────────────────
+# Single worker executes stages serially. One card at a time.
+# If a card fails, the pipeline halts until resolved (halt: true).
 #
-# For Plane/Trello backends, names must match PM column names exactly.
-# For markdown backend, names become subdirectories under cards/.
-pm:
-  card_states:
-    planning: Planning     # Requirement pool (user-managed, SPS does not touch)
-    backlog: Backlog       # Confirmed and queued (SchedulerEngine starts here)
-    ready: Todo            # Environment ready (branch + worktree created, awaiting worker)
-    active: Inprogress     # In development (worker is actively coding)
-    review: QA             # Awaiting merge (code complete, waiting for merge to target branch)
-    done: Done             # Completed (merged and resources released)
+# Required fields:
+#   name:       Stage name (unique)
+#   agent:      AI agent (claude / codex / gemini)
+#   on_complete: "move_card <next_state>" or "move_card Done"
+#
+# Optional fields:
+#   profile:    Skill profile (see ~/.coral/skills/dev-worker/references/)
+#   on_fail:    Failure handling
+#     action:   "label <LABEL>" — add label to card
+#     comment:  Comment text
+#     halt:     true (default) — stop pipeline on failure
+#               false — continue to next card
+#   timeout:    Max duration (30s / 5m / 2h)
 
-# ── Stage Definitions ────────────────────────────────────────────
-# Stages define the pipeline execution phases. Minimum 1, no upper limit.
-#
-# Field reference:
-#   name:         Stage name (unique identifier)
-#   trigger:      Trigger condition (which card state activates this stage)
-#   card_state:   Card state while this stage is active
-#   agent:        AI agent to use (claude / codex / gemini)
-#   profile:      Skill profile name (optional, comma-separated for multiple)
-#   completion:   Completion detection strategy
-#     - git-evidence:      Branch has new commits and is pushed to remote
-#     - fast-forward-merge: Branch is merged into target branch
-#     - exit-code:         Worker process exit code (0 = success)
-#   on_complete:  Action on success (move_card <target_state>)
-#   on_fail:      Action on failure
-#     action:     "label <LABEL_NAME>" (add label to card)
-#     comment:    Comment text added to card
-#   queue:        Queue strategy (optional)
-#     - fifo:     Serial execution (one card at a time, prevents merge conflicts)
-#   timeout:      Timeout duration (optional, format: 30s / 5m / 2h)
-#
-# Execution rules:
-#   - First stage handles prepare (creates feature branch + worktree)
-#   - Last stage handles release (cleans worktree + releases resources)
-#   - In tick loop, later stages run first (QA before new development, prevents starvation)
-
+# ── Simple: 1 stage (develop → Done) ────────────────────────────
 stages:
-  # ── Stage 1: Development ───────────────────────────────────────
-  # First stage: automatically creates feature branch + worktree
-  # Worker codes, tests, commits, and pushes in an isolated worktree
   - name: develop
-    trigger: "card_enters 'Todo'"       # Triggered when card enters Todo state
-    card_state: Inprogress              # Card state while worker is active
-    agent: claude                       # AI agent: claude / codex / gemini
-    # profile: fullstack                # Skill profile (optional, see ~/.coral/skills/dev-worker/references/)
-    completion: git-evidence            # Complete when: branch has commits and is pushed
-    on_complete: "move_card QA"         # On success: move card to QA
+    agent: claude
+    # profile: fullstack
+    on_complete: "move_card Done"
     on_fail:
-      action: "label NEEDS-FIX"         # On failure: add label
-      comment: "Development worker failed. Check logs and retry."
+      action: "label NEEDS-FIX"
+      comment: "Worker failed. Check logs."
 
-  # ── Stage 2: Integration / Merge ───────────────────────────────
-  # Last stage: rebases and merges to target branch, then cleans worktree
-  # queue: fifo ensures only one merge at a time to prevent conflicts
-  - name: integrate
-    trigger: "card_enters 'QA'"         # Triggered when card enters QA state
-    card_state: QA                      # Card state while merging
-    agent: claude                       # Agent for integration
-    completion: fast-forward-merge      # Complete when: branch merged to target
-    on_complete: "move_card Done"       # On success: move card to Done
-    on_fail:
-      action: "label MERGE-FAILED"      # On failure: add label
-      comment: "Integration merge failed. Check branch conflicts."
-    queue: fifo                         # Serialize merges to avoid conflicts
-
-# ── Extension: Multi-stage Pipeline ──────────────────────────────
-# Add more stages between develop and integrate:
+# ── Standard: 2 stages (develop → review → Done) ────────────────
+# Uncomment to add code review:
 #
-#  # Code Review stage
-#  - name: code-review
-#    trigger: "card_enters 'CodeReview'"
-#    card_state: CodeReview
-#    agent: claude
-#    profile: reviewer                  # Uses reviewer skill profile
-#    completion: exit-code
-#    on_complete: "move_card Testing"
+# stages:
+#   - name: develop
+#     agent: claude
+#     profile: fullstack
+#     on_complete: "move_card Review"
+#     on_fail:
+#       action: "label NEEDS-FIX"
+#       halt: true
 #
-#  # Automated Testing stage
-#  - name: testing
-#    trigger: "card_enters 'Testing'"
-#    card_state: Testing
-#    agent: codex                       # Use Codex for test execution
-#    completion: exit-code
-#    on_complete: "move_card QA"
-#    on_fail:
-#      action: "label TEST-FAILED"
-#      comment: "Automated tests failed."
-#
-# When using multi-stage, change develop's on_complete to point to the next stage:
-#   on_complete: "move_card CodeReview"
+#   - name: review
+#     agent: codex              # Different agent for independent review
+#     profile: reviewer
+#     on_complete: "move_card Done"
+#     on_fail:
+#       action: "label REVIEW-FAILED"
+#       halt: true
 `);
     log.ok(`Created pipelines/ with sample template`);
   }
