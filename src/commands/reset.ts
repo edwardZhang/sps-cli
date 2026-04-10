@@ -18,12 +18,10 @@
  * @outputs       重置操作摘要
  * @workflow      1. 停止 tick 进程 → 2. 清理 state.json → 3. 删除 worktree 和分支 → 4. 卡片回退到 Planning
  */
-import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadProjectConf } from '../core/config.js';
 import { Logger } from '../core/logger.js';
-import { resolveWorktreePath } from '../core/paths.js';
 import { createIdleWorkerSlot, readState, writeState } from '../core/state.js';
 import { createTaskBackend } from '../providers/registry.js';
 
@@ -73,52 +71,6 @@ function killWorkerPid(pid: number): void {
     while (Date.now() - start < 200) { /* spin */ }
   }
   try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
-}
-
-function removeWorktreeAndBranch(
-  repoDir: string, worktreePath: string, branch: string, log: Logger,
-): void {
-  // Remove worktree
-  if (existsSync(worktreePath)) {
-    try {
-      execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
-        cwd: repoDir, timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch {
-      rmSync(worktreePath, { recursive: true, force: true });
-      try {
-        execFileSync('git', ['worktree', 'prune'], {
-          cwd: repoDir, timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'],
-        });
-      } catch { /* non-fatal */ }
-    }
-    log.ok(`Removed worktree: ${worktreePath}`);
-  }
-
-  // Delete local branch (force — may not be merged)
-  try {
-    execFileSync('git', ['branch', '-D', branch], {
-      cwd: repoDir, timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    log.ok(`Deleted branch: ${branch}`);
-  } catch { /* branch may not exist */ }
-
-  // Delete remote branch (best effort)
-  try {
-    execFileSync('git', ['push', 'origin', '--delete', branch], {
-      cwd: repoDir, timeout: 15_000, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    log.debug(`Deleted remote branch: ${branch}`);
-  } catch { /* remote branch may not exist */ }
-}
-
-function buildBranchName(cardName: string, seq: string): string {
-  const slug = cardName
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 40);
-  return `feature/${seq}-${slug}`;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────
@@ -198,22 +150,6 @@ export async function executeReset(
     if (state.activeCards[seq]) delete state.activeCards[seq];
   }
 
-  // Clear integration queue entries for target seqs
-  for (const [key, q] of Object.entries(state.integrationQueues)) {
-    if (q.active && targetSeqs.has(q.active.taskId)) {
-      q.active = null;
-    }
-    q.waiting = q.waiting.filter(e => !targetSeqs.has(e.taskId));
-    if (!q.active && q.waiting.length === 0) {
-      delete state.integrationQueues[key];
-    }
-  }
-
-  // Clear worktreeCleanup entries for target seqs
-  state.worktreeCleanup = (state.worktreeCleanup ?? []).filter(
-    e => !targetSeqs.has(e.branch.replace(/^feature\/(\d+)-.*$/, '$1')),
-  );
-
   // Clear pendingPMActions for target seqs
   state.pendingPMActions = (state.pendingPMActions ?? []).filter(
     a => !targetSeqs.has(a.taskId),
@@ -227,35 +163,9 @@ export async function executeReset(
   writeState(stateFile, state, 'reset');
   log.ok(`Cleaned state: ${clearedLeases} lease(s), ${killedWorkers} worker(s) killed`);
 
-  // ── Step 3: Remove worktrees + branches ─────────────────────────
-  log.info('Step 3: Cleaning worktrees and branches...');
+  // ── Step 3: Move cards to Planning ──────────────────────────────
+  log.info('Step 3: Moving cards to Planning...');
   const taskBackend = createTaskBackend(config);
-  let cleanedWorktrees = 0;
-
-  for (const seq of targetSeqs) {
-    const worktreePath = resolveWorktreePath(project, seq, config.WORKTREE_DIR);
-    const card = await taskBackend.getBySeq(seq);
-    const branchName = card
-      ? buildBranchName(card.name, seq)
-      : `feature/${seq}-unknown`;
-
-    if (existsSync(worktreePath) || existsSync(repoDir)) {
-      removeWorktreeAndBranch(repoDir, worktreePath, branchName, log);
-      cleanedWorktrees++;
-    }
-  }
-
-  // Prune once at the end
-  try {
-    execFileSync('git', ['worktree', 'prune'], {
-      cwd: repoDir, timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch { /* non-fatal */ }
-
-  log.ok(`Cleaned ${cleanedWorktrees} worktree(s)`);
-
-  // ── Step 4: Move cards to Planning ──────────────────────────────
-  log.info('Step 4: Moving cards to Planning...');
   let movedCards = 0;
 
   for (const seq of targetSeqs) {
@@ -289,13 +199,12 @@ export async function executeReset(
 
   log.ok(`Moved ${movedCards} card(s) to Planning`);
 
-  // ── Step 5: Report ──────────────────────────────────────────────
+  // ── Step 4: Report ──────────────────────────────────────────────
   console.error('');
   log.ok(`Reset complete for ${project}:`);
   log.info(`  Cards reset:     ${targetSeqs.size}`);
   log.info(`  Workers killed:  ${killedWorkers}`);
   log.info(`  Leases cleared:  ${clearedLeases}`);
-  log.info(`  Worktrees removed: ${cleanedWorktrees}`);
   log.info(`  Cards → Planning:  ${movedCards}`);
   console.error('');
   log.info(`Run: sps tick ${project}`);

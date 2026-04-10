@@ -128,11 +128,6 @@ export class SPSEventHandler {
 
     await this.safeAction({ type: 'move', taskId, project: this.project, target: targetState });
 
-    if (isIntegration && this.pipelineAdapter.gitEnabled) {
-      // Mark worktree for cleanup — the task is fully done (git mode only)
-      this.markWorktreeCleanup(taskId, event);
-    }
-
     await this.safeAction({ type: 'release', taskId, project: this.project });
 
     const reason = completionResult?.reason ?? 'unknown';
@@ -154,9 +149,7 @@ export class SPSEventHandler {
     const failComment = stage?.onFailComment
       ?? `Worker ${reason} (exit ${exitCode ?? 1}). Marked as ${failLabel}.`;
 
-    // Release slot in runtime state — keep lease in merging phase so the
-    // reconciler can advance the card. The last StageEngine will check
-    // for actual merge evidence and either finalize or mark NEEDS-FIX.
+    // Release slot in runtime state.
     this.releaseSlot(event);
 
     // Apply on_fail actions from stage config
@@ -266,35 +259,6 @@ export class SPSEventHandler {
       await this.notifier.send(message);
     } catch (err) {
       this.logError('notify', err);
-    }
-  }
-
-  // ─── Worktree Cleanup ───────────────────────────────────────────
-
-  private markWorktreeCleanup(taskId: string, event: WorkerEvent): void {
-    try {
-      const state = this.runtimeStore.readState();
-      // Try to find worktree path from lease, evidence, or event context
-      const lease = state.leases[taskId];
-      const evidence = state.worktreeEvidence?.[taskId];
-      const worktreePath = lease?.worktree || evidence?.worktree || null;
-      const branch = lease?.branch || event.slot || null;
-
-      if (!worktreePath || !branch) {
-        this.log(`No worktree info for task ${taskId} — skipping cleanup mark`);
-        return;
-      }
-
-      const cleanup = state.worktreeCleanup ?? [];
-      if (cleanup.some(e => e.worktreePath === worktreePath)) return; // already marked
-
-      cleanup.push({ branch, worktreePath, markedAt: new Date().toISOString() });
-      this.runtimeStore.updateState('event-handler-worktree-mark', (draft) => {
-        draft.worktreeCleanup = cleanup;
-      });
-      this.log(`Marked worktree for cleanup: ${worktreePath}`);
-    } catch (err) {
-      this.logError('markWorktreeCleanup', err);
     }
   }
 

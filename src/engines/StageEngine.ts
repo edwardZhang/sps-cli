@@ -34,6 +34,7 @@ import type { TaskBackend } from '../interfaces/TaskBackend.js';
 // IntegrationQueue removed — single worker, no merge queue
 import type { TaskRunRequest, TaskRunResponse, WorkerManager } from '../manager/worker-manager.js';
 import type { ActionRecord, AuxiliaryState, Card, CommandResult, RecommendedAction } from '../models/types.js';
+
 // branchPushed/branchCommitsAhead removed — no worktree/branch management
 
 const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME'];
@@ -45,9 +46,9 @@ const CLEANUP_LABELS: string[] = [...SKIP_LABELS, 'CLAIMED'];
  * Replaces both ExecutionEngine and CloseoutEngine. Behavior is driven by
  * the StageDefinition from YAML config + positional flags (isFirstStage / isLastStage).
  *
- * First stage: also handles prepare (branch + worktree creation, Backlog → Ready).
- * Last stage: also handles release (worktree cleanup, resource release).
- * Any stage with queue: 'fifo' uses IntegrationQueue for serialization.
+ * Single-worker model: worker runs directly in PROJECT_DIR on the current branch.
+ * First stage: handles prepare (Backlog → Ready) and launches workers.
+ * Last stage: handles release (resource cleanup).
  */
 export class StageEngine {
   private log: Logger;
@@ -212,10 +213,10 @@ export class StageEngine {
     const state = this.runtimeStore.readState();
     const runtime = this.runtimeStore.getTask(seq, state);
     const worktree = this.ctx.paths.repoDir;
-    const branchName = `task-${seq}`;
+    const taskId = `task-${seq}`;  // Logical identifier, not a git branch
 
     // Check if worker is already running for this card
-    const activeStatus = await this.inspectStageWorker(card, runtime.slotName, worktree, branchName, actions);
+    const activeStatus = await this.inspectStageWorker(card, runtime.slotName, worktree, taskId, actions);
     if (activeStatus === 'active' || activeStatus === 'waiting' || activeStatus === 'done') {
       return;
     }
@@ -232,14 +233,14 @@ export class StageEngine {
     }
 
     // Start a new worker for this stage
-    await this.startStageWorker(card, runtime.slotName, worktree, branchName, actions);
+    await this.startStageWorker(card, runtime.slotName, worktree, taskId, actions);
   }
 
   private async inspectStageWorker(
     card: Card,
     slotName: string | null,
-    worktree: string,
-    branchName: string,
+    _worktree: string,
+    _taskId: string,
     actions: ActionRecord[],
   ): Promise<'idle' | 'active' | 'waiting' | 'failed' | 'done'> {
     if (!slotName) return 'idle';
@@ -303,12 +304,12 @@ export class StageEngine {
     card: Card,
     _preferredSlot: string | null,
     worktree: string,
-    branchName: string,
+    taskId: string,
     actions: ActionRecord[],
   ): Promise<void> {
     const seq = card.seq;
 
-    const prompt = this.buildStagePrompt(card, worktree, branchName);
+    const prompt = this.buildStagePrompt(card, worktree, taskId);
     const workflowTransport = resolveWorkflowTransport(this.ctx.config);
     const logsDir = this.ctx.paths.logsDir;
 
@@ -316,10 +317,10 @@ export class StageEngine {
       taskId: String(card.seq),
       cardId: String(card.seq),
       project: this.ctx.projectName,
-      phase: this.stage.name as 'development' | 'integration',
+      phase: this.stage.name as 'development',
       prompt,
       cwd: worktree,
-      branch: branchName,
+      branch: taskId,
       targetBranch: this.ctx.mergeBranch,
       tool: (this.stage.agent || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
       transport: 'acp-sdk',
@@ -380,9 +381,9 @@ export class StageEngine {
       draft.leases[seq] = {
         seq: parseInt(seq, 10),
         pmStateObserved: this.stage.activeState,
-        phase: this.stage.completion === 'fast-forward-merge' ? 'merging' : 'coding',
+        phase: 'coding',
         slot: slotName,
-        branch: branchName,
+        branch: taskId,
         worktree,
         sessionId: response.sessionId || null,
         runId: null,
@@ -614,7 +615,7 @@ export class StageEngine {
   ): Promise<ActionRecord> {
     const seq = card.seq;
     const worktreePath = this.ctx.paths.repoDir;  // Single worker: always use PROJECT_DIR
-    const branchName = `task-${seq}`;              // Logical identifier, not a git branch
+    const taskId = `task-${seq}`;              // Logical identifier, not a git branch
 
     if (opts.dryRun) {
       return { action: 'launch', entity: `seq:${seq}`, result: 'ok', message: 'dry-run' };
@@ -631,7 +632,7 @@ export class StageEngine {
     // Build prompt
     let prompt: string;
     try {
-      prompt = this.buildStagePrompt(card, worktreePath, branchName);
+      prompt = this.buildStagePrompt(card, worktreePath, taskId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log.error(`Prompt build failed for seq ${seq}: ${msg}`);
@@ -648,7 +649,7 @@ export class StageEngine {
       phase: 'development',
       prompt,
       cwd: worktreePath,
-      branch: branchName,
+      branch: taskId,
       targetBranch: this.ctx.mergeBranch,
       tool: (this.stage.agent || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
       transport: 'acp-sdk',
@@ -795,16 +796,14 @@ export class StageEngine {
       return lease.pmStateObserved || this.stage.activeState;
     }
     if (['merging', 'resolving_conflict', 'closing'].includes(lease.phase)) {
-      // Find the stage that handles merging (has fast-forward-merge completion)
-      const mergeStage = this.pipelineAdapter.stages.find(st => st.completion === 'fast-forward-merge');
-      return mergeStage?.activeState || this.stage.activeState;
+      return this.stage.activeState;
     }
     return null;
   }
 
   // ─── Prompt building ───────────────────────────────────────────
 
-  private buildStagePrompt(card: Card, worktreePath: string, branchName: string): string {
+  private buildStagePrompt(card: Card, worktreePath: string, taskId: string): string {
     const skillContent = this.loadSkillProfiles(card);
 
     let projectRules = '';
@@ -829,7 +828,7 @@ export class StageEngine {
       taskDescription: card.desc || '(no description)',
       cardId: card.id,
       worktreePath,
-      branchName,
+      branchName: taskId,
       targetBranch: this.ctx.mergeBranch,
       mergeMode: this.ctx.mrMode,
       gitlabProjectId: resolveGitlabProjectId(this.ctx.config),
@@ -840,8 +839,7 @@ export class StageEngine {
 
     let prompt: string;
     if (this.pipelineAdapter.gitEnabled) {
-      const phase = this.stage.completion === 'fast-forward-merge' ? 'integration' : 'development';
-      prompt = buildPhasePrompt({ ...promptCtx, phase });
+      prompt = buildPhasePrompt({ ...promptCtx, phase: 'development' });
     } else {
       prompt = buildTaskPrompt(promptCtx);
     }
@@ -929,7 +927,7 @@ export class StageEngine {
     this.runtimeStore.updateState(`stage-${this.stage.name}-release`, (draft) => {
       this.runtimeStore.releaseTaskProjection(draft, seq, {
         dropLease: false,
-        phase: this.stage.completion === 'fast-forward-merge' ? 'merging' : 'coding',
+        phase: 'coding',
         keepWorktree: true,
         pmStateObserved: this.stage.activeState,
       });

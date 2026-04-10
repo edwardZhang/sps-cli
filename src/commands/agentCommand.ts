@@ -19,7 +19,7 @@
  * @workflow      1. 解析参数 → 2. 创建/恢复会话 → 3. 发送 prompt → 4. 流式渲染输出
  */
 import * as childProcess from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as readline from 'node:readline/promises';
 import { createSessionContext } from '../core/sessionContext.js';

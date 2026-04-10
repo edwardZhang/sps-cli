@@ -62,7 +62,7 @@ export class MonitorEngine {
    */
   private async safeMrStatus(branch: string): Promise<{ exists: boolean; state: string }> {
     try {
-      return await this.safeMrStatus(branch);
+      return await this.repoBackend.getMrStatus(branch);
     } catch {
       return { exists: false, state: 'unknown' };
     }

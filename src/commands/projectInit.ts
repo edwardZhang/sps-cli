@@ -351,7 +351,7 @@ stages:
     const initState = {
       workers, activeCards: {}, leases: {},
       worktreeEvidence: {}, sessions: {},
-      integrationQueues: {}, worktreeCleanup: [],
+      integrationQueues: {}, worktreeCleanup: [] as never[],
       pendingPMActions: [],
     };
     writeState(stateFile, initState as any, 'project-init');

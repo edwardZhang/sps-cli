@@ -18,7 +18,6 @@
  * @outputs       每轮 tick 的调度/流水线/QA/监控结果
  * @workflow      1. 获取锁 → 2. 加载引擎 → 3. 循环执行 scheduler→pipeline→QA→monitor → 4. 释放锁
  */
-import {} from '../core/config.js';
 import { ProjectContext } from '../core/context.js';
 import { acquireTickLock, releaseTickLock } from '../core/lock.js';
 import { Logger } from '../core/logger.js';
@@ -196,7 +195,7 @@ function createRunner(project: string): ProjectRunner | null {
  *   sps tick project-a project-b project-c
  *
  * Each project is fully isolated (own context, providers, engines, lock, state).
- * Manager modules (Supervisor, ResourceLimiter, CompletionJudge) are shared globally.
+ * Manager modules (Supervisor, CompletionJudge) are shared globally.
  * Projects are ticked sequentially within each cycle. One project's error
  * does not affect others.
  *
@@ -376,6 +375,7 @@ async function runOneTick(
 
   // ── Failure halt: check for NEEDS-FIX cards before doing anything ──
   // If any card has NEEDS-FIX, the pipeline is halted until resolved.
+  // TODO: This halts globally. Should only halt if the failed card's stage has halt: true.
   {
     const needsFixCards: string[] = [];
     for (const cardState of pipelineAdapter.activeStates) {
@@ -473,10 +473,6 @@ async function checkAllDone(
       return false;
     }
   }
-
-  // Don't exit while worktree cleanup is pending — one more tick needed
-  const cleanupQueue = state.worktreeCleanup ?? [];
-  if (cleanupQueue.length > 0) return false;
 
   return true;
 }

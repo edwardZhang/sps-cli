@@ -19,6 +19,7 @@ import type { WorkerSlotState } from './state.js';
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'lost']);
 
 import { isProcessAlive } from '../providers/outputParser.js';
+
 export { isProcessAlive };
 
 export function isACPBackedSlot(slot: Pick<WorkerSlotState, 'transport' | 'mode'>): boolean {

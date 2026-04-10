@@ -51,8 +51,7 @@ interface SpawnContext {
 
 const DEFAULT_TIMEOUTS = {
   startupSec: 60,           // 60s for worker to start
-  developmentSec: 4 * 3600, // 4h for development
-  integrationSec: 3600,     // 1h for integration
+  developmentSec: 4 * 3600, // 4h for development (single-worker model, no integration phase)
   inputWaitSec: 1800,       // 30min waiting for input
   forceMultiplier: 1.5,     // Hard kill at 1.5x timeout
 };
@@ -736,7 +735,7 @@ export class WorkerManagerImpl implements WorkerManager {
   // ─── Private: Timeout Management ─────────────────────────────
 
   private startTimeout(taskId: string, phase: WorkerPhase, project: string, slot: string, customTimeoutSec?: number): void {
-    const baseSec = customTimeoutSec ?? (phase === 'integration' ? DEFAULT_TIMEOUTS.integrationSec : DEFAULT_TIMEOUTS.developmentSec);
+    const baseSec = customTimeoutSec ?? DEFAULT_TIMEOUTS.developmentSec;
     const hardSec = Math.ceil(baseSec * DEFAULT_TIMEOUTS.forceMultiplier);
     const workerId = `${project}:${slot}:${taskId}`;
 
