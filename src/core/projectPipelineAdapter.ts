@@ -50,10 +50,12 @@ export interface StageDefinition {
   onFailLabel?: string;
   /** On fail: comment to add */
   onFailComment?: string;
-  /** Integration queue mode (fifo for integration stages) */
+  /** Queue strategy — ignored in single worker model */
   queue?: string;
   /** Timeout override for this stage */
   timeout?: string;
+  /** Halt pipeline on failure (default true) */
+  halt?: boolean;
 }
 
 export interface ProjectPipelineSettings {
@@ -276,38 +278,62 @@ function loadProjectPipelineYaml(projectName: string, projectDir?: string): any 
 }
 
 function buildFromYaml(yaml: any, config: ProjectConfig): ProjectPipelineSettings {
-  // Card states: merge YAML over defaults
+  // Card states: merge YAML over defaults (pm.card_states is optional)
   const states: CardStates = {
     ...DEFAULT_STATES,
-    ...(yaml.pm?.card_states || {}),
+    ...(yaml.pm?.card_states || yaml.states || {}),
   };
 
   // Stages: build from YAML or use defaults
   let stages: StageDefinition[];
   if (yaml.stages && Array.isArray(yaml.stages) && yaml.stages.length > 0) {
     const yamlStages = yaml.stages as any[];
+
+    // Auto-generate stage states from on_complete chain
+    // First stage trigger = states.ready, active = 'Inprogress' (or explicit card_state)
+    // Subsequent stages: trigger = previous stage's on_complete target
     stages = yamlStages.map((s: any, idx: number) => {
-      // Default on_complete fallback: next stage's trigger state, or done for last stage
+      // Determine trigger state
+      let triggerState: string;
+      if (s.trigger) {
+        triggerState = parseTrigger(s.trigger) || states.ready;
+      } else if (idx === 0) {
+        triggerState = states.ready;
+      } else {
+        // Auto: previous stage's on_complete target
+        const prevComplete = parseOnComplete(yamlStages[idx - 1].on_complete, '');
+        triggerState = prevComplete || states.ready;
+      }
+
+      // Determine active state
+      const activeState = s.card_state || triggerState;
+
+      // Default on_complete: next stage trigger or Done for last
       const nextTrigger = idx < yamlStages.length - 1
         ? (parseTrigger(yamlStages[idx + 1].trigger) || yamlStages[idx + 1].card_state || states.done)
         : states.done;
+
+      // Parse on_fail halt config
+      const onFailRaw = s.on_fail;
+      const halt = onFailRaw?.halt !== false; // default true
+
       return {
         name: s.name,
-        triggerState: parseTrigger(s.trigger) || s.card_state || states.ready,
-        activeState: s.card_state || states.active,
+        triggerState,
+        activeState,
         agent: s.agent || config.WORKER_TOOL || 'claude',
         profile: s.profile,
-        completion: s.completion || 'git-evidence',
+        completion: s.completion || 'exit-code',  // Default: exit-code (single worker model)
         onCompleteState: parseOnComplete(s.on_complete, nextTrigger),
         onFailLabel: parseOnFailLabel(s.on_fail),
         onFailComment: parseOnFailComment(s.on_fail),
-        queue: s.queue,
+        queue: undefined,   // Ignored: single worker, no queue
         timeout: s.timeout,
+        halt,               // Failure halt: default true
       };
     });
   } else {
     stages = defaultStages(config);
-    // Remap default stages to use custom state names
     stages[0].triggerState = states.ready;
     stages[0].activeState = states.active;
     stages[0].onCompleteState = states.review;
@@ -327,26 +353,8 @@ function buildFromYaml(yaml: any, config: ProjectConfig): ProjectPipelineSetting
   }
   const activeStates = Array.from(activeStateSet);
 
-  // Git mode: default true, can be disabled via YAML
+  // Git mode: default true (commit+push), false (no git ops)
   const gitEnabled = yaml.git !== false;
-
-  // Validate: git-dependent completion strategies require git
-  if (!gitEnabled) {
-    for (const stage of stages) {
-      if (stage.completion === 'git-evidence' || stage.completion === 'fast-forward-merge') {
-        throw new Error(
-          `Stage "${stage.name}" uses completion: ${stage.completion} but git is disabled (git: false). ` +
-          `Use completion: exit-code when git: false.`
-        );
-      }
-    }
-    // Default completion for git:false — override any implicit git-evidence defaults
-    for (const stage of stages) {
-      if (!stage.completion || stage.completion === 'git-evidence') {
-        stage.completion = 'exit-code';
-      }
-    }
-  }
 
   return {
     gitEnabled,
