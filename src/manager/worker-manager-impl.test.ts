@@ -20,7 +20,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createIdleWorkerSlot, type RuntimeState, writeState } from '../core/state.js';
 import { CompletionJudge } from './completion-judge.js';
-import { ResourceLimiter } from './resource-limiter.js';
 import { ProcessSupervisor } from './supervisor.js';
 import type { WorkerEvent, WorkerPhase } from './worker-manager.js';
 import { type WorkerManagerDeps, WorkerManagerImpl } from './worker-manager-impl.js';
@@ -57,7 +56,6 @@ interface TestContext {
   stateFile: string;
   supervisor: ProcessSupervisor;
   judge: CompletionJudge;
-  limiter: ResourceLimiter;
   agentRuntime: Record<string, ReturnType<typeof vi.fn>>;
   wm: WorkerManagerImpl;
   events: WorkerEvent[];
@@ -71,7 +69,6 @@ function setup(maxWorkers = 2): TestContext {
 
   const supervisor = new ProcessSupervisor();
   const judge = new CompletionJudge();
-  const limiter = new ResourceLimiter({ maxGlobalWorkers: maxWorkers, staggerDelayMs: 0 });
 
   // Mock supervisor.kill
   vi.spyOn(supervisor, 'kill').mockResolvedValue();
@@ -89,7 +86,6 @@ function setup(maxWorkers = 2): TestContext {
   const deps: WorkerManagerDeps = {
     supervisor,
     completionJudge: judge,
-    resourceLimiter: limiter,
     agentRuntime: agentRuntime as any,
     stateFile,
     maxWorkers,
@@ -98,7 +94,7 @@ function setup(maxWorkers = 2): TestContext {
   const events: WorkerEvent[] = [];
   wm.onEvent((event) => events.push(event));
 
-  return { tempDir, stateFile, supervisor, judge, limiter, agentRuntime, wm, events };
+  return { tempDir, stateFile, supervisor, judge, agentRuntime, wm, events };
 }
 
 function makeRunRequest(taskId: string, project = 'test') {
@@ -245,22 +241,7 @@ describe('WorkerManagerImpl', () => {
     });
   });
 
-  describe('integration queue', () => {
-    it('queues second integration task', async () => {
-      ctx = setup(2);
-      const req1 = { ...makeRunRequest('1'), phase: 'integration' as WorkerPhase };
-      const req2 = { ...makeRunRequest('2'), phase: 'integration' as WorkerPhase };
-
-      const r1 = await ctx.wm.run(req1);
-      expect(r1.accepted).toBe(true);
-      expect(r1.queued).toBeUndefined();
-
-      const r2 = await ctx.wm.run(req2);
-      expect(r2.accepted).toBe(true);
-      expect(r2.queued).toBe(true);
-      expect(r2.queuePosition).toBeGreaterThan(0);
-    });
-  });
+  // Integration queue tests removed — single worker model, no queue
 
   describe('resume', () => {
     it('accepts a resume request with session ID', async () => {

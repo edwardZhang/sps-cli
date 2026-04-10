@@ -26,7 +26,6 @@ import { RuntimeStore } from '../core/runtimeStore.js';
 import { SPSEventHandler } from '../engines/EventHandler.js';
 import { StageEngine } from '../engines/StageEngine.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
-import { ResourceLimiter } from '../manager/resource-limiter.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { WorkerManagerImpl } from '../manager/worker-manager-impl.js';
 import { createAgentRuntime, createNotifier, createRepoBackend, createTaskBackend } from '../providers/registry.js';
@@ -63,14 +62,9 @@ export async function executePipelineTick(
   const notifier = createNotifier(ctx.config);
   const supervisor = new ProcessSupervisor();
   const completionJudge = new CompletionJudge();
-  const resourceLimiter = new ResourceLimiter({
-    maxGlobalWorkers: parseInt(process.env.SPS_MANAGER_MAX_WORKERS || '30', 10),
-    staggerDelayMs: parseInt(process.env.SPS_MANAGER_STAGGER_MS || '5000', 10),
-    maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '100', 10),
-  });
   const agentRuntime = createAgentRuntime(ctx);
   const workerManager = new WorkerManagerImpl({
-    supervisor, completionJudge, resourceLimiter,
+    supervisor, completionJudge,
     agentRuntime: agentRuntime ?? null,
     stateFile: ctx.paths.stateFile, maxWorkers: ctx.maxWorkers,
   });

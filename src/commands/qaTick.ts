@@ -26,7 +26,6 @@ import { RuntimeStore } from '../core/runtimeStore.js';
 import { SPSEventHandler } from '../engines/EventHandler.js';
 import { StageEngine } from '../engines/StageEngine.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
-import { ResourceLimiter } from '../manager/resource-limiter.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 import { WorkerManagerImpl } from '../manager/worker-manager-impl.js';
 import { createAgentRuntime, createNotifier, createRepoBackend, createTaskBackend } from '../providers/registry.js';
@@ -64,15 +63,9 @@ export async function executeQaTick(
 
   // Build WorkerManager for standalone QA tick
   const supervisor = new ProcessSupervisor();
-  const maxWorkers = parseInt(process.env.SPS_MANAGER_MAX_WORKERS || '30', 10);
-  const resourceLimiter = new ResourceLimiter({
-    maxGlobalWorkers: maxWorkers,
-    staggerDelayMs: parseInt(process.env.SPS_MANAGER_STAGGER_MS || '5000', 10),
-    maxMemoryPercent: parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '100', 10),
-  });
   const completionJudge = new CompletionJudge();
   const workerManager = new WorkerManagerImpl({
-    supervisor, completionJudge, resourceLimiter,
+    supervisor, completionJudge,
     agentRuntime: agentRuntime ?? null,
     stateFile: ctx.paths.stateFile,
     maxWorkers: ctx.maxWorkers,

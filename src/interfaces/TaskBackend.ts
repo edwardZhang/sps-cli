@@ -33,5 +33,7 @@ export interface TaskBackend {
   checklistUncheck(seq: string, itemId: string): Promise<void>;
   metaRead(seq: string): Promise<Record<string, unknown>>;
   metaWrite(seq: string, data: Record<string, unknown>): Promise<void>;
+  incrementRetryCount(seq: string): Promise<number>;
+  resetRetryCount(seq: string): Promise<void>;
   bootstrap(): Promise<void>;
 }

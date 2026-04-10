@@ -33,7 +33,6 @@ import type { Notifier } from '../interfaces/Notifier.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
 import { createPMClient } from '../manager/pm-client.js';
-import { ResourceLimiter } from '../manager/resource-limiter.js';
 import { RuntimeCoordinator } from '../manager/runtime-coordinator.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 // PostActions and Recovery are no longer used directly — WM handles recovery
@@ -47,29 +46,17 @@ const DEFAULT_INTERVAL_S = 30;
 // ─── Shared Manager modules (global across all projects) ──────
 
 let sharedSupervisor: ProcessSupervisor | null = null;
-let sharedResourceLimiter: ResourceLimiter | null = null;
 let sharedCompletionJudge: CompletionJudge | null = null;
 
 function getSharedModules() {
   if (!sharedSupervisor) {
     sharedSupervisor = new ProcessSupervisor();
   }
-  if (!sharedResourceLimiter) {
-    const maxWorkers = parseInt(process.env.SPS_MANAGER_MAX_WORKERS || '30', 10);
-    const staggerMs = parseInt(process.env.SPS_MANAGER_STAGGER_MS || '5000', 10);
-    const maxMem = parseInt(process.env.SPS_MANAGER_MAX_MEMORY_PERCENT || '100', 10);
-    sharedResourceLimiter = new ResourceLimiter({
-      maxGlobalWorkers: maxWorkers,
-      staggerDelayMs: staggerMs,
-      maxMemoryPercent: maxMem,
-    });
-  }
   if (!sharedCompletionJudge) {
     sharedCompletionJudge = new CompletionJudge();
   }
   return {
     supervisor: sharedSupervisor,
-    resourceLimiter: sharedResourceLimiter,
     completionJudge: sharedCompletionJudge,
   };
 }
@@ -150,13 +137,12 @@ function createRunner(project: string): ProjectRunner | null {
   }
 
   // Get shared Manager modules
-  const { supervisor, resourceLimiter, completionJudge } = getSharedModules();
+  const { supervisor, completionJudge } = getSharedModules();
 
-  // Create per-project WorkerManager (wraps supervisor, judge, limiter)
+  // Create per-project WorkerManager (wraps supervisor + judge)
   const workerManager = new WorkerManagerImpl({
     supervisor,
     completionJudge,
-    resourceLimiter,
     agentRuntime: agentRuntime ?? null,
     stateFile: ctx.paths.stateFile,
     maxWorkers: ctx.maxWorkers,
@@ -375,7 +361,7 @@ async function runOneTick(
   runner: ProjectRunner,
   dryRun: boolean,
 ): Promise<TickResult> {
-  const { project, scheduler, stages, monitor, log } = runner;
+  const { project, scheduler, stages, monitor, log, pipelineAdapter, ctx } = runner;
 
   // Hot-reload project conf at the start of each tick cycle
   // so changes to branch, worker settings, etc. take effect without restart
@@ -388,15 +374,62 @@ async function runOneTick(
   const steps: StepResult[] = [];
   const opts = { dryRun };
 
+  // ── Failure halt: check for NEEDS-FIX cards before doing anything ──
+  // If any card has NEEDS-FIX, the pipeline is halted until resolved.
+  {
+    const needsFixCards: string[] = [];
+    for (const cardState of pipelineAdapter.activeStates) {
+      try {
+        const cards = await runner.taskBackend.listByState(cardState as any);
+        for (const card of cards) {
+          if (card.labels.includes('NEEDS-FIX')) {
+            needsFixCards.push(`seq:${card.seq} (${card.name})`);
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    if (needsFixCards.length > 0) {
+      log.warn(`Pipeline halted: ${needsFixCards.length} card(s) with NEEDS-FIX: ${needsFixCards.join(', ')}`);
+      log.info('Remove NEEDS-FIX label to resume. Or use: sps reset <project> <seq>');
+      return {
+        project,
+        component: 'tick',
+        status: 'halted' as any,
+        exitCode: 0,
+        steps: [],
+        actions: [],
+        recommendedActions: [],
+        details: { halted: true, needsFixCards },
+      };
+    }
+  }
+
+  // ── Recovery: reset orphaned Inprogress cards on tick startup ──
+  // If a card is in a stage active state but no worker is running,
+  // it was interrupted. Move it back to the ready state for re-processing.
+  {
+    const state = readState(ctx.paths.stateFile, ctx.maxWorkers);
+    const hasActiveWorker = Object.values(state.workers).some(w => w.status !== 'idle');
+    if (!hasActiveWorker) {
+      for (const stage of pipelineAdapter.stages) {
+        try {
+          const stuckCards = await runner.taskBackend.listByState(stage.activeState as any);
+          for (const card of stuckCards) {
+            if (!card.labels.includes('NEEDS-FIX')) {
+              log.info(`Recovery: seq:${card.seq} stuck in ${stage.activeState}, moving back to ${pipelineAdapter.states.ready}`);
+              await runner.taskBackend.move(card.seq, pipelineAdapter.states.ready);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    }
+  }
+
   const schedulerResult = await runStep('scheduler', () => scheduler.tick(opts), log);
   steps.push(schedulerResult);
 
-  // Execute stage engines in REVERSE order — later stages run first.
-  // This ensures QA/integrate cards get workers before new develop cards,
-  // preventing starvation where all slots are consumed by new tasks while
-  // nearly-complete tasks sit in QA waiting for a merge worker.
-  const reverseStages = [...stages].reverse();
-  for (const stage of reverseStages) {
+  // Execute stage engines sequentially (single worker, no need for reverse order)
+  for (const stage of stages) {
     const stageResult = await runStep(`stage-${stage.name}`, () => stage.tick(opts), log);
     if (stage.isFirstStage && schedulerResult.status === 'fail') {
       stageResult.status = stageResult.status === 'ok' ? 'degraded' : stageResult.status;

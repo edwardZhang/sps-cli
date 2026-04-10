@@ -23,6 +23,8 @@ export interface Card {
   state: CardState;
   labels: string[];
   meta: Record<string, unknown>;
+  /** Retry count for current task — incremented on failure, reset on success or manual reset */
+  retryCount?: number;
 }
 
 /** Card state — defaults are Planning/Backlog/Todo/Inprogress/QA/Done but configurable via pipeline YAML */

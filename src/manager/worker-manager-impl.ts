@@ -18,9 +18,6 @@ import type { RuntimeState, TaskLease, WorktreeEvidence } from '../core/state.js
 import { createIdleWorkerSlot, readState, writeState } from '../core/state.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type { CompletionJudge, CompletionResult } from './completion-judge.js';
-import type { QueueEntry } from './integration-queue.js';
-import { IntegrationQueue } from './integration-queue.js';
-import type { ResourceLimiter } from './resource-limiter.js';
 import type { ProcessSupervisor } from './supervisor.js';
 import type {InspectQuery, 
   RecoveryContext, RecoveryResult,TaskCancelRequest,TaskConfirmRequest, 
@@ -34,9 +31,7 @@ import type {InspectQuery,
 export interface WorkerManagerDeps {
   supervisor: ProcessSupervisor;
   completionJudge: CompletionJudge;
-  resourceLimiter: ResourceLimiter;
   agentRuntime: AgentRuntime | null;
-  integrationQueue?: IntegrationQueue;
   stateFile: string;
   maxWorkers: number;
 }
@@ -67,11 +62,9 @@ const DEFAULT_TIMEOUTS = {
 export class WorkerManagerImpl implements WorkerManager {
   private readonly supervisor: ProcessSupervisor;
   private readonly completionJudge: CompletionJudge;
-  private readonly resourceLimiter: ResourceLimiter;
   private readonly agentRuntime: AgentRuntime | null;
   private readonly stateFile: string;
   private readonly maxWorkers: number;
-  private readonly integrationQueue: IntegrationQueue;
   private readonly eventHandlers: WorkerEventHandler[] = [];
   private readonly taskSlotMap = new Map<string, string>();
   private readonly timeouts = new Map<string, NodeJS.Timeout>();
@@ -81,11 +74,9 @@ export class WorkerManagerImpl implements WorkerManager {
   constructor(deps: WorkerManagerDeps) {
     this.supervisor = deps.supervisor;
     this.completionJudge = deps.completionJudge;
-    this.resourceLimiter = deps.resourceLimiter;
     this.agentRuntime = deps.agentRuntime;
     this.stateFile = deps.stateFile;
     this.maxWorkers = deps.maxWorkers;
-    this.integrationQueue = deps.integrationQueue ?? new IntegrationQueue(deps.stateFile, deps.maxWorkers);
   }
 
   // ─── run / resume ────────────────────────────────────────────
@@ -118,35 +109,20 @@ export class WorkerManagerImpl implements WorkerManager {
   async cancel(request: TaskCancelRequest): Promise<void> {
     const { taskId, project, reason } = request;
 
-    // ── Check if the task is queued (not yet spawned) ───────────
-    const queuePos = this.integrationQueue.getPosition(taskId);
-    if (queuePos > 0) {
-      // Task is in waiting list — remove without killing any worker
-      this.integrationQueue.remove(taskId);
-      this.emitEvent({
-        type: 'run.failed', taskId, cardId: taskId, project,
-        phase: 'integration', slot: '', workerId: '',
-        timestamp: new Date().toISOString(), state: 'failed',
-        error: `Cancelled from queue (position=${queuePos}): ${reason}`,
-      });
-      this.log(`Removed queued task ${taskId} from integration queue (reason=${reason})`);
-      return;
-    }
-
     const slot = this.taskSlotMap.get(taskId);
     if (!slot) { this.log(`Cancel: task ${taskId} not found`); return; }
 
-    // Determine phase from lease to know if we need to advance queue
+    // Determine phase from lease
     const lease = this.rd().leases[taskId];
     const isIntegration = lease
       ? (lease.pmStateObserved === 'QA' || lease.phase === 'merging' || lease.phase === 'resolving_conflict')
-      : queuePos === 0;
+      : false;
 
     this.clearTimeoutForTask(taskId);
     const workerId = `${project}:${slot}:${taskId}`;
     await this.supervisor.kill(workerId);
     this.releaseSlotInState(slot, taskId);
-    this.resourceLimiter.release();
+    /* resourceLimiter.release() — single worker, no-op */;
     this.taskSlotMap.delete(taskId);
 
     this.emitEvent({
@@ -157,20 +133,6 @@ export class WorkerManagerImpl implements WorkerManager {
     });
     this.log(`Cancelled worker ${workerId} (reason=${reason})`);
 
-    // ── If active integration worker was cancelled, advance queue ─
-    if (isIntegration) {
-      const targetBranch = lease?.branch ?? 'main';
-      // Find the actual targetBranch from the queue active entry
-      const state = this.rd();
-      let actualTarget = targetBranch;
-      for (const [key, q] of Object.entries(state.integrationQueues)) {
-        if (q.active?.taskId === taskId) {
-          actualTarget = key.split(':').slice(1).join(':');
-          break;
-        }
-      }
-      await this.advanceIntegrationQueue(project, actualTarget);
-    }
   }
 
   // ─── inspect ─────────────────────────────────────────────────
@@ -271,8 +233,6 @@ export class WorkerManagerImpl implements WorkerManager {
         }
       }
 
-      // Phase 3: Rebuild integration queues — skip tasks already handled above
-      this.rebuildIntegrationQueue(ctx, state, result, processedSeqs);
     }
 
     // Phase 4: Emit collected events so SPSEventHandler processes them
@@ -302,45 +262,13 @@ export class WorkerManagerImpl implements WorkerManager {
       return this.reject('duplicate_task');
     }
 
-    // ── Integration queue gate ──────────────────────────────────
-    if (phase === 'integration') {
-      const entry: QueueEntry = {
-        taskId, cardId, project, prompt, cwd, branch, targetBranch,
-        tool, transport, outputFile, enqueuedAt: new Date().toISOString(),
-      };
-      const active = this.integrationQueue.getActive(project, targetBranch);
-      if (active) {
-        const { position } = this.integrationQueue.enqueue(entry);
-        this.log(`Integration task ${taskId} queued at position ${position} (active=${active.taskId})`);
-        return { accepted: true, queued: true, queuePosition: position, slot: null, workerId: null };
-      }
-      // No active — register as active before spawning
-      this.integrationQueue.enqueue(entry);
-    }
-
-    const acquireResult = this.resourceLimiter.tryAcquireDetailed();
-    if (!acquireResult.acquired) {
-      const reason = this.resourceLimiter.formatBlockReason(acquireResult.stats);
-      this.log(`Resource exhausted for task ${taskId}: ${reason}`);
-      // If we just registered as active in the queue, roll back
-      if (phase === 'integration') {
-        this.integrationQueue.dequeueNext(project, targetBranch);
-      }
-      return this.reject('resource_exhausted');
-    }
-
+    // Single worker: fixed slot, no queue, no resource competition
     const state = this.rd();
     const slot = this.findIdleSlot(state);
     if (!slot) {
-      this.resourceLimiter.release();
-      if (phase === 'integration') {
-        this.integrationQueue.dequeueNext(project, targetBranch);
-      }
-      this.log(`No idle slot for task ${taskId}`);
+      this.log(`No idle slot for task ${taskId} (worker busy)`);
       return this.reject('resource_exhausted');
     }
-
-    await this.resourceLimiter.enforceStagger();
 
     const nowIso = new Date().toISOString();
     this.claimSlot(state, slot, { seq: taskId, cardId, project, phase, branch, cwd, tool, transport, outputFile, nowIso, targetBranch });
@@ -372,15 +300,11 @@ export class WorkerManagerImpl implements WorkerManager {
     } catch (err) {
       this.log(`Spawn failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`);
       if (resourceAcquired) {
-        this.resourceLimiter.release();
+        /* resourceLimiter.release() — single worker, no-op */;
         resourceAcquired = false;
       }
       this.releaseSlotInState(slot, taskId);
       this.taskSlotMap.delete(taskId);
-      if (phase === 'integration') {
-        this.integrationQueue.remove(taskId);
-        await this.advanceIntegrationQueue(project, targetBranch);
-      }
       this.emitEvent({
         type: 'run.failed', taskId, cardId, project, phase, slot, workerId,
         timestamp: new Date().toISOString(), state: 'failed',
@@ -435,7 +359,7 @@ export class WorkerManagerImpl implements WorkerManager {
 
     // Release supervisor handle and resource limiter slot
     this.supervisor.remove(workerId);
-    this.resourceLimiter.release();
+    /* resourceLimiter.release() — single worker, no-op */;
     this.taskSlotMap.delete(taskId);
 
     // Safety net: if no event handlers are registered, release the slot
@@ -446,10 +370,6 @@ export class WorkerManagerImpl implements WorkerManager {
       this.log(`Safety net: released slot ${slot} for task ${taskId} (no event handlers)`);
     }
 
-    // ── Auto-dequeue next integration task ──────────────────────
-    if (phase === 'integration') {
-      await this.advanceIntegrationQueue(project, targetBranch);
-    }
   }
 
   // ─── Private: ACP Completion Monitor ───────────────────────────
@@ -583,7 +503,7 @@ export class WorkerManagerImpl implements WorkerManager {
 
     // Release resources (same as handleExit tail)
     this.supervisor.remove(ctx.workerId);
-    this.resourceLimiter.release();
+    /* resourceLimiter.release() — single worker, no-op */;
     this.taskSlotMap.delete(ctx.taskId);
 
     if (this.eventHandlers.length === 0) {
@@ -591,11 +511,6 @@ export class WorkerManagerImpl implements WorkerManager {
       this.log(`Safety net: released slot ${ctx.slot} for task ${ctx.taskId} (no event handlers)`);
     }
 
-    if (ctx.phase === 'integration') {
-      this.advanceIntegrationQueue(ctx.project, ctx.targetBranch).catch(err => {
-        this.log(`Failed to advance integration queue: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
   }
 
   /** Clear currentRun in session state so the slot can be reused for next task. */
@@ -614,58 +529,6 @@ export class WorkerManagerImpl implements WorkerManager {
     }
   }
 
-  /**
-   * Try to spawn the next queued integration task.
-   * On spawn failure, skip and try the next entry — never deadlock.
-   */
-  private async advanceIntegrationQueue(project: string, targetBranch: string): Promise<void> {
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const next = this.integrationQueue.dequeueNext(project, targetBranch);
-      if (!next) {
-        this.log(`Integration queue empty for ${project}:${targetBranch}`);
-        return;
-      }
-      this.log(`Auto-dequeuing integration task ${next.taskId} for ${project}:${targetBranch}`);
-      // Skip entries with empty prompt (recovery stubs — SPS must re-prepare)
-      if (!next.prompt) {
-        this.log(`Skipping ${next.taskId}: empty prompt (needs SPS re-preparation)`);
-        this.emitEvent({
-          type: 'run.failed', taskId: next.taskId, cardId: next.cardId, project,
-          phase: 'integration', slot: '', workerId: '',
-          timestamp: new Date().toISOString(), state: 'failed',
-          error: 'Empty prompt — needs SPS re-preparation after recovery',
-        });
-        continue;
-      }
-      try {
-        const resp = await this.acquireAndSpawn({
-          taskId: next.taskId, cardId: next.cardId, project,
-          phase: 'integration', prompt: next.prompt, cwd: next.cwd,
-          branch: next.branch, targetBranch: next.targetBranch,
-          tool: next.tool, transport: next.transport,
-          outputFile: next.outputFile, maxRetries: 0,
-        }, 'wm-iq-dequeue');
-        if (resp.accepted && !resp.queued) {
-          this.log(`Integration task ${next.taskId} spawned after dequeue`);
-          return;
-        }
-        // If accepted but re-queued, something odd — keep going
-        this.log(`Integration task ${next.taskId} could not spawn (accepted=${resp.accepted}), trying next`);
-      } catch (err) {
-        this.log(`Failed to spawn dequeued task ${next.taskId}: ${err instanceof Error ? err.message : String(err)}`);
-        // Emit failure event so SPS knows this task was dropped
-        this.emitEvent({
-          type: 'run.failed', taskId: next.taskId, cardId: next.cardId, project,
-          phase: 'integration', slot: '', workerId: '',
-          timestamp: new Date().toISOString(), state: 'failed',
-          error: `Dequeue spawn failed: ${err instanceof Error ? err.message : String(err)}`,
-        });
-        // Continue to next entry — never deadlock
-      }
-    }
-  }
-
   // ─── Private: Recovery Helpers ────────────────────────────────
 
   /**
@@ -678,7 +541,7 @@ export class WorkerManagerImpl implements WorkerManager {
     const phase: WorkerPhase = (lease.phase === 'merging' || lease.phase === 'resolving_conflict')
       ? 'integration' : 'development';
 
-    this.resourceLimiter.tryAcquire();
+    /* resourceLimiter.tryAcquire() — single worker, no-op */;
     this.supervisor.monitorOrphanPid(
       workerId, pid,
       {
@@ -755,35 +618,6 @@ export class WorkerManagerImpl implements WorkerManager {
     // R6: No changes (fallback) — failed with no artifacts
     this.log(`Recovery R6: task ${seq} no artifacts found`);
     return this.makeRecoveryEvent('run.failed', seq, ctx, slot ?? '', phase, workerId, 'no_artifacts');
-  }
-
-  /**
-   * Rebuild integration queue from leases in merging/resolving_conflict phase.
-   */
-  private rebuildIntegrationQueue(
-    ctx: RecoveryContext, state: RuntimeState, result: RecoveryResult,
-    processedSeqs: Set<string>,
-  ): void {
-    const qaLeases = Object.entries(state.leases)
-      .filter(([seq, l]) =>
-        (l.phase === 'merging' || l.phase === 'resolving_conflict') &&
-        !processedSeqs.has(seq),
-      )
-      .sort(([, a], [, b]) => (a.lastTransitionAt ?? '').localeCompare(b.lastTransitionAt ?? ''));
-
-    for (const [seq, lease] of qaLeases) {
-      this.integrationQueue.enqueue({
-        taskId: seq, cardId: seq, project: ctx.project,
-        prompt: '', // Prompt will be regenerated by SPS
-        cwd: lease.worktree ?? '', branch: lease.branch ?? '',
-        targetBranch: ctx.baseBranch, tool: 'claude', transport: 'acp-sdk',
-        outputFile: '', enqueuedAt: lease.lastTransitionAt,
-      });
-      result.queueRebuilt++;
-    }
-    if (qaLeases.length > 0) {
-      this.log(`Recovery: rebuilt ${qaLeases.length} integration queue entries for ${ctx.project}`);
-    }
   }
 
   /**

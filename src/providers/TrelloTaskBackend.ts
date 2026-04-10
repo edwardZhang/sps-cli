@@ -124,6 +124,9 @@ export class TrelloTaskBackend implements TaskBackend {
 
   // ─── TaskBackend implementation ───────────────────────────────
 
+  async incrementRetryCount(_seq: string): Promise<number> { return 0; /* Trello: not implemented */ }
+  async resetRetryCount(_seq: string): Promise<void> { /* Trello: not implemented */ }
+
   async bootstrap(): Promise<void> {
     // Verify board access
     await this.get<{ id: string }>(`/boards/${this.boardId}`, 'fields=id');

@@ -169,6 +169,24 @@ export class MarkdownTaskBackend implements TaskBackend {
     await this.removeLabel(seq, 'CLAIMED');
   }
 
+  // ─── Retry Count ──────────────────────────────────────────────
+
+  async incrementRetryCount(seq: string): Promise<number> {
+    const { filePath } = this.findCardFile(seq);
+    const { frontmatter, body } = this.parseFile(filePath);
+    const count = (typeof frontmatter.retry_count === 'number' ? frontmatter.retry_count : 0) + 1;
+    frontmatter.retry_count = count;
+    this.writeFile(filePath, frontmatter, body);
+    return count;
+  }
+
+  async resetRetryCount(seq: string): Promise<void> {
+    const { filePath } = this.findCardFile(seq);
+    const { frontmatter, body } = this.parseFile(filePath);
+    frontmatter.retry_count = 0;
+    this.writeFile(filePath, frontmatter, body);
+  }
+
   // ─── Comments (append to ## 日志 section) ─────────────────────
 
   async comment(seq: string, text: string): Promise<void> {
@@ -325,6 +343,7 @@ export class MarkdownTaskBackend implements TaskBackend {
       state,
       labels: (frontmatter.labels as string[]) || [],
       meta: (frontmatter.meta as Record<string, unknown>) || {},
+      retryCount: typeof frontmatter.retry_count === 'number' ? frontmatter.retry_count : 0,
     };
   }
 

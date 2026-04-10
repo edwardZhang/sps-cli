@@ -191,6 +191,18 @@ export class PlaneTaskBackend implements TaskBackend {
   // TaskBackend implementation
   // ---------------------------------------------------------------------------
 
+  async incrementRetryCount(seq: string): Promise<number> {
+    const meta = await this.metaRead(seq);
+    const count = (typeof meta.retry_count === 'number' ? meta.retry_count : 0) + 1;
+    await this.metaWrite(seq, { ...meta, retry_count: count });
+    return count;
+  }
+
+  async resetRetryCount(seq: string): Promise<void> {
+    const meta = await this.metaRead(seq);
+    await this.metaWrite(seq, { ...meta, retry_count: 0 });
+  }
+
   async bootstrap(): Promise<void> {
     // Verify API connectivity by fetching project info
     const url = `${this.baseUrl}/`;

@@ -17,14 +17,12 @@
  * @workflow       tick → prepare (first stage) → claim → launch worker → complete → release (last stage)
  */
 
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { resolveGitlabProjectId, resolveWorkflowTransport } from '../core/config.js';
 import type { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import { buildFullMemoryContext, buildMemoryWriteInstructions } from '../core/memory.js';
-import { resolveWorktreePath } from '../core/paths.js';
 import type { ProjectPipelineAdapter, StageDefinition } from '../core/projectPipelineAdapter.js';
 import { readQueue } from '../core/queue.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
@@ -33,10 +31,10 @@ import { buildPhasePrompt, buildTaskPrompt } from '../core/taskPrompts.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
-import { IntegrationQueue } from '../manager/integration-queue.js';
+// IntegrationQueue removed — single worker, no merge queue
 import type { TaskRunRequest, TaskRunResponse, WorkerManager } from '../manager/worker-manager.js';
 import type { ActionRecord, AuxiliaryState, Card, CommandResult, RecommendedAction } from '../models/types.js';
-import { branchCommitsAhead, branchPushed } from '../providers/outputParser.js';
+// branchPushed/branchCommitsAhead removed — no worktree/branch management
 
 const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME'];
 const CLEANUP_LABELS: string[] = [...SKIP_LABELS, 'CLAIMED'];
@@ -80,7 +78,7 @@ export class StageEngine {
   get isLastStage(): boolean { return this.stageIndex === this.totalStages - 1; }
 
   /** Whether this stage uses FIFO queue for serialization */
-  get usesQueue(): boolean { return this.stage.queue === 'fifo'; }
+  // usesQueue removed — single worker, no queue needed
 
   async tick(opts: { dryRun?: boolean } = {}): Promise<CommandResult> {
     const actions: ActionRecord[] = [];
@@ -195,11 +193,6 @@ export class StageEngine {
       result.details = { error: msg };
     }
 
-    // Last stage: always run worktree cleanup
-    if (this.isLastStage) {
-      await this.cleanupWorktrees(actions);
-    }
-
     if (actions.some((a) => a.result === 'fail') && result.status === 'ok') {
       result.status = this.isLastStage ? 'degraded' : 'fail';
       result.exitCode = 1;
@@ -218,32 +211,8 @@ export class StageEngine {
     const seq = card.seq;
     const state = this.runtimeStore.readState();
     const runtime = this.runtimeStore.getTask(seq, state);
-    const branchName =
-      runtime.lease?.branch ||
-      runtime.evidence?.branch ||
-      this.buildBranchName(card);
-    const worktree =
-      runtime.lease?.worktree ||
-      runtime.evidence?.worktree ||
-      resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
-
-    if (this.pipelineAdapter.gitEnabled && (!worktree || !existsSync(worktree))) {
-      await this.markNeedsFix(seq, `${this.stage.name} task has no usable worktree`);
-      actions.push({
-        action: 'mark-needs-fix',
-        entity: `seq:${seq}`,
-        result: 'ok',
-        message: `No usable worktree for ${this.stage.name} task`,
-      });
-      return;
-    }
-
-    // For stages with fast-forward-merge completion: check if already merged (git only)
-    if (this.pipelineAdapter.gitEnabled && this.stage.completion === 'fast-forward-merge' && this.isMergedToBase(worktree, branchName)) {
-      this.log.info(`seq ${seq}: integration already complete, proceeding to release`);
-      await this.completeAndAdvance(card, actions);
-      return;
-    }
+    const worktree = this.ctx.paths.repoDir;
+    const branchName = `task-${seq}`;
 
     // Check if worker is already running for this card
     const activeStatus = await this.inspectStageWorker(card, runtime.slotName, worktree, branchName, actions);
@@ -314,17 +283,8 @@ export class StageEngine {
     }
 
     if (snapshot.state === 'completed') {
-      // For fast-forward-merge: check if actually merged
-      if (this.stage.completion === 'fast-forward-merge') {
-        if (this.isMergedToBase(worktree, branchName)) {
-          await this.completeAndAdvance(card, actions);
-          return 'done';
-        }
-      } else {
-        // Other completion strategies: worker completed = stage done
-        await this.completeAndAdvance(card, actions);
-        return 'done';
-      }
+      await this.completeAndAdvance(card, actions);
+      return 'done';
     }
 
     // 'failed' or 'completed' without expected completion
@@ -552,45 +512,6 @@ export class StageEngine {
       this.log.debug(`seq ${seq}: Worker cleanup: ${msg}`);
     }
 
-    // Step 4b: Clear from IntegrationQueue
-    if (this.usesQueue) {
-      try {
-        const iq = new IntegrationQueue(this.ctx.paths.stateFile, this.ctx.config.MAX_CONCURRENT_WORKERS);
-        const active = iq.getActive(this.ctx.projectName, this.ctx.mergeBranch);
-        if (active && active.taskId === seq) {
-          iq.dequeueNext(this.ctx.projectName, this.ctx.mergeBranch);
-          this.log.ok(`seq ${seq}: Integration queue advanced`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.log.warn(`seq ${seq}: Failed to advance integration queue: ${msg}`);
-      }
-    }
-
-    // Step 5: Mark worktree for cleanup (git only)
-    if (!this.pipelineAdapter.gitEnabled) {
-      // No worktree to clean up
-    } else try {
-      const freshState = this.runtimeStore.readState();
-      const branchName = this.buildBranchName(card);
-      const worktreePath =
-        runtime.lease?.worktree ||
-        runtime.evidence?.worktree ||
-        resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
-      const cleanup = freshState.worktreeCleanup ?? [];
-      const alreadyMarked = cleanup.some((e) => e.branch === branchName);
-      if (!alreadyMarked) {
-        cleanup.push({ branch: branchName, worktreePath, markedAt: new Date().toISOString() });
-        this.runtimeStore.updateState('stage-worktree-mark', (draft) => {
-          draft.worktreeCleanup = cleanup;
-        });
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`seq ${seq}: Failed to mark worktree for cleanup: ${msg}`);
-      errors.push(`worktree-mark: ${msg}`);
-    }
-
     // Notify
     if (errors.length === 0) {
       await this.notifySafe(`✅ [${this.ctx.projectName}] seq:${seq} completed and released successfully`);
@@ -660,52 +581,26 @@ export class StageEngine {
 
   // ─── First stage: prepare (Backlog → Ready) ────────────────────
 
+  // ─── First stage: prepare (Backlog → Ready) ─────────────────
+  // Single worker model: no branch/worktree creation. Just move card to Ready.
+
   private async prepareCard(card: Card, opts: { dryRun?: boolean }): Promise<ActionRecord> {
     const seq = card.seq;
-    const gitEnabled = this.pipelineAdapter.gitEnabled;
 
     if (opts.dryRun) {
       return { action: 'prepare', entity: `seq:${seq}`, result: 'ok', message: 'dry-run' };
     }
 
-    if (gitEnabled) {
-      const branchName = this.buildBranchName(card);
-      const worktreePath = resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR);
-
-      // Step 1: Create branch
-      try {
-        await this.repoBackend.ensureBranch(this.ctx.paths.repoDir, branchName, this.ctx.mergeBranch);
-        this.log.ok(`Step 1: Branch ${branchName} created for seq ${seq}`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.log.error(`Step 1 failed (branch) for seq ${seq}: ${msg}`);
-        this.logEvent('prepare-branch', seq, 'fail', { error: msg });
-        return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Branch creation failed: ${msg}` };
-      }
-
-      // Step 2: Create worktree
-      try {
-        await this.repoBackend.ensureWorktree(this.ctx.paths.repoDir, branchName, worktreePath);
-        this.log.ok(`Step 2: Worktree created for seq ${seq} at ${worktreePath}`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.log.error(`Step 2 failed (worktree) for seq ${seq}: ${msg}`);
-        this.logEvent('prepare-worktree', seq, 'fail', { error: msg });
-        return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Worktree creation failed: ${msg}` };
-      }
-    }
-
-    // Move card to Ready (git or not)
     try {
       await this.taskBackend.move(seq, this.pipelineAdapter.states.ready);
-      this.log.ok(`Step 3: Moved seq ${seq} ${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready}`);
+      this.log.ok(`Moved seq ${seq} ${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready}`);
       this.logEvent('prepare', seq, 'ok');
-      await this.notifySafe(`ℹ️ [${this.ctx.projectName}] seq:${seq} environment ready (${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready})`);
+      await this.notifySafe(`ℹ️ [${this.ctx.projectName}] seq:${seq} ready (${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready})`);
       return { action: 'prepare', entity: `seq:${seq}`, result: 'ok', message: `${this.pipelineAdapter.states.backlog} → ${this.pipelineAdapter.states.ready}` };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.log.error(`Step 3 failed (move) for seq ${seq}: ${msg}`);
-      this.logEvent('prepare-move', seq, 'fail', { error: msg });
+      this.log.error(`Prepare failed for seq ${seq}: ${msg}`);
+      this.logEvent('prepare', seq, 'fail', { error: msg });
       return { action: 'prepare', entity: `seq:${seq}`, result: 'fail', message: `Move to ${this.pipelineAdapter.states.ready} failed: ${msg}` };
     }
   }
@@ -718,11 +613,8 @@ export class StageEngine {
     failedSlots: Set<string> = new Set(),
   ): Promise<ActionRecord> {
     const seq = card.seq;
-    const gitEnabled = this.pipelineAdapter.gitEnabled;
-    const branchName = gitEnabled ? this.buildBranchName(card) : `task-${seq}`;
-    const worktreePath = gitEnabled
-      ? resolveWorktreePath(this.ctx.projectName, seq, this.ctx.config.WORKTREE_DIR)
-      : this.ctx.paths.repoDir;
+    const worktreePath = this.ctx.paths.repoDir;  // Single worker: always use PROJECT_DIR
+    const branchName = `task-${seq}`;              // Logical identifier, not a git branch
 
     if (opts.dryRun) {
       return { action: 'launch', entity: `seq:${seq}`, result: 'ok', message: 'dry-run' };
@@ -983,79 +875,6 @@ export class StageEngine {
 
   // ─── Worktree cleanup (last stage only) ────────────────────────
 
-  private async cleanupWorktrees(actions: ActionRecord[]): Promise<void> {
-    const state = this.runtimeStore.readState();
-    const queue = state.worktreeCleanup ?? [];
-    if (queue.length === 0) return;
-
-    const now = Date.now();
-    const ready = queue.filter(e => now - new Date(e.markedAt).getTime() >= 30_000);
-    const deferred = queue.filter(e => now - new Date(e.markedAt).getTime() < 30_000);
-
-    if (ready.length === 0) {
-      if (deferred.length > 0) {
-        this.log.debug(`${deferred.length} worktree(s) deferred — waiting for worker shutdown`);
-      }
-      return;
-    }
-
-    this.log.info(`Cleaning up ${ready.length} worktree(s)`);
-    const remaining: typeof queue = [...deferred];
-
-    for (const entry of ready) {
-      try {
-        await this.repoBackend.removeWorktree(this.ctx.paths.repoDir, entry.worktreePath, entry.branch);
-        this.log.ok(`Cleaned up worktree: ${entry.branch}`);
-        actions.push({
-          action: 'worktree-cleanup',
-          entity: entry.branch,
-          result: 'ok',
-          message: `Removed worktree ${entry.worktreePath}`,
-        });
-        this.logEvent('worktree-cleanup', entry.branch, 'ok');
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.log.warn(`Failed to clean up worktree ${entry.branch}: ${msg}`);
-        remaining.push(entry);
-        actions.push({
-          action: 'worktree-cleanup',
-          entity: entry.branch,
-          result: 'fail',
-          message: `Cleanup failed: ${msg}`,
-        });
-      }
-    }
-
-    this.runtimeStore.updateState('stage-worktree-cleanup', (freshState) => {
-      freshState.worktreeCleanup = remaining;
-    });
-  }
-
-  // ─── Merge detection ───────────────────────────────────────────
-
-  private isMergedToBase(worktree: string, branchName: string): boolean {
-    try {
-      execFileSync('git', ['-C', worktree, 'fetch', 'origin', this.ctx.mergeBranch], { stdio: 'ignore' });
-    } catch { /* best effort */ }
-
-    try {
-      execFileSync(
-        'git',
-        ['-C', worktree, 'merge-base', '--is-ancestor', branchName, `origin/${this.ctx.mergeBranch}`],
-        { stdio: 'ignore' },
-      );
-    } catch {
-      return false;
-    }
-
-    const pushed = branchPushed(worktree, branchName);
-    const localAhead = branchCommitsAhead(worktree, branchName, this.ctx.mergeBranch);
-    if (pushed || localAhead > 0) return true;
-
-    this.log.debug(`branch ${branchName}: ancestor of ${this.ctx.mergeBranch} but no artifacts — not a real merge`);
-    return false;
-  }
-
   // ─── Common helpers ────────────────────────────────────────────
 
   private shouldSkip(card: Card): boolean {
@@ -1074,15 +893,6 @@ export class StageEngine {
         }
       }
     }
-  }
-
-  private buildBranchName(card: Card): string {
-    const slug = card.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 40);
-    return `feature/${card.seq}-${slug}`;
   }
 
   private findRuntimeSlotName(
