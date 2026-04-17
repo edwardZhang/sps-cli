@@ -365,7 +365,7 @@ export class PlaneTaskBackend implements TaskBackend {
     const html = issue.description_html ?? '';
     const items = parseChecklistItems(html);
     const idx = parseInt(itemId, 10);
-    if (isNaN(idx) || idx < 0 || idx >= items.length) {
+    if (Number.isNaN(idx) || idx < 0 || idx >= items.length) {
       throw new Error(`Checklist item ${itemId} not found on issue ${seq}`);
     }
 

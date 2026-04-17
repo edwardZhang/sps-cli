@@ -125,7 +125,7 @@ async function runAgentStep(
   await client.startRun(slot, fullPrompt, tool, remoteCwd);
 
   // Stream output
-  const sessionCtx = createSessionContext({ cwd: ctx.cwd, tool });
+  const sessionCtx = createSessionContext({ cwd: ctx.cwd });
   const isRemote = !!process.env.SPS_DAEMON_SOCKET;
   const result: StreamResult = await waitAndStream(
     { inspect: (s?: string) => client.inspect(s) } as any,

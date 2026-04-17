@@ -21,7 +21,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DaemonClient, getDaemonSocketPath } from '../daemon/daemonClient.js';
+import { DaemonClient, } from '../daemon/daemonClient.js';
 
 const DIM = '\x1b[90m';
 const GREEN = '\x1b[32m';

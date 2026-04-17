@@ -14,7 +14,7 @@
  * @boundedContext agent-control-protocol
  */
 
-export type ACPTool = 'claude' | 'codex' | 'gemini';
+export type ACPTool = 'claude';
 
 export type ACPSlotStatus =
   | 'idle'

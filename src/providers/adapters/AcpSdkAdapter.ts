@@ -52,8 +52,6 @@ function resolveAgent(globalBin: string, npxPkg: string): AgentRegistryEntry {
 
 const BUILTIN_AGENTS: Record<string, AgentRegistryEntry> = {
   claude: resolveAgent('claude-agent-acp', '@agentclientprotocol/claude-agent-acp'),
-  codex: resolveAgent('codex-acp', '@zed-industries/codex-acp'),
-  gemini: { command: 'gemini', args: ['--acp'] },
 };
 
 /** Load custom agents from ~/.coral/agents.json, merge with builtins. */
@@ -233,7 +231,7 @@ export class AcpSdkAdapter implements ACPClient {
 
     // Protocol initialization
     process.stderr.write(`[acp-adapter] Initializing ${input.tool} ACP protocol...\n`);
-    const initResult = await conn.initialize({
+    const _initResult = await conn.initialize({
       protocolVersion: 1,
       clientCapabilities: {
         fs: { readTextFile: true, writeTextFile: true },

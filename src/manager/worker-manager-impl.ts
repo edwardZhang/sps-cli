@@ -41,7 +41,7 @@ export interface WorkerManagerDeps {
 interface SpawnContext {
   taskId: string; cardId: string; project: string; phase: WorkerPhase;
   prompt: string; cwd: string; branch: string; targetBranch: string;
-  tool: 'claude' | 'codex'; transport: 'acp-sdk';
+  tool: 'claude'; transport: 'acp-sdk';
   outputFile: string; maxRetries: number; resumeSessionId?: string;
   customTimeoutSec?: number;
   completionStrategy?: string;
@@ -330,7 +330,7 @@ export class WorkerManagerImpl implements WorkerManager {
   private async handleExit(ctx: {
     workerId: string; taskId: string; cardId: string; project: string;
     phase: WorkerPhase; slot: string; branch: string; cwd: string;
-    targetBranch: string; outputFile: string; tool: 'claude' | 'codex';
+    targetBranch: string; outputFile: string; tool: 'claude';
     transport: 'acp-sdk'; exitCode: number; maxRetries: number;
     completionStrategy?: string;
   }): Promise<void> {
@@ -387,7 +387,7 @@ export class WorkerManagerImpl implements WorkerManager {
   private monitorAcpCompletion(ctx: {
     workerId: string; taskId: string; cardId: string; project: string;
     phase: WorkerPhase; slot: string; branch: string; cwd: string;
-    targetBranch: string; outputFile: string; tool: 'claude' | 'codex';
+    targetBranch: string; outputFile: string; tool: 'claude';
     transport: 'acp-sdk'; maxRetries: number;
     sessionName: string; completionStrategy?: string;
   }): void {
@@ -677,7 +677,7 @@ export class WorkerManagerImpl implements WorkerManager {
 
   private claimSlot(state: RuntimeState, slot: string, ctx: {
     seq: string; cardId: string; project: string; phase: WorkerPhase;
-    branch: string; cwd: string; tool: 'claude' | 'codex'; transport: 'acp-sdk';
+    branch: string; cwd: string; tool: 'claude'; transport: 'acp-sdk';
     outputFile: string; nowIso: string; targetBranch: string;
   }): void {
     const seqNum = parseInt(ctx.seq, 10) || 0;
@@ -783,13 +783,13 @@ export class WorkerManagerImpl implements WorkerManager {
 
   cleanup(): void {
     // Clear all pending timeouts (soft + hard)
-    for (const [key, timer] of this.timeouts) {
+    for (const [_key, timer] of this.timeouts) {
       clearTimeout(timer);
     }
     this.timeouts.clear();
 
     // Abort all ACP monitors
-    for (const [slot, controller] of this.acpMonitorAborts) {
+    for (const [_slot, controller] of this.acpMonitorAborts) {
       controller.abort();
     }
     this.acpMonitorAborts.clear();

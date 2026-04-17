@@ -1,19 +1,4 @@
-/**
- * @module        ACPWorkerRuntime
- * @description   基于 ACP 协议的 Worker 运行时实现，管理 Agent 会话与任务执行
- *
- * @author        eddy
- * @organization  wykj
- * @ownership     wykj/eddy
- *
- * @created       2026-03-27
- * @updated       2026-04-03
- *
- * @role          provider
- * @layer         provider
- * @boundedContext worker-runtime
- */
-import { basename } from 'node:path';
+
 import type { ProjectContext } from '../core/context.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import type { ACPClient } from '../interfaces/ACPClient.js';
@@ -21,7 +6,6 @@ import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
 import type {
   ACPRunRecord,
   ACPSessionRecord,
-  ACPSessionStatus,
   ACPSlotStatus,
   ACPState,
   ACPTool,
@@ -97,7 +81,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
 
   async startRun(slot: string, prompt: string, tool?: ACPTool, cwdOverride?: string): Promise<ACPSessionRecord> {
     const normalizedSlot = this.normalizeSlot(slot);
-    const state = this.runtimeStore.readACPState();
+    const _state = this.runtimeStore.readACPState();
     const session = await this.ensureSession(normalizedSlot, tool, cwdOverride);
     if (session.sessionState !== 'ready') {
       throw new Error(`ACP session ${session.sessionId} is not ready (state=${session.sessionState})`);
@@ -229,7 +213,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
   }
 
   private defaultTool(): ACPTool {
-    return (this.ctx.config.ACP_AGENT || this.ctx.config.WORKER_TOOL) as ACPTool;
+    return 'claude';
   }
 
   private buildSessionName(slot: string): string {

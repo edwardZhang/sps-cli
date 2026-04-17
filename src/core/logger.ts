@@ -67,7 +67,7 @@ export class Logger {
   private log(level: string, msg: string, color: string, icon: string) {
     const now = new Date();
     const localTs = formatLocalTimestamp(now);
-    const utcTs = now.toISOString();
+    const _utcTs = now.toISOString();
     const tag = this.project ? `${this.project}/${this.component}` : this.component;
 
     // Console: local time for readability

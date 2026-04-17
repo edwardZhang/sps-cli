@@ -42,13 +42,11 @@ export interface ProjectConfig {
   PIPELINE_LABEL?: string;
   MR_MODE: 'none' | 'create';
 
-  // Worker
-  WORKER_TOOL: 'claude' | 'codex';
+  // Worker — claude is the only supported CLI
   WORKER_TRANSPORT: 'acp-sdk';
   MAX_CONCURRENT_WORKERS: number;
   WORKER_RESTART_LIMIT: number;
   MAX_ACTIONS_PER_TICK: number;
-  ACP_AGENT?: 'claude' | 'codex';
 
   // Worker health
   WORKER_LAUNCH_TIMEOUT_S: number;
@@ -126,12 +124,10 @@ export function loadProjectConf(projectName: string): ProjectConfig {
     PIPELINE_LABEL: raw.PIPELINE_LABEL,
     MR_MODE: (raw.MR_MODE as ProjectConfig['MR_MODE']) || 'none',
 
-    WORKER_TOOL: (raw.WORKER_TOOL as ProjectConfig['WORKER_TOOL']) || 'claude',
     WORKER_TRANSPORT: (raw.WORKER_TRANSPORT as ProjectConfig['WORKER_TRANSPORT']) || 'acp-sdk',
     MAX_CONCURRENT_WORKERS: parseInt(raw.MAX_CONCURRENT_WORKERS || '3', 10),
     WORKER_RESTART_LIMIT: parseInt(raw.WORKER_RESTART_LIMIT || '2', 10),
     MAX_ACTIONS_PER_TICK: parseInt(raw.MAX_ACTIONS_PER_TICK || '1', 10),
-    ACP_AGENT: raw.ACP_AGENT as ProjectConfig['ACP_AGENT'] | undefined,
 
     WORKER_LAUNCH_TIMEOUT_S: parseInt(raw.WORKER_LAUNCH_TIMEOUT_S || '300', 10),
     WORKER_IDLE_TIMEOUT_M: parseInt(raw.WORKER_IDLE_TIMEOUT_M || '15', 10),

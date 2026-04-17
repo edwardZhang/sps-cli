@@ -22,7 +22,6 @@ import {
   fileSize,
   isProcessAlive,
   parseClaudeSessionId,
-  parseCodexSessionId,
   tailFile,
 } from './outputParser.js';
 
@@ -128,47 +127,6 @@ describe('parseClaudeSessionId', () => {
     ].join('\n'));
 
     expect(parseClaudeSessionId(file)).toBe('first');
-  });
-});
-
-describe('parseCodexSessionId', () => {
-  let tempDir: string;
-
-  beforeEach(() => { tempDir = makeTempDir(); });
-  afterEach(() => { rmSync(tempDir, { recursive: true, force: true }); });
-
-  it('returns null for nonexistent file', () => {
-    expect(parseCodexSessionId('/tmp/no-file-12345')).toBeNull();
-  });
-
-  it('extracts conversation_id', () => {
-    const file = join(tempDir, 'codex.jsonl');
-    writeFileSync(file, '{"conversation_id":"conv-xyz-789"}\n');
-    expect(parseCodexSessionId(file)).toBe('conv-xyz-789');
-  });
-
-  it('extracts session_id', () => {
-    const file = join(tempDir, 'codex.jsonl');
-    writeFileSync(file, '{"session_id":"sess-xyz"}\n');
-    expect(parseCodexSessionId(file)).toBe('sess-xyz');
-  });
-
-  it('extracts id from session_start event', () => {
-    const file = join(tempDir, 'codex.jsonl');
-    writeFileSync(file, '{"type":"session_start","id":"start-id-123"}\n');
-    expect(parseCodexSessionId(file)).toBe('start-id-123');
-  });
-
-  it('prefers conversation_id over session_id', () => {
-    const file = join(tempDir, 'codex.jsonl');
-    writeFileSync(file, '{"conversation_id":"conv","session_id":"sess"}\n');
-    expect(parseCodexSessionId(file)).toBe('conv');
-  });
-
-  it('returns null when no IDs present', () => {
-    const file = join(tempDir, 'codex.jsonl');
-    writeFileSync(file, '{"type":"message","text":"hello"}\n');
-    expect(parseCodexSessionId(file)).toBeNull();
   });
 });
 

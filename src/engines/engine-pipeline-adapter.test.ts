@@ -14,7 +14,7 @@
  * @boundedContext pipeline-configuration
  */
 
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -59,7 +59,6 @@ function makeConfig(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
     GITLAB_MERGE_BRANCH: 'main',
     PM_TOOL: 'plane',
     MR_MODE: 'create',
-    WORKER_TOOL: 'claude',
     WORKER_TRANSPORT: 'acp-sdk',
     MAX_CONCURRENT_WORKERS: 2,
     WORKER_RESTART_LIMIT: 3,
@@ -124,7 +123,6 @@ function makeCtx(tempDir: string, config: ProjectConfig): ProjectContext {
       pipelineOrderFile: join(tempDir, 'pipeline_order.json'),
     },
     pmTool: config.PM_TOOL,
-    workerTool: config.WORKER_TOOL,
     maxWorkers: config.MAX_CONCURRENT_WORKERS,
     mrMode: config.MR_MODE,
     mergeBranch: config.GITLAB_MERGE_BRANCH,
@@ -308,7 +306,7 @@ describe('SchedulerEngine uses adapter states', () => {
     (taskBackend.listByState as ReturnType<typeof vi.fn>).mockResolvedValue([card]);
 
     const engine = new SchedulerEngine(ctx, taskBackend, adapter);
-    const result = await engine.tick();
+    const _result = await engine.tick();
 
     // Should move to custom 'Queue' state (not 'Backlog')
     expect(taskBackend.move).toHaveBeenCalledWith('1', 'Queue');

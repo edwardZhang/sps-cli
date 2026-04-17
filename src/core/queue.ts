@@ -14,7 +14,6 @@
  * @boundedContext pipeline
  */
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
 
 /**
  * Read pipeline_order.json — a pure array of seq numbers.

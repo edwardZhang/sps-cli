@@ -70,7 +70,7 @@ export async function executeCardAdd(
 
     // 3. Append to pipeline_order.json (if file exists)
     const seqNum = parseInt(card.seq, 10);
-    if (!isNaN(seqNum)) {
+    if (!Number.isNaN(seqNum)) {
       const queue = readQueue(ctx.paths.pipelineOrderFile);
       if (!queue.includes(seqNum)) {
         queue.push(seqNum);

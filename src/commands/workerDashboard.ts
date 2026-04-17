@@ -24,8 +24,6 @@ import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { loadRuntimeSnapshot, type ProjectRuntimeSnapshot } from '../core/runtimeSnapshot.js';
 import {
-  hasPersistedActiveRun,
-  isACPBackedSlot,
   isPersistedSessionAlive,
   isProcessAlive,
 } from '../core/sessionLiveness.js';
@@ -34,7 +32,7 @@ import { readState, type WorkerSlotState } from '../core/state.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
 import type { ACPSessionRecord } from '../models/acp.js';
 import { tailFile } from '../providers/outputParser.js';
-import { renderClaudeStreamLines, renderCodexStreamLines } from '../providers/streamRenderer.js';
+import { renderClaudeStreamLines } from '../providers/streamRenderer.js';
 
 const HOME = process.env.HOME || '/home/coral';
 
@@ -54,7 +52,7 @@ const FG = {
   white: '\x1b[37m',
   gray: '\x1b[90m',
 };
-const BG = {
+const _BG = {
   black: '\x1b[40m',
 };
 const STRIP_ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b\[[?]?[0-9;]*[hlm]/g;
@@ -185,38 +183,6 @@ function cleanScreenLines(text: string): string[] {
   return deduped;
 }
 
-function extractCodexScreenFacts(lines: string[]): {
-  model?: string;
-  directory?: string;
-  prompt?: string;
-  status?: string;
-} {
-  const facts: { model?: string; directory?: string; prompt?: string; status?: string } = {};
-  for (const line of lines) {
-    if (!facts.model) {
-      const match = line.match(/model:\s+(.+?)(?:\s+\/model.*)?$/i);
-      if (match) facts.model = match[1].trim();
-    }
-    if (!facts.directory) {
-      const match = line.match(/directory:\s+(.+)$/i);
-      if (match) facts.directory = match[1].trim();
-    }
-    if (!facts.prompt) {
-      const match = line.match(/^[›❯>]\s+(.+)$/);
-      if (match && !/^\d+\./.test(match[1])) facts.prompt = match[1].trim();
-    }
-    if (!facts.status) {
-      if (/Do you trust the contents of this directory/i.test(line)) {
-        facts.status = 'Trust confirmation required';
-      } else if (/Press enter to continue/i.test(line)) {
-        facts.status = 'Startup confirmation required';
-      } else if (/OpenAI Codex/i.test(line)) {
-        facts.status = 'Codex home screen';
-      }
-    }
-  }
-  return facts;
-}
 
 function extractClaudeScreenFacts(lines: string[]): {
   prompt?: string;
@@ -261,7 +227,7 @@ function getProcessMetrics(pid: number | null | undefined): ProcessMetrics | nul
   }
 }
 
-function latestWorkerLogAgeSec(ctx: ProjectContext, slotName: string): number | null {
+function latestWorkerLogAgeSec(ctx: ProjectContext, _slotName: string): number | null {
   try {
     const entries = readdirSync(ctx.paths.logsDir)
       .filter(name =>
@@ -286,29 +252,15 @@ function analyzeACPSession(
   sessionAlive: boolean,
 ): ACPDiagnostics {
   const rawLines = cleanScreenLines(session?.lastPaneText || '');
-  const tool = session?.tool || slot.agent || 'worker';
-  const facts = tool === 'codex' ? extractCodexScreenFacts(rawLines) : extractClaudeScreenFacts(rawLines);
+  const facts = extractClaudeScreenFacts(rawLines);
   const process = getProcessMetrics(session?.pid ?? slot.pid);
   const lastOutputAgeSec = latestWorkerLogAgeSec(ctx, slotName);
 
   let stalledReason: string | null = null;
   const runStatus = session?.currentRun?.status || slot.remoteStatus || 'unknown';
-  const sessionState = session?.sessionState || slot.sessionState || 'offline';
 
   if (session?.stalledReason) {
     stalledReason = session.stalledReason;
-  }
-
-  if (
-    tool === 'codex' &&
-    sessionAlive &&
-    sessionState === 'busy' &&
-    runStatus === 'running' &&
-    facts.status === 'Codex home screen' &&
-    (lastOutputAgeSec ?? 0) >= 60 &&
-    ((process?.cpu ?? 0) <= 0.1)
-  ) {
-    stalledReason = `stalled at Codex home screen (${formatDuration(lastOutputAgeSec ?? 0)} no output, cpu ${process?.cpu?.toFixed(1) ?? '0.0'}%)`;
   }
 
   if (
@@ -362,16 +314,11 @@ function buildACPPanelLines(
   const rawLines = isAcpSdk && !paneText
     ? tailAcpLogFile(ctx, session?.sessionName, 20)
     : cleanScreenLines(paneText);
-  const codexFacts = extractCodexScreenFacts(rawLines);
-  const claudeFacts = extractClaudeScreenFacts(rawLines);
-  const facts = tool === 'codex' ? codexFacts : claudeFacts;
+  const _facts = extractClaudeScreenFacts(rawLines);
   const diagnostics = analyzeACPSession(ctx, slotName, slot, session, sessionAlive);
 
   lines.push(`${BOLD}tool:${RESET} ${tool}`);
   lines.push(`${BOLD}session:${RESET} ${sessionState} / ${runStatus}`);
-  if (tool === 'codex' && codexFacts.model) {
-    lines.push(`${BOLD}model:${RESET} ${codexFacts.model}`);
-  }
   lines.push(`${BOLD}cwd:${RESET} ${worktree || '(unknown)'}`);
   if (diagnostics.process) {
     lines.push(`${BOLD}proc:${RESET} pid ${diagnostics.process.pid} · ${diagnostics.process.state} · cpu ${diagnostics.process.cpu.toFixed(1)}% · etime ${diagnostics.process.elapsed}`);
@@ -416,7 +363,7 @@ function buildACPPanelLines(
   return lines;
 }
 
-function buildPrintPanelLines(slot: WorkerSlotState, rawLines: string[]): string[] {
+function buildPrintPanelLines(_slot: WorkerSlotState, rawLines: string[]): string[] {
   const lines = rawLines
     .map(line => line.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim())
     .filter(Boolean)
@@ -454,9 +401,7 @@ function collectPanels(projects: string[], snapshots: SnapshotMap): WorkerPanel[
         if (slot.outputFile) {
           const rawLines = tailFile(slot.outputFile, 40).split('\n');
           // Render JSONL into human-readable lines
-          const rendered = (slot.agent === 'codex')
-            ? renderCodexStreamLines(rawLines)
-            : renderClaudeStreamLines(rawLines);
+          const rendered = renderClaudeStreamLines(rawLines);
           paneLines = buildPrintPanelLines(slot, rendered.length > 0 ? rendered : rawLines);
         } else {
           paneLines = sessionAlive ? ['(worker running, no output yet)'] : ['(no output file)'];
@@ -516,7 +461,7 @@ function renderPanel(panel: WorkerPanel, panelWidth: number, panelHeight: number
   const seqInfo = panel.slot.seq !== null ? ` seq:${panel.slot.seq}` : '';
   const branchInfo = panel.slot.branch ? ` ${DIM}${panel.slot.branch}${RESET}` : '';
   const headerText = `${sColor}${sIcon} ${BOLD}${panel.projectName}/${panel.slotName}${RESET}${seqInfo} ${aliveIcon}${branchInfo}`;
-  const headerLine = ` ${padOrTruncate(headerText, innerWidth)} `;
+  const _headerLine = ` ${padOrTruncate(headerText, innerWidth)} `;
 
   // ── Time info ──
   const elapsed = panel.slot.claimedAt
@@ -581,7 +526,7 @@ function renderIdleSummary(projects: string[], termWidth: number, snapshots: Sna
   return lines;
 }
 
-function renderEmptyState(termWidth: number): string[] {
+function renderEmptyState(_termWidth: number): string[] {
   return [
     '',
     `${DIM}  No active workers found.${RESET}`,
@@ -888,7 +833,7 @@ async function runLive(projects: string[], intervalMs: number): Promise<never> {
             // Try by index (1-based)
             const idx = parseInt(target, 10);
             let item: PendingItem | undefined;
-            if (!isNaN(idx) && idx >= 1 && idx <= pending.length) {
+            if (!Number.isNaN(idx) && idx >= 1 && idx <= pending.length) {
               item = pending[idx - 1];
             } else {
               // Try by slot name

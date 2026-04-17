@@ -35,8 +35,7 @@ Ask the user:
 2. **How many stages?**
    - **Simple** (1 stage): develop → Done
    - **With review** (2 stages): develop → review → Done
-3. **Which AI agent?** — `claude` (default) / `codex` / `gemini`
-4. **Skill profile?** — e.g. `fullstack`, `frontend`, `backend`, `reviewer`, `tax-worker` (optional)
+3. **Skill profile?** — e.g. `fullstack`, `frontend`, `backend`, `reviewer`, `tax-worker` (optional)
 
 ### Step 3: Generate and deploy
 
@@ -85,7 +84,6 @@ stages:
       halt: true
 
   - name: review
-    agent: codex
     profile: reviewer
     on_complete: "move_card Done"
     on_fail:
@@ -101,7 +99,6 @@ git: false
 
 stages:
   - name: process
-    agent: claude
     profile: tax-worker
     on_complete: "move_card Done"
     on_fail:
@@ -123,7 +120,7 @@ stages:
 | `git` | no | `true` (default, commit+push) or `false` (no git) |
 | `stages` | yes | Array of stage definitions |
 | `stages[].name` | yes | Stage name (unique) |
-| `stages[].agent` | no | `claude` / `codex` / `gemini` (default: claude) |
+| `stages[].agent` | no | Accepted for backward-compat only; value ignored (claude is the only supported CLI) |
 | `stages[].profile` | no | Skill profile to load |
 | `stages[].on_complete` | yes | `"move_card <State>"` — next state |
 | `stages[].on_fail.action` | no | `"label <LABEL>"` — add label on failure |
@@ -228,7 +225,6 @@ Planning → Backlog → Ready → Inprogress → [Review] → Done
 | `GITLAB_PROJECT` | Git remote path (optional) |
 | `GITLAB_MERGE_BRANCH` | Target branch |
 | `PM_TOOL` | `markdown` / `plane` / `trello` |
-| `WORKER_TOOL` | Default agent: `claude` / `codex` |
 | `PIPELINE_LABEL` | Card label for pipeline (default: `AI-PIPELINE`) |
 
 ## Card Labels

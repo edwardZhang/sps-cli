@@ -93,7 +93,7 @@ export async function executeReset(
   }
 
   const stateFile = resolve(HOME, '.coral', 'projects', project, 'runtime', 'state.json');
-  const repoDir = config.PROJECT_DIR || resolve(HOME, 'projects', project);
+  const _repoDir = config.PROJECT_DIR || resolve(HOME, 'projects', project);
   const maxWorkers = config.MAX_CONCURRENT_WORKERS;
 
   // Determine which seqs to reset

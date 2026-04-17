@@ -60,7 +60,7 @@ export class StageEngine {
     private stageIndex: number,
     private totalStages: number,
     private taskBackend: TaskBackend,
-    private repoBackend: RepoBackend,
+    _repoBackend: RepoBackend,
     private workerManager: WorkerManager,
     private pipelineAdapter: ProjectPipelineAdapter,
     private notifier?: Notifier,
@@ -310,7 +310,7 @@ export class StageEngine {
     const seq = card.seq;
 
     const prompt = this.buildStagePrompt(card, worktree, taskId);
-    const workflowTransport = resolveWorkflowTransport(this.ctx.config);
+    const _workflowTransport = resolveWorkflowTransport(this.ctx.config);
     const logsDir = this.ctx.paths.logsDir;
 
     const runRequest: TaskRunRequest = {
@@ -322,7 +322,7 @@ export class StageEngine {
       cwd: worktree,
       branch: taskId,
       targetBranch: this.ctx.mergeBranch,
-      tool: (this.stage.agent || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
+      tool: 'claude',
       transport: 'acp-sdk',
       outputFile: resolve(logsDir, `${this.ctx.projectName}-${this.stage.name}-${card.seq}-${Date.now()}.jsonl`),
       completionStrategy: this.stage.completion,
@@ -651,7 +651,7 @@ export class StageEngine {
       cwd: worktreePath,
       branch: taskId,
       targetBranch: this.ctx.mergeBranch,
-      tool: (this.stage.agent || this.ctx.config.WORKER_TOOL) as 'claude' | 'codex',
+      tool: 'claude',
       transport: 'acp-sdk',
       outputFile: resolve(logsDir, `${this.ctx.projectName}-worker-${card.seq}-${Date.now()}.jsonl`),
       timeoutSec: this.ctx.config.WORKER_LAUNCH_TIMEOUT_S,

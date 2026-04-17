@@ -30,8 +30,8 @@ export interface WorkerSlotState {
   /** Underlying worker transport */
   transport?: 'acp-sdk' | null;
   /** Worker tool currently bound to the slot */
-  agent?: 'claude' | 'codex' | null;
-  /** Claude/Codex session ID for resume chains (print mode) */
+  agent?: 'claude' | null;
+  /** Claude session ID for resume chains (print mode, legacy) */
   sessionId?: string | null;
   /** ACP run ID for the active task */
   runId?: string | null;
@@ -135,7 +135,7 @@ export interface IntegrationQueueEntry {
   cwd: string;
   branch: string;
   targetBranch: string;
-  tool: 'claude' | 'codex';
+  tool: 'claude';
   transport: 'acp-sdk';
   outputFile: string;
   enqueuedAt: string;

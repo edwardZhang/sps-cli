@@ -15,7 +15,6 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import type { ACPSessionRecord, ACPState } from '../models/acp.js';
-import type { ProjectContext } from './context.js';
 import {
   type ActiveCardState,
   createIdleWorkerSlot,

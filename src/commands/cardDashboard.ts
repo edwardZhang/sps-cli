@@ -20,12 +20,12 @@
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { type CardStates, ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 import { loadRuntimeSnapshot } from '../core/runtimeSnapshot.js';
 import { isPersistedSessionAlive } from '../core/sessionLiveness.js';
 import type { TaskLease, WorktreeEvidence } from '../core/state.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
-import type { Card, CardState } from '../models/types.js';
+import type { CardState } from '../models/types.js';
 import { createTaskBackend } from '../providers/registry.js';
 
 const HOME = process.env.HOME || '/home/coral';
@@ -51,7 +51,7 @@ function buildStateList(adapter?: ProjectPipelineAdapter): CardState[] {
 }
 
 /** Build display labels from state names */
-function buildStateLabels(states: CardState[]): Record<string, string> {
+function _buildStateLabels(states: CardState[]): Record<string, string> {
   const labels: Record<string, string> = {};
   for (const s of states) labels[s] = s;
   return labels;

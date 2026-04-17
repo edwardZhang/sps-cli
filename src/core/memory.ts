@@ -18,7 +18,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, relative, resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 
 // ─── Types ──────────────────────────────────────────────────────
 

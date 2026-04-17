@@ -25,7 +25,7 @@ import { createAgentRuntime } from '../providers/registry.js';
 
 function parseTool(value: string | undefined): ACPTool | undefined {
   if (!value) return undefined;
-  if (value === 'claude' || value === 'codex') return value;
+  if (value === 'claude') return value;
   return undefined;
 }
 
@@ -58,7 +58,7 @@ export async function executeAcpCommand(
   if (subcommand === 'ensure') {
     const slot = positionals[0];
     if (!slot) {
-      throw new Error('Usage: sps acp ensure <project> <slot> [claude|codex]');
+      throw new Error('Usage: sps acp ensure <project> <slot> [claude]');
     }
     const tool = parseTool(positionals[1]);
     const session = await runtime.ensureSession(slot, tool);
@@ -73,7 +73,7 @@ export async function executeAcpCommand(
   if (subcommand === 'run' || subcommand === 'prompt') {
     const slot = positionals[0];
     if (!slot) {
-      throw new Error('Usage: sps acp run <project> <slot> [claude|codex] "<prompt>"');
+      throw new Error('Usage: sps acp run <project> <slot> [claude] "<prompt>"');
     }
     let tool = parseTool(positionals[1]);
     let promptStartIdx = 1;

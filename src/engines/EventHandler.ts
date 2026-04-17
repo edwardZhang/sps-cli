@@ -22,7 +22,7 @@ import type { RuntimeStore } from '../core/runtimeStore.js';
 import type { PendingPMAction } from '../core/state.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
-import type { WorkerEvent, WorkerEventHandler } from '../manager/worker-manager.js';
+import type { WorkerEvent, } from '../manager/worker-manager.js';
 
 // ─── Dependencies ──────────────────────────────────────────────
 

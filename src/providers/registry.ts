@@ -51,7 +51,7 @@ export function createAgentRuntime(ctx: ProjectContext): AgentRuntime {
 export function createSessionRuntime(sessionCtx: {
   projectName: string;
   paths: { repoDir: string; logsDir: string; stateFile: string; acpStateFile?: string };
-  config: { ACP_AGENT?: string; WORKER_TOOL: string; raw: Record<string, string> };
+  config: { raw: Record<string, string> };
 }): AgentRuntime {
   return new ACPWorkerRuntime(sessionCtx as any);
 }

@@ -14,7 +14,7 @@
  * @boundedContext agent
  *
  * @trigger       sps agent "<prompt>" | sps agent --chat | sps agent status | sps agent close
- * @inputs        prompt 文本、--chat/--name/--tool 标志
+ * @inputs        prompt 文本、--chat/--name 标志（claude 是唯一支持的 CLI）
  * @outputs       Agent 执行结果流式输出
  * @workflow      1. 解析参数 → 2. 创建/恢复会话 → 3. 发送 prompt → 4. 流式渲染输出
  */
@@ -72,8 +72,6 @@ function parseAgentArgs(argv: string[]): {
       flags.json = 'true';
     } else if (arg === '--verbose' || arg === '-v') {
       flags.verbose = 'true';
-    } else if (arg === '--tool' && i + 1 < argv.length) {
-      flags.tool = argv[++i];
     } else if (arg === '--name' && i + 1 < argv.length) {
       flags.name = argv[++i];
     } else if (arg === '-s' && i + 1 < argv.length) {
@@ -97,7 +95,7 @@ function parseAgentArgs(argv: string[]): {
   const first = positionals[0];
   const common = {
     name: flags.name || 'default',
-    tool: (flags.tool || process.env.DEFAULT_AGENT || 'claude') as ACPTool,
+    tool: 'claude' as ACPTool,
     cwd: flags.cwd || process.cwd(),
     verbose: flags.verbose === 'true',
     context: contextFiles,
@@ -173,7 +171,7 @@ function runHooks(hooks: string[], cwd: string): { passed: boolean; output: stri
   const { execSync } = childProcess;
   for (const hook of hooks) {
     try {
-      const output = execSync(hook, { cwd, encoding: 'utf-8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
+      const _output = execSync(hook, { cwd, encoding: 'utf-8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
       process.stderr.write(`${GREEN}  hook passed: ${hook}${RESET}\n`);
     } catch (err: any) {
       const output = (err.stdout || '') + (err.stderr || '');
@@ -225,7 +223,7 @@ function loadProfile(name: string): string | null {
 function buildPrompt(userPrompt: string, contextFiles: string[], system: string, profile?: string): string {
   const parts: string[] = [];
 
-  // Memory is handled by sps-memory skill (loaded via ~/.claude/skills/ or ~/.codex/skills/)
+  // Memory is handled by sps-memory skill (loaded via ~/.claude/skills/)
   // No prompt injection needed — agent reads/writes ~/.coral/memory/ directly
 
   // Load profile as system prompt
@@ -257,7 +255,7 @@ function buildPrompt(userPrompt: string, contextFiles: string[], system: string,
 }
 
 /** Try to detect which SPS project the cwd belongs to */
-function detectProjectFromCwd(cwd: string): string | null {
+function _detectProjectFromCwd(cwd: string): string | null {
   try {
     const HOME = process.env.HOME || '/home/coral';
     const projectsDir = resolve(HOME, '.coral', 'projects');
@@ -316,7 +314,7 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
     return agentNamedOneShot(args);
   }
 
-  const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
+  const ctx = createSessionContext({ cwd: args.cwd });
   const runtime = createSessionRuntime(ctx);
   const slot = `session-oneshot-${Date.now()}`;
 
@@ -413,7 +411,7 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
 // ── Named one-shot (via daemon, session persists) ───────────────
 
 async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
-  const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
+  const ctx = createSessionContext({ cwd: args.cwd });
   const { DaemonClient } = await import('../daemon/daemonClient.js');
   const { ensureDaemon } = await import('./agentDaemon.js');
   const client = new DaemonClient();
@@ -461,7 +459,7 @@ async function agentNamedOneShot(args: ReturnType<typeof parseAgentArgs>): Promi
 // ── Chat REPL mode ──────────────────────────────────────────────
 
 async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
-  const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
+  const ctx = createSessionContext({ cwd: args.cwd });
   const mcpConfigs = resolveMcpServers(args.mcp);
   const slot = args.name.startsWith('session-') ? args.name : `session-${args.name}`;
   const stateFile = ctx.paths.stateFile;
@@ -594,7 +592,7 @@ async function agentChat(args: ReturnType<typeof parseAgentArgs>): Promise<void>
   await cleanup();
 }
 
-async function runTurn(
+async function _runTurn(
   runtime: Awaited<ReturnType<typeof createSessionRuntime>>,
   slot: string,
   args: ReturnType<typeof parseAgentArgs>,
@@ -683,7 +681,7 @@ async function agentAttach(args: ReturnType<typeof parseAgentArgs>): Promise<voi
 // ── Status ──────────────────────────────────────────────────────
 
 async function agentStatus(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
-  const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
+  const ctx = createSessionContext({ cwd: args.cwd });
   const runtime = createSessionRuntime(ctx);
 
   try {
@@ -713,7 +711,7 @@ async function agentStatus(args: ReturnType<typeof parseAgentArgs>): Promise<voi
 // ── Close ───────────────────────────────────────────────────────
 
 async function agentClose(args: ReturnType<typeof parseAgentArgs>): Promise<void> {
-  const ctx = createSessionContext({ cwd: args.cwd, tool: args.tool });
+  const ctx = createSessionContext({ cwd: args.cwd });
   const runtime = createSessionRuntime(ctx);
   const slot = args.name.startsWith('session-') ? args.name : `session-${args.name}`;
 
@@ -749,7 +747,7 @@ function agentList(args: ReturnType<typeof parseAgentArgs>): void {
   console.log(`\n  Available agents:\n`);
   for (const [name, entry] of Object.entries(registry)) {
     const cmd = `${entry.command} ${entry.args.join(' ')}`.trim();
-    const isBuiltin = ['claude', 'codex', 'gemini'].includes(name);
+    const isBuiltin = name === 'claude';
     const tag = isBuiltin ? DIM + '(builtin)' + RESET : GREEN + '(custom)' + RESET;
     console.log(`  ${name.padEnd(12)} ${cmd}  ${tag}`);
   }

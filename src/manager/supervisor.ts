@@ -17,9 +17,8 @@ import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import type { RawConfig } from '../core/config.js';
-import { parseShellConf, sourceCombinedConf } from '../core/shellEnv.js';
-import { extractLastAssistantText, isProcessAlive, killProcessGroup, parseClaudeSessionId, parseCodexSessionId } from '../providers/outputParser.js';
+import { parseShellConf, } from '../core/shellEnv.js';
+import { extractLastAssistantText, isProcessAlive, killProcessGroup, parseClaudeSessionId } from '../providers/outputParser.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -33,7 +32,7 @@ export interface SpawnOpts {
   branch: string;
   prompt: string;
   outputFile: string;
-  tool: 'claude' | 'codex';
+  tool: 'claude';
   resumeSessionId?: string;
   /** Called when child process exits. Return value is tracked as pending PostAction. */
   onExit: (exitCode: number) => Promise<void> | void;
@@ -57,7 +56,7 @@ export interface WorkerHandle {
   slot: string;
   branch: string;
   worktree: string;
-  tool: 'claude' | 'codex';
+  tool: 'claude';
   exitCode: number | null;
   sessionId: string | null;
   runId: string | null;
@@ -239,13 +238,6 @@ export class ProcessSupervisor {
     return env;
   }
 
-  private loadProjectEnv(project: string): RawConfig {
-    const confPath = resolve(homedir(), '.coral', 'projects', project, 'conf');
-    if (!existsSync(confPath)) return {};
-    const envPath = resolve(homedir(), '.coral', 'env');
-    return sourceCombinedConf([envPath, confPath]);
-  }
-
   reloadGlobalEnv(): void {
     this.globalEnv = this.loadGlobalEnv();
     this.log('Global environment reloaded');
@@ -255,8 +247,7 @@ export class ProcessSupervisor {
 
   private extractSessionId(handle: WorkerHandle): string | null {
     if (!handle.outputFile) return null;
-    if (handle.tool === 'claude') return parseClaudeSessionId(handle.outputFile);
-    return parseCodexSessionId(handle.outputFile);
+    return parseClaudeSessionId(handle.outputFile);
   }
 
   private log(msg: string): void {

@@ -15,7 +15,7 @@
  */
 import {
   existsSync, mkdirSync, readdirSync, readFileSync,
-  renameSync, unlinkSync,writeFileSync,
+  renameSync, writeFileSync,
 } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import type { ProjectConfig } from '../core/config.js';
@@ -276,7 +276,7 @@ export class MarkdownTaskBackend implements TaskBackend {
     const { frontmatter, body } = this.parseFile(filePath);
     const re = /- \[([ xX])\] (.+)/g;
     let count = 0;
-    const newBody = body.replace(re, (match, mark: string, text: string) => {
+    const newBody = body.replace(re, (match, _mark: string, text: string) => {
       if (count++ === index) {
         return `- [${checked ? 'x' : ' '}] ${text}`;
       }

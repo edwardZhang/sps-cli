@@ -52,7 +52,7 @@ export function isTerminalRunStatus(status: string | null | undefined): boolean 
 }
 
 export function isPersistedSessionAlive(
-  slot: Pick<WorkerSlotState, 'transport' | 'mode'>,
+  _slot: Pick<WorkerSlotState, 'transport' | 'mode'>,
   session?: Pick<ACPSessionRecord, 'sessionId' | 'sessionState' | 'pid'> | null,
 ): boolean {
   if (!session || session.sessionState === 'offline') return false;

@@ -60,7 +60,7 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
   console.log('  AI-Driven Development Pipeline Orchestrator');
   console.log('  ──────────────────────────────────────────────────────────────────────');
   console.log('  Automate the full dev lifecycle: task cards → AI coding → push → merge.');
-  console.log('  Supports Plane/Trello/Markdown, GitLab/GitHub, Claude/Codex/Gemini, Matrix.');
+  console.log('  Supports Plane/Trello/Markdown, GitLab/GitHub, Claude (via ACP), Matrix.');
   console.log('  https://www.npmjs.com/package/@coralai/sps-cli');
   console.log('');
 
@@ -156,10 +156,6 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     const finalTrelloToken = (trelloToken.includes('****') || trelloToken.includes('— Enter to keep') || trelloToken === '') && existing.TRELLO_TOKEN
       ? existing.TRELLO_TOKEN : trelloToken;
 
-    // Default Agent
-    console.log('\n  ── Default Agent ──');
-    const defaultAgent = await prompt.ask('DEFAULT_AGENT (claude/codex)', existing.DEFAULT_AGENT || 'claude');
-
     // Matrix notifications
     console.log('\n  ── Notifications (Matrix) ──');
     const matrixHomeserver = await prompt.ask('MATRIX_HOMESERVER', existing.MATRIX_HOMESERVER || '');
@@ -207,12 +203,6 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
       lines.push('');
     }
 
-    if (defaultAgent) {
-      lines.push('# ── Default Agent ───────────────────────────────────');
-      lines.push(`export DEFAULT_AGENT="${defaultAgent}"`);
-      lines.push('');
-    }
-
     writeFileSync(ENV_PATH, lines.join('\n') + '\n');
     chmodSync(ENV_PATH, 0o600);
     log.ok(`Saved ${ENV_PATH} (permissions: 600)`);
@@ -231,26 +221,21 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     }
   }
 
-  // ─── Step 4: Install ACP agent adapters globally ────────────────
+  // ─── Step 4: Install claude-agent-acp adapter globally ──────────
   {
-    const adapters = [
-      { name: 'claude-agent-acp', pkg: '@agentclientprotocol/claude-agent-acp' },
-      { name: 'codex-acp', pkg: '@zed-industries/codex-acp' },
-    ];
-    for (const adapter of adapters) {
+    const adapter = { name: 'claude-agent-acp', pkg: '@agentclientprotocol/claude-agent-acp' };
+    try {
+      execSync(`which ${adapter.name}`, { stdio: 'ignore' });
+      log.ok(`${adapter.name} already installed`);
+    } catch {
+      log.info(`Installing ${adapter.name}...`);
       try {
-        execSync(`which ${adapter.name}`, { stdio: 'ignore' });
-        log.ok(`${adapter.name} already installed`);
-      } catch {
-        log.info(`Installing ${adapter.name}...`);
-        try {
-          execSync(`npm install -g ${adapter.pkg}`, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
-          log.ok(`Installed ${adapter.name}`);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          log.warn(`Failed to install ${adapter.name}: ${msg}`);
-          log.info(`  You can install manually: npm install -g ${adapter.pkg}`);
-        }
+        execSync(`npm install -g ${adapter.pkg}`, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+        log.ok(`Installed ${adapter.name}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`Failed to install ${adapter.name}: ${msg}`);
+        log.info(`  You can install manually: npm install -g ${adapter.pkg}`);
       }
     }
   }
@@ -280,8 +265,7 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
 
 /** Agent skill directories (user-level) */
 const AGENT_SKILL_DIRS = [
-  resolve(HOME, '.claude', 'skills'),   // Claude Code
-  resolve(HOME, '.codex', 'skills'),    // Codex
+  resolve(HOME, '.claude', 'skills'),   // Claude Code (only supported agent)
 ];
 
 /**

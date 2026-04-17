@@ -82,7 +82,7 @@ interface CommandInfo {
 
 const COMMANDS: Record<string, CommandInfo> = {
   agent:     { desc: 'Agent 交互（零配置，支持多轮对话）', usage: 'sps agent "<prompt>" | sps agent --chat',
-    examples: ['sps agent "Explain this repo"', 'sps agent --chat', 'sps agent --tool codex "Fix tests"', 'sps agent status'] },
+    examples: ['sps agent "Explain this repo"', 'sps agent --chat', 'sps agent status'] },
   setup:     { desc: '初始环境配置（凭证、目录、配置文件）', usage: 'sps setup [--force]',
     examples: ['sps setup', 'sps setup --force'] },
   tick:      { desc: '运行持续流水线', usage: 'sps tick <project> [--json]',

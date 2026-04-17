@@ -14,7 +14,7 @@
  * @boundedContext acp
  */
 import { describe, expect, it } from 'vitest';
-import { inferToolKind, type PermissionMode, resolvePermission } from './acp-permissions.js';
+import { inferToolKind, resolvePermission } from './acp-permissions.js';
 
 function makeParams(kind?: string, title?: string, options?: Array<{ optionId: string; kind: string; name?: string }>) {
   return {

@@ -83,7 +83,7 @@ export class SchedulerEngine {
         // Auto-scan: all eligible Planning cards sorted by seq
         const seqs = eligibleCards
           .map((c) => parseInt(c.seq, 10))
-          .filter((n) => !isNaN(n))
+          .filter((n) => !Number.isNaN(n))
           .sort((a, b) => a - b);
         orderedSeqs.push(...seqs);
       }

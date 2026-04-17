@@ -38,7 +38,7 @@ export interface StageDefinition {
   triggerState: string;
   /** Card state while this stage is active */
   activeState: string;
-  /** Agent to use (claude/codex/gemini) */
+  /** Agent to use — always 'claude' (kept for backward-compat with YAML) */
   agent: string;
   /** Optional profile to load */
   profile?: string;
@@ -84,14 +84,13 @@ const DEFAULT_AUXILIARY_LABELS = [
   'BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME', 'CLAIMED',
 ];
 
-function defaultStages(config: ProjectConfig): StageDefinition[] {
-  const tool = config.WORKER_TOOL || 'claude';
+function defaultStages(_config: ProjectConfig): StageDefinition[] {
   return [
     {
       name: 'develop',
       triggerState: 'Todo',
       activeState: 'Inprogress',
-      agent: tool,
+      agent: 'claude',
       completion: 'git-evidence',
       onCompleteState: 'QA',
       onFailLabel: 'NEEDS-FIX',
@@ -101,7 +100,7 @@ function defaultStages(config: ProjectConfig): StageDefinition[] {
       name: 'integrate',
       triggerState: 'QA',
       activeState: 'QA',
-      agent: config.ACP_AGENT || tool,
+      agent: 'claude',
       completion: 'fast-forward-merge',
       onCompleteState: 'Done',
       queue: 'fifo',
@@ -321,7 +320,7 @@ function buildFromYaml(yaml: any, config: ProjectConfig): ProjectPipelineSetting
         name: s.name,
         triggerState,
         activeState,
-        agent: s.agent || config.WORKER_TOOL || 'claude',
+        agent: 'claude',  // claude is the only supported CLI; YAML agent: field is ignored
         profile: s.profile,
         completion: s.completion || 'exit-code',  // Default: exit-code (single worker model)
         onCompleteState: parseOnComplete(s.on_complete, nextTrigger),

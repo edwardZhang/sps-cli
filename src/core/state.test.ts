@@ -21,7 +21,6 @@ import {
   createIdleWorkerSlot,
   type RuntimeState,
   readState,
-  type WorkerSlotState,
   writeState,
 } from './state.js';
 

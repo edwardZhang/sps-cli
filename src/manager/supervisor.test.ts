@@ -14,15 +14,15 @@
  * @boundedContext worker-lifecycle
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProcessSupervisor, type SpawnOpts, type WorkerHandle } from './supervisor.js';
+import { beforeEach, describe, expect, it, } from 'vitest';
+import { ProcessSupervisor, } from './supervisor.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
-function makeTempDir(): string {
+function _makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'sps-sup-test-'));
 }
 

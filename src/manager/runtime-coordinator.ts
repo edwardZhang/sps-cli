@@ -42,7 +42,7 @@ export interface RuntimeRebuildResult {
  * leases and PM card states.
  */
 export class RuntimeCoordinator {
-  constructor(private readonly ctx: ProjectContext, private readonly taskBackend: TaskBackend) {}
+  constructor(private readonly ctx: ProjectContext, readonly _taskBackend: TaskBackend) {}
 
   async buildRuntimeProjection(): Promise<RuntimeRebuildResult> {
     return this.computeRuntimeProjection(false, 'runtime-coordinator');

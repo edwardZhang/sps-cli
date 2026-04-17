@@ -25,7 +25,7 @@ export async function executeWorkerPs(
   project: string,
   flags: Record<string, boolean>,
 ): Promise<void> {
-  const log = new Logger('worker-ps', project);
+  const _log = new Logger('worker-ps', project);
   const jsonOutput = !!flags.json;
 
   let ctx: ProjectContext;
@@ -157,9 +157,9 @@ export async function executeWorkerPs(
 export async function executeWorkerKill(
   project: string,
   seq: string,
-  flags: Record<string, boolean>,
+  _flags: Record<string, boolean>,
 ): Promise<void> {
-  const log = new Logger('worker-kill', project);
+  const _log = new Logger('worker-kill', project);
 
   if (!seq) {
     console.error('Usage: sps worker kill <project> <seq>');

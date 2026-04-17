@@ -25,18 +25,14 @@ export interface SessionContext {
   maxWorkers: number;
   paths: SessionPaths & { repoDir: string };
   config: {
-    ACP_AGENT?: string;
-    WORKER_TOOL: string;
     raw: Record<string, string>;
   };
 }
 
 export function createSessionContext(opts?: {
   cwd?: string;
-  tool?: ACPTool;
 }): SessionContext {
   const cwd = opts?.cwd ? resolve(opts.cwd) : process.cwd();
-  const tool: ACPTool = opts?.tool ?? (process.env.SPS_AGENT as ACPTool) ?? 'claude';
   const sessionPaths = resolveSessionPaths();
 
   // Ensure directories exist
@@ -46,15 +42,13 @@ export function createSessionContext(opts?: {
   return {
     projectName: 'standalone',
     cwd,
-    tool,
+    tool: 'claude',
     maxWorkers: 0,  // no pipeline worker slots in harness mode
     paths: {
       ...sessionPaths,
       repoDir: cwd,
     },
     config: {
-      ACP_AGENT: tool,
-      WORKER_TOOL: tool,
       raw: { WORKER_TRANSPORT: 'acp-sdk' },
     },
   };

@@ -26,7 +26,7 @@ export type OnFail = 'abort' | 'skip' | { retry: number } | { goto: string };
 export interface StepConfig {
   /** Step name (unique within pipeline) */
   name: string;
-  /** Agent step: agent type (claude/codex/gemini/custom) */
+  /** Agent step: kept for backward-compat (claude is the only supported CLI; value ignored). */
   agent?: string;
   /** Agent step: profile to load */
   profile?: string;

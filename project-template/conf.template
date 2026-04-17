@@ -43,7 +43,7 @@ export PIPELINE_LABEL="AI-PIPELINE"
 export MR_MODE="none"
 
 # ── Worker / Agent ───────────────────────────────────────────────
-export WORKER_TOOL="claude"
+# claude is the only supported CLI; no selector exposed.
 export MAX_CONCURRENT_WORKERS=3
 # export MAX_ACTIONS_PER_TICK=1
 # export WORKER_RESTART_LIMIT=2

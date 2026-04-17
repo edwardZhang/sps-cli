@@ -12,10 +12,9 @@ SPS (Smart Pipeline System) is an AI Agent harness and automated development pip
 - **Pipeline mode** (`sps pipeline`): Fully automated card-driven development workflow with YAML-configurable stages
 
 ```bash
-# Harness mode — talk to any agent instantly
+# Harness mode — talk to Claude Code instantly
 sps agent "Explain this repo"
 sps agent --chat                              # multi-turn REPL (daemon-backed)
-sps agent --tool codex "Fix the failing tests"
 sps agent --profile reviewer --context src/auth.ts "Review this module"
 sps agent --verbose --output report.md "Security audit"
 
@@ -33,7 +32,6 @@ Zero-config direct agent interaction. No project setup, PM tools, or Git require
 
 ```bash
 sps agent "What does this codebase do?"
-sps agent --tool codex "Fix the bug in auth.ts"
 sps agent --output summary.md "Summarize this repo"
 ```
 
@@ -53,9 +51,10 @@ sps agent --chat                          # reconnect — agent remembers contex
 
 ### Advanced Flags
 
+Claude is the only supported CLI as of v0.38.0; there is no `--tool` flag.
+
 | Flag | Description | Example |
 |------|-------------|---------|
-| `--tool <agent>` | Choose agent | `--tool codex`, `--tool gemini` |
 | `--chat` | Multi-turn REPL mode | `sps agent --chat` |
 | `--name <name>` | Named session (persistent) | `--name backend` |
 | `--verbose` / `-v` | Show tool calls | Shows Read, Edit, Bash in yellow |
@@ -144,16 +143,9 @@ server.listen('/tmp/sps-remote.sock', () => console.log('Local bridge ready'));
 SPS_DAEMON_SOCKET=/tmp/sps-remote.sock sps agent --name work "Analyze the codebase"
 ```
 
-### Custom Agents
+### Agents
 
-```bash
-sps agent add cursor cursor-agent acp     # register custom ACP agent
-sps agent add my-bot ./bin/my-server      # register local agent
-sps agent list                            # show all available agents
-sps agent --tool cursor "Review this PR"  # use custom agent
-```
-
-Available built-in agents: `claude` (default), `codex`, `gemini`
+Built-in agent: `claude` only (as of v0.38.0). Codex and Gemini support have been removed.
 
 ## Pipeline Mode (`sps pipeline`)
 
@@ -191,7 +183,6 @@ stages:
   - name: develop
     trigger: "card_enters 'Todo'"
     card_state: Inprogress
-    agent: claude              # per-stage agent (claude/codex/gemini)
     profile: phaser,typescript # skill profiles to load
     completion: git-evidence   # git-evidence | fast-forward-merge | exit-code
     on_complete: "move_card QA"
@@ -202,7 +193,6 @@ stages:
   - name: integrate
     trigger: "card_enters 'QA'"
     card_state: QA
-    agent: codex               # use different agent for integration
     completion: fast-forward-merge
     on_complete: "move_card Done"
     queue: fifo
@@ -227,7 +217,7 @@ sps worker kill my-project 42         # kill specific worker by seq
 Skills are loaded from `~/.coral/skills/` via symlink to agent directories:
 
 ```bash
-sps skill sync                        # sync skills to ~/.claude/skills/ + ~/.codex/skills/
+sps skill sync                        # sync skills to ~/.claude/skills/
 ```
 
 ### Memory System
@@ -255,13 +245,7 @@ Workers receive memory in their prompt and can write new memories directly to th
 
 ### Global Configuration
 
-Set default agent in `~/.coral/env`:
-
-```bash
-export DEFAULT_AGENT="claude"         # or "codex"
-```
-
-`sps agent` priority: `--tool` flag > `DEFAULT_AGENT` env > `'claude'`
+`~/.coral/env` holds shared credentials (GitLab, PM backends, Matrix). No agent selector — claude is the only supported CLI.
 
 ## Architecture
 
@@ -271,9 +255,7 @@ SPS CLI
 │   ├── SessionDaemon (Unix socket, background persistent)
 │   ├── DaemonClient (NDJSON RPC)
 │   └── AcpSdkAdapter
-│        ├── claude-agent-acp (Anthropic official SDK)
-│        ├── codex-acp (Zed Rust binary)
-│        └── gemini --acp (native)
+│        └── claude-agent-acp (ACP community shim for Claude Code)
 │
 ├── Pipeline Mode (sps pipeline)
 │   ├── WorkerManager + CompletionJudge
@@ -389,7 +371,7 @@ Planning -> Backlog -> Todo -> Inprogress -> QA -> Done
 
 In this model, the development worker stops at “implementation complete and committed on the task branch”. The QA worker owns integration: it must inspect the current worktree, rebase/merge the task branch back into the target branch, resolve conflicts, and finish the integration. If a development worker merges early anyway, SPS absorbs that as an exception from git evidence and closes the task directly instead of forcing an extra QA run. See `docs/design/10-acp-worker-runtime-design.md` for the persistent Agent transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary. See `docs/design/11-runtime-state-authority-and-recovery-redesign.md` for the redesign that demotes `state.json` / `acp-state.json` to projections and re-centers recovery around PM state plus worktree/git evidence. See `docs/design/12-unified-runtime-state-machine.md` for the current unified state-machine model. See `docs/design/13-development-guardrails.md` for the non-negotiable development rules that prevent future features from reintroducing old state, merge, or prompt-model drift.
 
-The autonomous main path uses ACP SDK transport by default. `WORKER_TRANSPORT=acp-sdk` is the workflow transport for `tick`, `pipeline tick`, `qa tick`, `worker launch`, and `recovery`; workers communicate via structured ACP JSON-RPC over stdio. `proc` one-shot mode (`codex exec` / `claude -p`) is available as fallback via `WORKER_TRANSPORT=proc`. `sps acp` commands provide diagnostic and manual-control capabilities.
+The autonomous main path uses ACP SDK transport (`WORKER_TRANSPORT=acp-sdk`). Workers communicate with Claude Code via structured ACP JSON-RPC over stdio. `sps acp` commands provide diagnostic and manual-control capabilities.
 
 ### MR_MODE=create (Optional)
 
@@ -551,7 +533,7 @@ sps doctor my-project --fix
 #   ok  worker-rules      Generated and committed: CLAUDE.md, AGENTS.md
 #   ok  skill-profiles    DEFAULT_WORKER_SKILLS="senior" -- all profiles found
 #   ok  state-json        Initialized with 3 worker slots
-#   ok  acp-runtime       claude-agent-acp and codex-acp available
+#   ok  acp-runtime       claude-agent-acp available
 
 # JSON output
 sps doctor my-project --json
@@ -741,9 +723,9 @@ sps status [--json]
 Manage persistent session-backed worker sessions directly for diagnostics, manual intervention, and experiments. This is no longer the default transport used by `sps tick`.
 
 ```bash
-sps acp ensure <project> <slot> [claude|codex] [--json]
-sps acp run <project> <slot> [claude|codex] "<prompt>" [--json]
-sps acp prompt <project> <slot> [claude|codex] "<prompt>" [--json]
+sps acp ensure <project> <slot> [claude] [--json]
+sps acp run <project> <slot> [claude] "<prompt>" [--json]
+sps acp prompt <project> <slot> [claude] "<prompt>" [--json]
 sps acp status <project> [slot] [--json]
 sps acp stop <project> <slot> [--json]
 ```
@@ -846,16 +828,9 @@ If the card is in Backlog state, it will automatically execute prepare first (cr
 3. Launch Worker process
 4. Push card to Inprogress
 
-**Worker transport modes (`WORKER_TRANSPORT`):**
+**Worker transport (`WORKER_TRANSPORT=acp-sdk`, the only supported mode):**
 
-| Transport | Default | Description |
-|-----------|---------|-------------|
-| `acp-sdk` | **Yes** | ACP JSON-RPC over stdio — structured, deterministic state detection |
-| `proc` | No | One-shot execution (`claude -p` / `codex exec`), process exit = task complete |
-
-**ACP SDK mode (default):**
-
-Workers communicate via structured ACP JSON-RPC protocol over stdio. Claude uses `claude-agent-acp` (Anthropic's official SDK), Codex uses `codex-acp` (Zed's Rust native binary).
+Workers communicate with Claude Code via structured ACP JSON-RPC protocol over stdio, using the `claude-agent-acp` shim. As of v0.38.0, Claude is the only supported CLI.
 
 Key advantages:
 - **Structured communication** -- JSON-RPC protocol, no terminal screen-scraping
@@ -863,15 +838,6 @@ Key advantages:
 - **Permission handling** -- Programmatic per-tool-call approval via `requestPermission` callback
 - **Real-time logs** -- ACP events stream to `*-acp-*.log` files
 - **No external dependencies** -- Pure process management, suitable for CI/CD environments
-
-**Proc mode (fallback):**
-
-The Worker runs as a one-shot subprocess:
-
-```
-Claude:  claude -p --output-format stream-json --dangerously-skip-permissions
-Codex:   codex exec - --json --sandbox danger-full-access
-```
 
 **Session Resume chain:**
 
@@ -1117,16 +1083,15 @@ sps logs <project> --no-follow        # print and exit
 
 ## Worker Rule Files
 
-`sps doctor --fix` generates rule files based on the configured `WORKER_TOOL`:
+`sps doctor --fix` generates rule files for the Claude Code worker:
 
-| File | Purpose | Required by | Committed to git |
-|------|---------|-------------|-----------------|
-| `CLAUDE.md` | Project rules for Claude Code Worker | `WORKER_TOOL=claude` | Yes |
-| `AGENTS.md` | Project rules for Codex Worker | `WORKER_TOOL=codex` | Yes |
-| `.sps/development_prompt.txt` | Development-phase prompt (debug archive) | — | No (.gitignore) |
-| `.sps/integration_prompt.txt` | Integration-phase prompt (debug archive) | — | No (.gitignore) |
-| `docs/DECISIONS.md` | Architecture decisions (worker auto-maintained) | — | Yes |
-| `docs/CHANGELOG.md` | Change log (worker auto-maintained) | — | Yes |
+| File | Purpose | Committed to git |
+|------|---------|-----------------|
+| `CLAUDE.md` | Project rules for Claude Code Worker | Yes |
+| `.sps/development_prompt.txt` | Development-phase prompt (debug archive) | No (.gitignore) |
+| `.sps/integration_prompt.txt` | Integration-phase prompt (debug archive) | No (.gitignore) |
+| `docs/DECISIONS.md` | Architecture decisions (worker auto-maintained) | Yes |
+| `docs/CHANGELOG.md` | Change log (worker auto-maintained) | Yes |
 
 **Note**: Prompts are generated in-memory and passed via stdin (v0.25.0+). The `.sps/` files are debug archives only — their absence does not block the pipeline.
 
@@ -1209,11 +1174,11 @@ Project conf can reference global variables (e.g., `${PLANE_URL}`).
 
 #### Worker
 
+Claude is the only supported CLI as of v0.38.0; there is no per-project agent selector.
+
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `WORKER_TOOL` | No | `claude` | Worker type: `claude` / `codex` |
-| `WORKER_TRANSPORT` | No | `acp-sdk` | Worker transport: `acp-sdk` (ACP JSON-RPC, default), `proc` (one-shot fallback) |
-| `ACP_AGENT` | No | `WORKER_TOOL` | Default ACP tool when `sps acp` does not receive a tool override |
+| `WORKER_TRANSPORT` | No | `acp-sdk` | Worker transport (only `acp-sdk` is supported) |
 | `MAX_CONCURRENT_WORKERS` | No | `3` | Maximum parallel Workers (worker slot ceiling) |
 | `WORKER_RESTART_LIMIT` | No | `2` | Maximum restart count after Worker death |
 | `MAX_ACTIONS_PER_TICK` | No | `1` | Maximum launches per tick cycle; raise with `MAX_CONCURRENT_WORKERS` if one tick should fill all slots |
@@ -1251,8 +1216,7 @@ PM_TOOL="plane"
 PLANE_API_URL="${PLANE_URL}"
 PLANE_PROJECT_ID="project-uuid-here"
 
-# Worker
-WORKER_TOOL="claude"
+# Worker (claude is the only supported CLI — no selector)
 MAX_CONCURRENT_WORKERS=3
 MAX_ACTIONS_PER_TICK=1
 

@@ -32,7 +32,6 @@ import { StageEngine } from '../engines/StageEngine.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import { CompletionJudge } from '../manager/completion-judge.js';
-import { createPMClient } from '../manager/pm-client.js';
 import { RuntimeCoordinator } from '../manager/runtime-coordinator.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
 // PostActions and Recovery are no longer used directly — WM handles recovery
@@ -153,7 +152,7 @@ function createRunner(project: string): ProjectRunner | null {
     paths: { stateFile: ctx.paths.stateFile },
     maxWorkers: ctx.maxWorkers,
   });
-  const raw = ctx.config.raw;
+  const _raw = ctx.config.raw;
   const eventHandler = new SPSEventHandler({
     taskBackend,
     notifier,

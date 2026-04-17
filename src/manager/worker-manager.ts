@@ -51,7 +51,7 @@ export interface TaskRunRequest {
   cwd: string;
   branch: string;
   targetBranch: string;
-  tool: 'claude' | 'codex';
+  tool: 'claude';
   transport: 'acp-sdk';
   outputFile: string;
   timeoutSec?: number;
@@ -70,7 +70,7 @@ export interface TaskResumeRequest {
   cwd: string;
   branch: string;
   targetBranch: string;
-  tool: 'claude' | 'codex';
+  tool: 'claude';
   transport: 'acp-sdk';
   outputFile: string;
   sessionId?: string;

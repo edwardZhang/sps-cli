@@ -18,7 +18,7 @@
  * @outputs       初始化后的项目目录和配置文件
  * @workflow      1. 查找模板目录 → 2. 创建项目目录 → 3. 复制模板文件 → 4. 写入配置
  */
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +41,7 @@ function findTemplateDir(): string {
   return npmPath; // default, will fail gracefully below
 }
 
-const TEMPLATE_DIR = findTemplateDir();
+const _TEMPLATE_DIR = findTemplateDir();
 
 export async function executeProjectInit(
   project: string,
@@ -97,7 +97,6 @@ export async function executeProjectInit(
     const projectDir = await ask('Repository path', resolve(HOME, 'projects', project));
     const pmTool = await ask('PM backend (markdown/plane/trello)', 'markdown');
     const mergeBranch = await ask('Merge target branch', 'main');
-    const workerTool = await ask('Default worker agent (claude/codex)', 'claude');
     const maxWorkers = await ask('Max concurrent workers', '1');
 
     // Git remote (optional)
@@ -142,7 +141,6 @@ export async function executeProjectInit(
     confLines.push('export PIPELINE_LABEL="AI-PIPELINE"');
     confLines.push('export MR_MODE="none"');
     confLines.push('');
-    confLines.push(`export WORKER_TOOL="${workerTool}"`);
     confLines.push('export WORKER_TRANSPORT="acp-sdk"');
     confLines.push(`export MAX_CONCURRENT_WORKERS=${maxWorkers}`);
     confLines.push('export MAX_ACTIONS_PER_TICK=3');
@@ -210,9 +208,7 @@ export PIPELINE_LABEL="AI-PIPELINE"
 export MR_MODE="none"
 
 # ── Worker / Agent ───────────────────────────────────────────────
-# WORKER_TOOL: Default AI agent (can be overridden per-stage in pipeline YAML)
-#   Values: claude / codex
-export WORKER_TOOL="claude"
+# claude is the only supported CLI. No selector exposed.
 # WORKER_TRANSPORT: Worker communication protocol (fixed, do not change)
 export WORKER_TRANSPORT="acp-sdk"
 # MAX_CONCURRENT_WORKERS: Maximum parallel workers
@@ -224,8 +220,6 @@ export MAX_ACTIONS_PER_TICK=3
 #   Can also use skill:xxx labels on individual cards
 #   Available: fullstack, frontend, backend, phaser, typescript, reviewer, architect, etc.
 # export DEFAULT_WORKER_SKILLS="fullstack"
-# ACP_AGENT: Override agent for integrate stage (defaults to WORKER_TOOL)
-# export ACP_AGENT="claude"
 
 # ── Timeouts & Policies ─────────────────────────────────────────
 # INPROGRESS_TIMEOUT_HOURS: Max hours a worker can stay in Inprogress
@@ -293,7 +287,6 @@ mode: project
 #
 # Required fields:
 #   name:       Stage name (unique)
-#   agent:      AI agent (claude / codex / gemini)
 #   on_complete: "move_card <next_state>" or "move_card Done"
 #
 # Optional fields:
@@ -308,7 +301,6 @@ mode: project
 # ── Simple: 1 stage (develop → Done) ────────────────────────────
 stages:
   - name: develop
-    agent: claude
     # profile: fullstack
     on_complete: "move_card Done"
     on_fail:
@@ -320,7 +312,6 @@ stages:
 #
 # stages:
 #   - name: develop
-#     agent: claude
 #     profile: fullstack
 #     on_complete: "move_card Review"
 #     on_fail:
@@ -328,7 +319,6 @@ stages:
 #       halt: true
 #
 #   - name: review
-#     agent: codex              # Different agent for independent review
 #     profile: reviewer
 #     on_complete: "move_card Done"
 #     on_fail:

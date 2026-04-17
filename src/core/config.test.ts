@@ -16,7 +16,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, } from 'vitest';
 import { loadGlobalEnv, loadProjectConf, type ProjectConfig, type RawConfig, validateConfig } from './config.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -29,7 +29,6 @@ function makeConfig(overrides?: Partial<ProjectConfig>): ProjectConfig {
     GITLAB_MERGE_BRANCH: 'develop',
     PM_TOOL: 'plane',
     MR_MODE: 'none',
-    WORKER_TOOL: 'claude',
     WORKER_TRANSPORT: 'acp-sdk',
     MAX_CONCURRENT_WORKERS: 3,
     WORKER_RESTART_LIMIT: 2,
@@ -194,7 +193,6 @@ describe('loadProjectConf', () => {
     ].join('\n'));
 
     const config = loadProjectConf('minimal');
-    expect(config.WORKER_TOOL).toBe('claude');
     expect(config.WORKER_TRANSPORT).toBe('acp-sdk');
     expect(config.MAX_CONCURRENT_WORKERS).toBe(3);
     expect(config.WORKER_RESTART_LIMIT).toBe(2);
@@ -291,18 +289,18 @@ describe('loadProjectConf', () => {
     }
   });
 
-  it('parses WORKER_TOOL variants', () => {
-    for (const tool of ['claude', 'codex'] as const) {
-      writeConf(`wt-${tool}`, [
-        'PROJECT_NAME=test',
-        'GITLAB_PROJECT=g/test',
-        'GITLAB_MERGE_BRANCH=main',
-        `WORKER_TOOL=${tool}`,
-      ].join('\n'));
+  it('silently ignores deprecated WORKER_TOOL without failing', () => {
+    // WORKER_TOOL was removed in v0.38.0 (claude-only). Legacy configs must
+    // still load without errors; the field is simply dropped.
+    writeConf('legacy-wt', [
+      'PROJECT_NAME=test',
+      'GITLAB_PROJECT=g/test',
+      'GITLAB_MERGE_BRANCH=main',
+      'WORKER_TOOL=codex',
+    ].join('\n'));
 
-      const config = loadProjectConf(`wt-${tool}`);
-      expect(config.WORKER_TOOL).toBe(tool);
-    }
+    const config = loadProjectConf('legacy-wt');
+    expect(config.PROJECT_NAME).toBe('test');
   });
 
   it('handles shell variable interpolation via bash sourcing', () => {

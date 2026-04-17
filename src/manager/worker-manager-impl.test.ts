@@ -17,7 +17,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createIdleWorkerSlot, type RuntimeState, writeState } from '../core/state.js';
 import { CompletionJudge } from './completion-judge.js';
 import { ProcessSupervisor } from './supervisor.js';

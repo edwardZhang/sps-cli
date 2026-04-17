@@ -71,33 +71,6 @@ export function parseClaudeSessionId(filePath: string): string | null {
 }
 
 /**
- * Parse session ID from a Codex exec --json JSONL output file.
- *
- * Codex emits JSONL events. Look for session/conversation ID.
- */
-export function parseCodexSessionId(filePath: string): string | null {
-  if (!existsSync(filePath)) return null;
-  try {
-    const content = readFileSync(filePath, 'utf-8');
-    for (const line of content.split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const obj = JSON.parse(line);
-        // Codex uses conversation_id or session_id
-        if (obj.conversation_id) return obj.conversation_id;
-        if (obj.session_id) return obj.session_id;
-        if (obj.id && typeof obj.id === 'string' && obj.type === 'session_start') return obj.id;
-      } catch {
-        // not valid JSON
-      }
-    }
-  } catch {
-    // file read error
-  }
-  return null;
-}
-
-/**
  * Check if a process is alive by sending signal 0.
  */
 export function isProcessAlive(pid: number | null | undefined): boolean {

@@ -77,45 +77,6 @@ function renderClaudeEvent(obj: Record<string, unknown>): string | null {
   }
 }
 
-/**
- * Render Codex exec --json JSONL lines into readable output.
- */
-export function renderCodexStreamLines(rawLines: string[]): string[] {
-  const output: string[] = [];
-
-  for (const line of rawLines) {
-    if (!line.trim()) continue;
-    try {
-      const obj = JSON.parse(line);
-      const rendered = renderCodexEvent(obj);
-      if (rendered) output.push(rendered);
-    } catch {
-      if (line.trim()) output.push(line);
-    }
-  }
-
-  return output;
-}
-
-function renderCodexEvent(obj: Record<string, unknown>): string | null {
-  const type = obj.type as string;
-
-  if (type === 'message' && typeof obj.content === 'string') {
-    return truncate(obj.content, 120);
-  }
-
-  if (type === 'function_call' || type === 'tool_call') {
-    const name = (obj.name || obj.function || 'Tool') as string;
-    return `[${name}]`;
-  }
-
-  if (type === 'completed' || type === 'done') {
-    return '✓ Done';
-  }
-
-  return null;
-}
-
 function truncate(s: string, maxLen: number): string {
   const oneLine = s.replace(/\n/g, ' ').trim();
   if (oneLine.length <= maxLen) return oneLine;
