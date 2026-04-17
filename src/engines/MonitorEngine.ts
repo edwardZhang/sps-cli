@@ -26,6 +26,7 @@ import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { ProcessSupervisor } from '../manager/supervisor.js';
 import type { ActionRecord, CheckResult, CommandResult, RecommendedAction } from '../models/types.js';
+import { isProcessAlive } from '../providers/outputParser.js';
 
 /**
  * MonitorEngine performs anomaly detection and health checks.
@@ -84,6 +85,7 @@ export class MonitorEngine {
 
     try {
       await this.checkWorkerHealth(checks, actions);
+      await this.checkAcpShimHealth(checks, actions);
       await this.checkOrphanSlots(checks, actions);
       await this.checkStaleRuntimes(checks, actions, recommendedActions);
       await this.checkTimeouts(checks, actions, recommendedActions);
@@ -663,6 +665,72 @@ export class MonitorEngine {
       message: issues > 0
         ? `${issues} worker health issue(s) resolved via auto-retry`
         : 'All active workers healthy',
+    });
+  }
+
+  // ─── Check 8: ACP Shim Liveness ───────────────────────────────
+  //
+  // When shim (claude-agent-acp) dies mid-run — OOM kill, parent crash,
+  // manual pkill — clearAcpSessionRun never fires and the active card's
+  // lease stays in 'coding'/'merging'/etc. This check detects a dead shim
+  // pid for an in-use pipeline slot, clears the stale session record so
+  // the next ensureSession rebuilds fresh, and auto-retries the card.
+
+  private async checkAcpShimHealth(
+    checks: CheckResult[],
+    actions: ActionRecord[],
+  ): Promise<void> {
+    const state = this.runtimeStore.readState();
+    let issues = 0;
+
+    for (const [slotName, session] of Object.entries(state.sessions ?? {})) {
+      if (!slotName.startsWith('worker-')) continue;
+      if (!session.pid) continue;
+      if (session.sessionState === 'offline') continue;
+
+      const worker = state.workers[slotName];
+      // Only care about slots with an in-flight run — idle slots with a
+      // leftover session record aren't broken (session-reuse design).
+      if (!worker || worker.status === 'idle') continue;
+
+      if (isProcessAlive(session.pid)) continue;
+
+      const seq = worker.seq != null ? String(worker.seq) : null;
+      this.log.error(
+        `ACP shim dead: slot=${slotName} pid=${session.pid} session=${session.sessionId} (worker.status=${worker.status})`,
+      );
+
+      // Mark session offline so next ensureSession triggers resetExisting
+      this.runtimeStore.updateState('monitor-acp-shim-dead', (draft) => {
+        const s = draft.sessions[slotName];
+        if (s) {
+          s.sessionState = 'offline';
+          s.status = 'offline';
+          s.currentRun = null;
+          s.lastSeenAt = new Date().toISOString();
+        }
+      });
+
+      // Kill any remaining supervisor handle so subsequent state is clean
+      if (seq) {
+        const workerId = `${this.ctx.projectName}:${slotName}:${seq}`;
+        try { await this.supervisor.kill(workerId); } catch { /* best effort */ }
+        await this.autoRetry(seq, slotName, actions, `ACP shim died (pid ${session.pid})`);
+      } else {
+        // No active seq on this slot — just release it
+        this.runtimeStore.updateState('monitor-acp-shim-dead-release', (draft) => {
+          this.runtimeStore.clearWorkerSlot(draft, slotName);
+        });
+      }
+      issues++;
+    }
+
+    checks.push({
+      name: 'acp-shim-health',
+      status: issues > 0 ? 'warn' : 'pass',
+      message: issues > 0
+        ? `${issues} dead ACP shim(s) detected and recovered`
+        : 'All ACP shims healthy',
     });
   }
 

@@ -23,6 +23,7 @@ import { acquireTickLock, releaseTickLock } from '../core/lock.js';
 import { Logger } from '../core/logger.js';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
+import { cleanupOrphanAcpSessions } from '../core/sessionCleanup.js';
 import { readState } from '../core/state.js';
 import { SPSEventHandler } from '../engines/EventHandler.js';
 import { MonitorEngine } from '../engines/MonitorEngine.js';
@@ -247,6 +248,22 @@ export async function executeTick(
   }
 
   const { supervisor } = getSharedModules();
+
+  // ─── Orphan cleanup: kill leftover ACP shims from prior crashed runs ──
+  // Must run BEFORE recovery so the new tick never tries to reattach to a
+  // dead/orphan shim. Safe for harness mode — only touches worker-* slots.
+  for (const runner of runners) {
+    try {
+      const result = await cleanupOrphanAcpSessions(runner.ctx, runner.log);
+      if (result.killed > 0 || result.cleaned > 0) {
+        runner.log.info(
+          `Orphan cleanup: killed ${result.killed} process(es), cleared ${result.cleaned} stale session record(s)`,
+        );
+      }
+    } catch (err) {
+      runner.log.warn(`Orphan cleanup failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // ─── Recovery: restore active workers via WorkerManager ────────
   for (const runner of runners) {
