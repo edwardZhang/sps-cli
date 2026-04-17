@@ -23,6 +23,7 @@ import type { PendingPMAction } from '../core/state.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { WorkerEvent, } from '../manager/worker-manager.js';
+import type { Card } from '../models/types.js';
 
 // ─── Dependencies ──────────────────────────────────────────────
 
@@ -118,21 +119,49 @@ export class SPSEventHandler {
       phase === 'integration' ||
       completionResult?.reason === 'already_merged';
 
-    // Resolve the stage definition for this phase
+    // Resolve the stage definition for this phase.
+    // Try to match active-state stage first (e.g., cards in QA state match integrate stage);
+    // fall back to first stage for development and last stage for integration.
     const stage = this.pipelineAdapter.getStage(phase || 'develop')
       || this.pipelineAdapter.stages[isIntegration ? this.pipelineAdapter.stages.length - 1 : 0];
     const targetState = stage?.onCompleteState || this.pipelineAdapter.states.done;
 
-    // Release slot in runtime state first (never blocks on PM)
+    // Release slot first — worker has exited regardless of downstream decisions.
     this.releaseSlot(event);
 
-    await this.safeAction({ type: 'move', taskId, project: this.project, target: targetState });
+    // v0.39.0: Claude declares completion by adding a COMPLETED-<stage> label via Stop hook.
+    // If the label is absent here, the ACP run finished but Claude did not declare (hook
+    // didn't run, crashed mid-task, etc). Treat as NEEDS-FIX so the user sees the issue
+    // instead of silently advancing a half-done card.
+    const stageName = stage?.name ?? 'develop';
+    const completedLabel = `COMPLETED-${stageName}`;
+    let card: Card | null = null;
+    try {
+      card = await this.taskBackend.getBySeq(taskId);
+    } catch (err) {
+      this.logError('onCompleted: getBySeq', err);
+    }
+    const hasCompletedLabel = !!card?.labels.includes(completedLabel);
 
+    if (!hasCompletedLabel) {
+      this.log(`seq ${taskId}: ACP completed but ${completedLabel} label missing — marking NEEDS-FIX`);
+      await this.safeAction({ type: 'label', taskId, project: this.project, target: 'NEEDS-FIX' });
+      await this.safeAction({
+        type: 'comment',
+        taskId,
+        project: this.project,
+        message: `Worker finished but ${completedLabel} label was not set. Claude may have exited without declaring completion via the Stop hook.`,
+      });
+      await this.safeNotify(`⚠️ [${this.project}] seq:${taskId} ACP completed without ${completedLabel} label — NEEDS-FIX`);
+      return;
+    }
+
+    // Label is present — advance state per YAML.
+    await this.safeAction({ type: 'move', taskId, project: this.project, target: targetState });
     await this.safeAction({ type: 'release', taskId, project: this.project });
 
     const reason = completionResult?.reason ?? 'unknown';
-    const phaseLabel = isIntegration ? 'integration' : 'development';
-    await this.safeNotify(`✅ [${this.project}] seq:${taskId} completed ${phaseLabel} (${reason})`);
+    await this.safeNotify(`✅ [${this.project}] seq:${taskId} completed stage '${stageName}' (${reason})`);
   }
 
   private async onFailed(event: WorkerEvent): Promise<void> {

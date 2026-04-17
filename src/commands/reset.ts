@@ -182,8 +182,11 @@ export async function executeReset(
 
       await taskBackend.move(seq, 'Planning');
 
-      // Clean labels (best effort)
-      for (const label of ['STALE-RUNTIME', 'NEEDS-FIX', 'BLOCKED', 'CLAIMED', 'CONFLICT', 'WAITING-CONFIRMATION']) {
+      // Clean auxiliary labels (best effort)
+      const auxLabels = ['STALE-RUNTIME', 'NEEDS-FIX', 'BLOCKED', 'CLAIMED', 'CONFLICT', 'WAITING-CONFIRMATION'];
+      // Also clean all COMPLETED-<stage> labels so the card genuinely starts over
+      const completedLabels = card.labels.filter(l => l.startsWith('COMPLETED-'));
+      for (const label of [...auxLabels, ...completedLabels]) {
         if (card.labels.includes(label)) {
           try { await taskBackend.removeLabel(seq, label); } catch { /* best effort */ }
         }

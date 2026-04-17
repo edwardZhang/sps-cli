@@ -40,6 +40,9 @@ export interface WorkerManagerDeps {
 
 interface SpawnContext {
   taskId: string; cardId: string; project: string; phase: WorkerPhase;
+  /** YAML stage name — used to build COMPLETED-<stageName> label via SPS_STAGE env */
+  stageName: string;
+  cardTitle?: string;
   prompt: string; cwd: string; branch: string; targetBranch: string;
   tool: 'claude'; transport: 'acp-sdk';
   outputFile: string; maxRetries: number; resumeSessionId?: string;
@@ -83,7 +86,8 @@ export class WorkerManagerImpl implements WorkerManager {
   async run(request: TaskRunRequest): Promise<TaskRunResponse> {
     return this.acquireAndSpawn({
       taskId: request.taskId, cardId: request.cardId, project: request.project,
-      phase: request.phase, prompt: request.prompt, cwd: request.cwd,
+      phase: request.phase, stageName: request.stageName, cardTitle: request.cardTitle,
+      prompt: request.prompt, cwd: request.cwd,
       branch: request.branch, targetBranch: request.targetBranch,
       tool: request.tool, transport: request.transport,
       outputFile: request.outputFile, maxRetries: request.maxRetries ?? 0,
@@ -95,7 +99,8 @@ export class WorkerManagerImpl implements WorkerManager {
   async resume(request: TaskResumeRequest): Promise<TaskRunResponse> {
     return this.acquireAndSpawn({
       taskId: request.taskId, cardId: request.cardId, project: request.project,
-      phase: request.phase, prompt: request.prompt, cwd: request.cwd,
+      phase: request.phase, stageName: request.phase, // resume doesn't know stage name; fallback to phase
+      prompt: request.prompt, cwd: request.cwd,
       branch: request.branch, targetBranch: request.targetBranch,
       tool: request.tool, transport: request.transport,
       outputFile: request.outputFile, maxRetries: 0,
@@ -253,7 +258,7 @@ export class WorkerManagerImpl implements WorkerManager {
   // ─── Private: Unified acquire + spawn flow ───────────────────
 
   private async acquireAndSpawn(ctx: SpawnContext, label: string): Promise<TaskRunResponse> {
-    const { taskId, cardId, project, phase, prompt, cwd, branch, targetBranch,
+    const { taskId, cardId, project, phase, stageName, cardTitle, prompt, cwd, branch, targetBranch,
             tool, transport, outputFile, maxRetries, resumeSessionId } = ctx;
 
     if (this.taskSlotMap.has(taskId)) {
@@ -283,9 +288,18 @@ export class WorkerManagerImpl implements WorkerManager {
       if (!this.agentRuntime) {
         throw new Error('acp-sdk transport requires agentRuntime');
       }
+      // Env vars exposed to the spawned agent process (and its hook scripts).
+      // Hook scripts read these to identify which card/stage they're working on.
+      const extraEnv: Record<string, string> = {
+        SPS_PROJECT: project,
+        SPS_CARD_ID: taskId,
+        SPS_STAGE: stageName,
+        SPS_WORKER_SLOT: slot,
+      };
+      if (cardTitle) extraEnv.SPS_CARD_TITLE = cardTitle;
       const session = resumeSessionId
         ? await this.agentRuntime.resumeRun(slot, prompt)
-        : await this.agentRuntime.startRun(slot, prompt, tool, cwd);
+        : await this.agentRuntime.startRun(slot, prompt, tool, cwd, { extraEnv });
       sessionId = session.sessionId;
       pid = session.pid ?? null;
 

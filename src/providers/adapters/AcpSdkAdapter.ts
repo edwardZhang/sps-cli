@@ -125,11 +125,13 @@ export class AcpSdkAdapter implements ACPClient {
 
     process.stderr.write(`[acp-adapter] Spawning ${input.tool}: ${registry.command} ${registry.args.join(' ')} (cwd=${input.cwd})\n`);
 
-    // Spawn ACP adapter child process
+    // Spawn ACP adapter child process.
+    // extraEnv flows through the shim to claude and then to hook scripts —
+    // used by SPS to inject SPS_CARD_ID / SPS_STAGE / SPS_PROJECT / SPS_WORKER_SLOT.
     const child = spawn(registry.command, registry.args, {
       cwd: input.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: { ...process.env, ...(input.extraEnv ?? {}) },
     });
 
     // IMPORTANT: Register spawn/error listeners and await spawn BEFORE any async

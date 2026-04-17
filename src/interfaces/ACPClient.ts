@@ -32,6 +32,9 @@ export interface EnsureSessionInput {
   logsDir?: string;
   /** MCP servers to attach to this session */
   mcpServers?: McpServerConfig[];
+  /** Extra env vars passed to the spawned agent process (e.g. SPS_CARD_ID, SPS_STAGE).
+   *  These flow through claude-agent-acp to Claude and become available to hook scripts. */
+  extraEnv?: Record<string, string>;
 }
 
 export interface EnsureSessionResult {

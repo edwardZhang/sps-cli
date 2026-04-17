@@ -53,6 +53,8 @@ import { executeAcpCommand } from './commands/acpCommand.js';
 import { executeAgentCommand } from './commands/agentCommand.js';
 import { executeCardAdd } from './commands/cardAdd.js';
 import { executeCardDashboard } from './commands/cardDashboard.js';
+import { executeCardMarkComplete } from './commands/cardMarkComplete.js';
+import { executeHook } from './commands/hookCommand.js';
 import { executeDoctor } from './commands/doctor.js';
 import { executeLogs } from './commands/logs.js';
 import { executeMonitorTick } from './commands/monitorTick.js';
@@ -87,10 +89,11 @@ const COMMANDS: Record<string, CommandInfo> = {
     examples: ['sps setup', 'sps setup --force'] },
   tick:      { desc: '运行持续流水线', usage: 'sps tick <project> [--json]',
     examples: ['sps tick my-project', 'sps tick proj1 proj2'] },
-  card:      { desc: '卡片管理（创建、看板）', usage: 'sps card <子命令> <project> [参数]', subs: {
+  card:      { desc: '卡片管理（创建、看板、标记完成）', usage: 'sps card <子命令> <project> [参数]', subs: {
     add: '创建新任务卡片',
     dashboard: '展示卡片看板',
-  }, examples: ['sps card add my-project "New task"', 'sps card dashboard my-project'] },
+    'mark-complete': '标记卡片完成（Claude Stop hook 使用）',
+  }, examples: ['sps card add my-project "New task"', 'sps card mark-complete my-project 42'] },
   doctor:    { desc: '项目健康检查与状态修复', usage: 'sps doctor <project> [--json] [--fix] [--reset-state] [--skip-remote]',
     examples: ['sps doctor my-project', 'sps doctor my-project --json', 'sps doctor my-project --reset-state'] },
   scheduler: { desc: '调度器：Planning → Backlog 晋升', usage: 'sps scheduler <子命令> <project>', subs: {
@@ -156,6 +159,10 @@ const COMMANDS: Record<string, CommandInfo> = {
   }, examples: ['sps skill sync'] },
   status:    { desc: '显示所有项目运行状态', usage: 'sps status [--json]',
     examples: ['sps status', 'sps status --json'] },
+  hook:      { desc: 'Claude Code hook 事件包装（由 .claude/settings.json 调用）', usage: 'sps hook <event>', subs: {
+    stop: '标记当前卡片完成（COMPLETED-<stage> 标签）',
+    'user-prompt-submit': '若卡片有 skill:* 标签，注入 skill 提示到 prompt',
+  }, examples: ['sps hook stop', 'sps hook user-prompt-submit'] },
 };
 
 function printHelp() {
@@ -215,7 +222,7 @@ interface ParsedArgs {
 }
 
 // Commands that always have subcommands
-const SUBCOMMAND_COMMANDS = new Set(['scheduler', 'pipeline', 'worker', 'acp', 'pm', 'qa', 'monitor', 'project', 'card', 'skill', 'memory']);
+const SUBCOMMAND_COMMANDS = new Set(['scheduler', 'pipeline', 'worker', 'acp', 'pm', 'qa', 'monitor', 'project', 'card', 'skill', 'memory', 'hook']);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const flags: Record<string, boolean> = {};
@@ -492,6 +499,18 @@ async function main() {
     return;
   }
 
+  // ─── hook ──────────────────────────────────────────────────────
+  if (args.command === 'hook') {
+    // Usage: sps hook <event>   (no project arg; context comes from SPS_* env vars)
+    const event = args.subcommand || args.project || '';
+    if (!event) {
+      console.error('Usage: sps hook <stop|user-prompt-submit>');
+      process.exit(2);
+    }
+    await executeHook(event, args.flags as unknown as Record<string, unknown>);
+    return;
+  }
+
   // ─── stop ──────────────────────────────────────────────────────
   if (args.command === 'stop') {
     const projects: string[] = [];
@@ -754,6 +773,14 @@ async function main() {
       if (args.project) projects.push(args.project);
       projects.push(...args.positionals);
       await executeCardDashboard(projects, args.flags);
+      return;
+    }
+    if (args.subcommand === 'mark-complete') {
+      if (!args.project) {
+        console.error('Usage: sps card mark-complete <project> <seq> [--stage <name>]');
+        process.exit(2);
+      }
+      await executeCardMarkComplete(args.project, args.positionals, args.flags as unknown as Record<string, unknown>);
       return;
     }
   }

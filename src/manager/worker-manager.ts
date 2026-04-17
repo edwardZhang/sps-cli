@@ -47,6 +47,10 @@ export interface TaskRunRequest {
   cardId: string;
   project: string;
   phase: WorkerPhase;
+  /** YAML stage name (develop/qa/integrate/...). Used to build COMPLETED-<stageName> label. */
+  stageName: string;
+  /** Human-readable card title (passed to worker as SPS_CARD_TITLE env). */
+  cardTitle?: string;
   prompt: string;
   cwd: string;
   branch: string;

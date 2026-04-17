@@ -35,7 +35,15 @@ export class ACPWorkerRuntime implements AgentRuntime {
     this.runtimeStore = new RuntimeStore(ctx);
   }
 
-  async ensureSession(slot: string, tool?: ACPTool, cwdOverride?: string, opts?: { mcpServers?: import('../interfaces/ACPClient.js').McpServerConfig[] }): Promise<ACPSessionRecord> {
+  async ensureSession(
+    slot: string,
+    tool?: ACPTool,
+    cwdOverride?: string,
+    opts?: {
+      mcpServers?: import('../interfaces/ACPClient.js').McpServerConfig[];
+      extraEnv?: Record<string, string>;
+    },
+  ): Promise<ACPSessionRecord> {
     const state = this.runtimeStore.readACPState();
     const normalizedSlot = this.normalizeSlot(slot);
     const selectedTool = tool || this.defaultTool();
@@ -52,6 +60,7 @@ export class ACPWorkerRuntime implements AgentRuntime {
       resetExisting,
       logsDir: this.ctx.paths.logsDir,
       mcpServers: opts?.mcpServers,
+      extraEnv: opts?.extraEnv,
     });
 
     const session = this.upsertSession(state, normalizedSlot, {
@@ -79,10 +88,16 @@ export class ACPWorkerRuntime implements AgentRuntime {
     return session;
   }
 
-  async startRun(slot: string, prompt: string, tool?: ACPTool, cwdOverride?: string): Promise<ACPSessionRecord> {
+  async startRun(
+    slot: string,
+    prompt: string,
+    tool?: ACPTool,
+    cwdOverride?: string,
+    opts?: { extraEnv?: Record<string, string> },
+  ): Promise<ACPSessionRecord> {
     const normalizedSlot = this.normalizeSlot(slot);
     const _state = this.runtimeStore.readACPState();
-    const session = await this.ensureSession(normalizedSlot, tool, cwdOverride);
+    const session = await this.ensureSession(normalizedSlot, tool, cwdOverride, { extraEnv: opts?.extraEnv });
     if (session.sessionState !== 'ready') {
       throw new Error(`ACP session ${session.sessionId} is not ready (state=${session.sessionState})`);
     }

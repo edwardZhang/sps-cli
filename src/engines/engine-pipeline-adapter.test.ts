@@ -572,6 +572,11 @@ describe('SPSEventHandler uses adapter states', () => {
     };
     writeState(ctx.paths.stateFile, state, 'test');
 
+    // Mock card with COMPLETED-integrate label — signals Claude declared completion
+    taskBackend.getBySeq = vi.fn().mockResolvedValue(
+      makeCard('1', 'Review', { labels: ['COMPLETED-integrate'] }),
+    );
+
     const runtimeStore = new RuntimeStore({
       paths: { stateFile: ctx.paths.stateFile },
       maxWorkers: config.MAX_CONCURRENT_WORKERS,
@@ -624,6 +629,11 @@ describe('SPSEventHandler uses adapter states', () => {
       lastTransitionAt: new Date().toISOString(),
     };
     writeState(ctx.paths.stateFile, state, 'test');
+
+    // Mock card with COMPLETED-develop label
+    taskBackend.getBySeq = vi.fn().mockResolvedValue(
+      makeCard('1', 'Working', { labels: ['COMPLETED-develop'] }),
+    );
 
     const runtimeStore = new RuntimeStore({
       paths: { stateFile: ctx.paths.stateFile },

@@ -442,6 +442,38 @@ write them as memory files. See the sps-memory skill for format and rules.
  * Check whether CLAUDE.md, AGENTS.md, and .gitignore entries exist in the repo.
  * If --fix, generate missing files and commit them.
  */
+/**
+ * Default .claude/settings.json content. Wires Claude Code native hooks to
+ * SPS subcommands so the pipeline gets signals (COMPLETED-<stage> label) and
+ * skill hints without each user writing custom shell.
+ */
+function generateClaudeHookSettings(): string {
+  return JSON.stringify({
+    hooks: {
+      Stop: [
+        {
+          hooks: [
+            {
+              type: 'command',
+              command: 'sps hook stop',
+            },
+          ],
+        },
+      ],
+      UserPromptSubmit: [
+        {
+          hooks: [
+            {
+              type: 'command',
+              command: 'sps hook user-prompt-submit',
+            },
+          ],
+        },
+      ],
+    },
+  }, null, 2) + '\n';
+}
+
 function checkWorkerRulesFiles(
   ctx: ProjectContext,
   checks: CheckResult[],
@@ -451,11 +483,16 @@ function checkWorkerRulesFiles(
 ): void {
   const repoDir = ctx.paths.repoDir;
   const claudeMd = resolve(repoDir, 'CLAUDE.md');
+  const claudeSettings = resolve(repoDir, '.claude', 'settings.json');
 
   const hasClaudeMd = existsSync(claudeMd);
+  const hasClaudeSettings = existsSync(claudeSettings);
   const requiredFile = 'CLAUDE.md';
-  const hasRequired = hasClaudeMd;
-  const presentFiles = hasClaudeMd ? ['CLAUDE.md'] : [];
+  const hasRequired = hasClaudeMd && hasClaudeSettings;
+  const presentFiles = [
+    hasClaudeMd && 'CLAUDE.md',
+    hasClaudeSettings && '.claude/settings.json',
+  ].filter(Boolean) as string[];
 
   if (hasRequired && !gitignoreModified) {
     checks.push({ name: 'worker-rules', status: 'pass', message: `${presentFiles.join(' and ')} present in repo` });
@@ -477,6 +514,12 @@ function checkWorkerRulesFiles(
     if (!hasClaudeMd) {
       writeFileSync(claudeMd, content);
       created.push('CLAUDE.md');
+    }
+
+    if (!hasClaudeSettings) {
+      mkdirSync(resolve(repoDir, '.claude'), { recursive: true });
+      writeFileSync(claudeSettings, generateClaudeHookSettings());
+      created.push('.claude/settings.json');
     }
 
     if (created.length > 0 || gitignoreModified) {

@@ -103,6 +103,7 @@ function makeRunRequest(taskId: string, project = 'test') {
     cardId: taskId,
     project,
     phase: 'development' as WorkerPhase,
+    stageName: 'develop',
     prompt: 'implement feature X',
     cwd: '/tmp/worktree',
     branch: `feat-${taskId}`,
