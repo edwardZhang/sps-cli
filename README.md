@@ -456,6 +456,7 @@ sps project init <project> [--force]
 
 **Created directory structure:**
 
+SPS management directory (`~/.coral/projects/<project>/`):
 ```
 ~/.coral/projects/<project>/
 ├── conf                    # Project configuration file (generated from template)
@@ -467,9 +468,21 @@ sps project init <project> [--force]
 └── deploy.sh               # Deployment script template
 ```
 
+Target project repo (`<PROJECT_DIR>/.claude/`, installed when the repo path exists):
+```
+<PROJECT_DIR>/.claude/
+├── settings.json                 # Stop + UserPromptSubmit hooks (committed)
+├── settings.local.json           # autoMemoryDirectory (gitignored)
+├── CLAUDE.md                     # Project rules skeleton
+├── hooks/
+│   └── stop.sh                   # Default Stop hook script (marks COMPLETED-<stage>)
+├── skills/                       # Empty; add project-specific skills here
+└── rules/                        # Empty; add path-scoped rules here
+```
+
 | Option | Description |
 |--------|-------------|
-| `--force` | Overwrite template files (conf will not be overwritten) |
+| `--force` | Overwrite template files (conf will not be overwritten; `.claude/` files are preserved) |
 
 **Example:**
 

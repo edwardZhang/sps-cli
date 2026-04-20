@@ -18,7 +18,7 @@
  * @outputs       初始化后的项目目录和配置文件
  * @workflow      1. 查找模板目录 → 2. 创建项目目录 → 3. 复制模板文件 → 4. 写入配置
  */
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +41,69 @@ function findTemplateDir(): string {
   return npmPath; // default, will fail gracefully below
 }
 
-const _TEMPLATE_DIR = findTemplateDir();
+const TEMPLATE_DIR = findTemplateDir();
+
+/**
+ * Install the bundled `.claude/` preset (hooks, settings, CLAUDE.md skeleton)
+ * into the target project repo. Non-destructive: skips any file that already
+ * exists, so running `sps project init --force` won't clobber user edits.
+ *
+ * The template lives at `<TEMPLATE_DIR>/.claude/` and is shipped with the npm
+ * package via the `files` field in package.json.
+ */
+function installClaudePreset(projectDir: string, projectName: string, log: Logger): void {
+  const templateClaude = resolve(TEMPLATE_DIR, '.claude');
+  if (!existsSync(templateClaude)) {
+    log.warn(`Template .claude/ not found at ${templateClaude}, skipping preset install`);
+    return;
+  }
+  if (!existsSync(projectDir)) {
+    log.info(`Project repo ${projectDir} does not exist yet — skipping .claude/ install`);
+    return;
+  }
+
+  const targetClaude = resolve(projectDir, '.claude');
+  const preExisted = existsSync(targetClaude);
+
+  // Copy recursively, without clobbering existing files.
+  cpSync(templateClaude, targetClaude, {
+    recursive: true,
+    force: false,
+    errorOnExist: false,
+  });
+
+  // Materialize settings.local.json from template (substitute __PROJECT__).
+  const settingsLocalTmpl = resolve(targetClaude, 'settings.local.json.template');
+  const settingsLocal = resolve(targetClaude, 'settings.local.json');
+  if (existsSync(settingsLocalTmpl) && !existsSync(settingsLocal)) {
+    const content = readFileSync(settingsLocalTmpl, 'utf-8').replace(/__PROJECT__/g, projectName);
+    writeFileSync(settingsLocal, content);
+  }
+  // Remove the template so users don't accidentally edit it thinking it's live.
+  if (existsSync(settingsLocalTmpl)) {
+    rmSync(settingsLocalTmpl);
+  }
+
+  // Ensure hook scripts are executable (cpSync preserves mode, but play safe).
+  const stopHook = resolve(targetClaude, 'hooks', 'stop.sh');
+  if (existsSync(stopHook)) {
+    try { chmodSync(stopHook, 0o755); } catch { /* non-fatal */ }
+  }
+
+  // Append .claude/settings.local.json to .gitignore (idempotent).
+  const gitignore = resolve(projectDir, '.gitignore');
+  const entry = '.claude/settings.local.json';
+  let existing = '';
+  if (existsSync(gitignore)) existing = readFileSync(gitignore, 'utf-8');
+  if (!existing.split('\n').some(line => line.trim() === entry)) {
+    const prefix = existing && !existing.endsWith('\n') ? '\n' : '';
+    appendFileSync(gitignore, `${prefix}${entry}\n`);
+  }
+
+  log.ok(preExisted
+    ? `Refreshed .claude/ preset in ${projectDir} (existing files preserved)`
+    : `Installed .claude/ preset into ${projectDir}`);
+}
 
 export async function executeProjectInit(
   project: string,
@@ -362,6 +424,21 @@ stages:
   if (!existsSync(memoryDir)) {
     mkdirSync(memoryDir, { recursive: true });
     log.ok(`Created project memory at ${memoryDir}`);
+  }
+
+  // Install Claude preset into the target project repo (if it exists).
+  // Read PROJECT_DIR from the generated conf (covers both interactive and
+  // existing-conf paths; no need to thread projectDir through local scope).
+  try {
+    const confContent = readFileSync(confDst, 'utf-8');
+    const match = confContent.match(/export\s+PROJECT_DIR=["']?([^"'\n]+)/);
+    const projectDir = match?.[1]?.trim();
+    if (projectDir) {
+      installClaudePreset(projectDir, project, log);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`Could not install Claude preset (non-fatal): ${msg}`);
   }
 
   log.ok(`Project ${project} initialized at ${instanceDir}`);
