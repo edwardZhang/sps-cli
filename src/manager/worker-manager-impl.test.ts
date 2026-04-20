@@ -164,6 +164,30 @@ describe('WorkerManagerImpl', () => {
       expect(r2.slot).toBe('worker-2');
       expect(r3.slot).toBe('worker-3');
     });
+
+    it('injects only stable env vars into agent subprocess (regression guard)', async () => {
+      // v0.40.2: SPS_CARD_ID / SPS_STAGE / SPS_CARD_TITLE were removed because
+      // POSIX env is frozen at spawn and goes stale when claude is reused for
+      // the next card. Only SPS_PROJECT and SPS_WORKER_SLOT (both stable across
+      // reuse) should be injected. Hooks must read the marker file instead.
+      ctx = setup(1);
+      await ctx.wm.run(makeRunRequest('1'));
+
+      expect(ctx.agentRuntime.startRun).toHaveBeenCalledTimes(1);
+      const opts = ctx.agentRuntime.startRun.mock.calls[0][4];
+      expect(opts).toBeDefined();
+      expect(opts.extraEnv).toBeDefined();
+
+      const envKeys = Object.keys(opts.extraEnv).sort();
+      expect(envKeys).toEqual(['SPS_PROJECT', 'SPS_WORKER_SLOT']);
+      expect(opts.extraEnv.SPS_PROJECT).toBe('test');
+      expect(opts.extraEnv.SPS_WORKER_SLOT).toBe('worker-1');
+
+      // Explicit assertions: per-card values must NOT be in env.
+      expect(opts.extraEnv).not.toHaveProperty('SPS_CARD_ID');
+      expect(opts.extraEnv).not.toHaveProperty('SPS_STAGE');
+      expect(opts.extraEnv).not.toHaveProperty('SPS_CARD_TITLE');
+    });
   });
 
   describe('inspect', () => {

@@ -4,13 +4,17 @@
 # Triggered when Claude finishes its current turn. The pipeline depends on
 # Phase 1 to advance card state. Phase 2+ is user-customizable.
 #
-# Env vars (set by SPS worker at spawn time, FROZEN for the process lifetime):
+# Env vars (set by SPS worker at spawn time, frozen for the process lifetime):
 #   SPS_PROJECT       Project name (stable across card reuse)
-#   SPS_WORKER_SLOT   Worker slot (stable across card reuse)
-#   SPS_CARD_ID       Card sequence — NOTE: stale when claude is reused for
-#                     the next card. Do NOT use for mark-complete.
-#   SPS_STAGE         Pipeline stage — also stale on reuse.
-#   SPS_CARD_TITLE    Card title (optional)
+#   SPS_WORKER_SLOT   Worker slot name (stable across card reuse)
+#
+# These two env vars form the index to locate the per-slot marker file:
+#   ~/.coral/projects/$SPS_PROJECT/runtime/worker-$SPS_WORKER_SLOT-current.json
+#
+# Per-card info (card id, stage name, card title) is intentionally NOT in env.
+# POSIX freezes env at spawn; when the claude process is reused for the next
+# card, any per-card env would go stale. Always read the marker file (or use
+# `sps` CLI) to get current card information.
 #
 # Claude-native env also available:
 #   CLAUDE_PROJECT_DIR, CLAUDE_SESSION_ID

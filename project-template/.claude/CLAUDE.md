@@ -14,13 +14,18 @@
 ## SPS Pipeline Context
 
 This project is driven by SPS (Smart Pipeline System). Each card is a task.
-When you are launched as a worker, the following env vars identify your task:
+When you are launched as a worker, two env vars identify your stable context:
 
-- `$SPS_PROJECT` — project name
-- `$SPS_CARD_ID` — card sequence number
-- `$SPS_CARD_TITLE` — card title (for logging)
-- `$SPS_STAGE` — pipeline stage name (e.g. `develop`, `qa`)
-- `$SPS_WORKER_SLOT` — worker slot name
+- `$SPS_PROJECT` — project name (stable across card reuse)
+- `$SPS_WORKER_SLOT` — worker slot name (stable across card reuse)
+
+Per-card information (card id, stage name, title) is **not** in env. POSIX
+freezes env at spawn, so any per-card value would go stale once the claude
+process is reused for the next card. If you need the current card info,
+read the marker file or use the `sps` CLI:
+
+- Marker file: `~/.coral/projects/$SPS_PROJECT/runtime/worker-$SPS_WORKER_SLOT-current.json`
+- CLI: `sps card dashboard $SPS_PROJECT` (or the command your task prompt already passed to you)
 
 ## Completion protocol
 
@@ -36,7 +41,7 @@ When you are launched as a worker, the following env vars identify your task:
 - Claude's **auto memory** is enabled and stored under
   `~/.coral/projects/$SPS_PROJECT/memory/`. You write to `MEMORY.md` there
   to persist knowledge across sessions.
-- Use `sps memory add <project> --type ...` to write structured SPS memories
+- Use `sps memory add $SPS_PROJECT --type ...` to write structured SPS memories
   (conventions, decisions, lessons) for the human to curate.
 
 ## Git (if the project uses git)

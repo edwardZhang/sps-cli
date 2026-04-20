@@ -291,19 +291,21 @@ export class WorkerManagerImpl implements WorkerManager {
         throw new Error('acp-sdk transport requires agentRuntime');
       }
       // Env vars exposed to the spawned agent process (and its hook scripts).
-      // Hook scripts read these to identify which card/stage they're working on.
+      //
+      // Only stable identity — values that do not change across card dispatches
+      // within the same claude process lifetime. Per-card info (cardId, stage,
+      // title) is NOT injected: POSIX env is frozen at spawn, so any per-card
+      // value here would go stale once the process is reused for the next card.
+      // Hooks that need the current card info must read the marker file instead
+      // (see writeCurrentCardFile below); the SPS_PROJECT + SPS_WORKER_SLOT pair
+      // serves as the marker file path index.
       const extraEnv: Record<string, string> = {
         SPS_PROJECT: project,
-        SPS_CARD_ID: taskId,
-        SPS_STAGE: stageName,
         SPS_WORKER_SLOT: slot,
       };
-      if (cardTitle) extraEnv.SPS_CARD_TITLE = cardTitle;
 
-      // Atomically write per-slot "current card" marker. Env vars are frozen
-      // at subprocess spawn; when the same claude process is reused for the
-      // next card, its env still points to the first card. Stop hooks must
-      // read this file (not env) to know the current card.
+      // Atomically write per-slot "current card" marker. This is the
+      // authoritative source of current-card info for hook scripts.
       this.writeCurrentCardFile(slot, taskId, stageName);
 
       const session = resumeSessionId

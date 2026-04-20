@@ -66,9 +66,9 @@ export async function executeCardMarkComplete(
   //   2. runtime/worker-<SPS_WORKER_SLOT>-current.json (hook usage — reliable
   //      across claude process reuse)
   //
-  // We intentionally DO NOT fall back to $SPS_CARD_ID because it's frozen at
-  // subprocess spawn time and causes the wrong card to be marked when the
-  // claude process is reused for the next card.
+  // SPS v0.40.2+ no longer injects SPS_CARD_ID/SPS_STAGE/SPS_CARD_TITLE into
+  // the claude subprocess env (they would go stale on process reuse). The
+  // marker file is the single source of truth for current-card info.
   let seq = positionals[0];
   const stageFromFlag = typeof flags.stage === 'string' ? flags.stage : undefined;
   let stageFromMarker: string | undefined;
