@@ -24,6 +24,10 @@ export interface CurrentCardMarker {
   cardId: string;
   stage: string;
   dispatchedAt: string;
+  /** ACP session ID — set after spawn succeeds (optional for backward compat). */
+  sessionId?: string;
+  /** Claude-agent-acp PID — set after spawn succeeds (optional for backward compat). */
+  pid?: number;
 }
 
 /**
@@ -48,12 +52,15 @@ export function getMarkerPathFromStateFile(stateFile: string, slot: string): str
  * Atomically write the marker file. Uses tmp + rename so readers never see
  * a half-written file. Errors are non-fatal (logged via onError callback) —
  * hook downstream will fail closed (exit 2) rather than silently mis-mark.
+ *
+ * `extra` adds post-spawn metadata (sessionId, pid) via a second atomic write.
  */
 export function writeCurrentCardFile(
   finalPath: string,
   cardId: string,
   stage: string,
   onError?: (err: unknown) => void,
+  extra?: { sessionId?: string; pid?: number },
 ): void {
   try {
     const tmpPath = `${finalPath}.tmp`;
@@ -61,8 +68,36 @@ export function writeCurrentCardFile(
       cardId,
       stage,
       dispatchedAt: new Date().toISOString(),
+      ...(extra?.sessionId ? { sessionId: extra.sessionId } : {}),
+      ...(extra?.pid !== undefined ? { pid: extra.pid } : {}),
     };
     writeFileSync(tmpPath, JSON.stringify(payload));
+    renameSync(tmpPath, finalPath);
+  } catch (err) {
+    if (onError) onError(err);
+  }
+}
+
+/**
+ * Patch an existing marker file with post-spawn metadata (sessionId, pid).
+ * Reads current contents → merges new fields → atomic rewrites. Preserves
+ * `dispatchedAt` so the ACK-timeout clock is not reset.
+ */
+export function patchCurrentCardFile(
+  finalPath: string,
+  patch: { sessionId?: string; pid?: number },
+  onError?: (err: unknown) => void,
+): void {
+  try {
+    const existingRaw = readFileSync(finalPath, 'utf-8');
+    const existing = JSON.parse(existingRaw) as CurrentCardMarker;
+    const merged: CurrentCardMarker = {
+      ...existing,
+      ...(patch.sessionId ? { sessionId: patch.sessionId } : {}),
+      ...(patch.pid !== undefined ? { pid: patch.pid } : {}),
+    };
+    const tmpPath = `${finalPath}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(merged));
     renameSync(tmpPath, finalPath);
   } catch (err) {
     if (onError) onError(err);
@@ -84,6 +119,8 @@ export function readCurrentCardMarker(project: string, slot: string): CurrentCar
       cardId: String(parsed.cardId),
       stage: String(parsed.stage ?? ''),
       dispatchedAt: String(parsed.dispatchedAt ?? ''),
+      ...(parsed.sessionId ? { sessionId: String(parsed.sessionId) } : {}),
+      ...(parsed.pid !== undefined ? { pid: Number(parsed.pid) } : {}),
     };
   } catch {
     return null;

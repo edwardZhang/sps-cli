@@ -14,7 +14,9 @@
  * @boundedContext worker-lifecycle
  */
 import { execFileSync } from 'node:child_process';
-import { getMarkerPathFromStateFile, writeCurrentCardFile } from '../core/markerFile.js';
+import { readdirSync, unlinkSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { getMarkerPathFromStateFile, patchCurrentCardFile, writeCurrentCardFile } from '../core/markerFile.js';
 import type { RuntimeState, TaskLease, WorktreeEvidence } from '../core/state.js';
 import { createIdleWorkerSlot, readState, writeState } from '../core/state.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
@@ -343,6 +345,12 @@ export class WorkerManagerImpl implements WorkerManager {
       postState.workers[slot].sessionId = sessionId ?? null;
       this.wr(postState, `${label}-pid`);
     }
+
+    // v0.41.2: Patch marker file with sessionId + pid now that spawn succeeded.
+    // First write (pre-spawn) has cardId/stage/dispatchedAt so hooks work even
+    // if this patch fails. Extra fields are for post-mortem correlation with
+    // ACP/OS logs.
+    this.patchCurrentCardFile(slot, { sessionId: sessionId ?? undefined, pid: pid ?? undefined });
 
     this.log(`Launched ${transport}/${tool} worker ${workerId} in ${slot} (pid=${pid})`);
     this.startTimeout(taskId, phase, project, slot, ctx.customTimeoutSec);
@@ -818,7 +826,20 @@ export class WorkerManagerImpl implements WorkerManager {
     }
     this.acpMonitorAborts.clear();
 
-    this.log('Cleanup: cleared all timeouts and ACP monitors');
+    // v0.41.2: Hygiene — delete per-slot marker files so the runtime/ dir
+    // doesn't accumulate stale files across tick runs. Safe here because
+    // cleanup only fires on tick exit (no active hook could still need them).
+    try {
+      const runtimeDir = dirname(this.stateFile);
+      const entries = readdirSync(runtimeDir);
+      for (const name of entries) {
+        if (/^worker-.*-current\.json(\.tmp)?$/.test(name)) {
+          try { unlinkSync(resolve(runtimeDir, name)); } catch { /* best effort */ }
+        }
+      }
+    } catch { /* runtime dir may not exist, non-fatal */ }
+
+    this.log('Cleanup: cleared all timeouts, ACP monitors, and marker files');
   }
 
   private reject(reason: TaskRunResponse['rejectReason']): TaskRunResponse {
@@ -836,6 +857,18 @@ export class WorkerManagerImpl implements WorkerManager {
     const finalPath = getMarkerPathFromStateFile(this.stateFile, slot);
     writeCurrentCardFile(finalPath, cardId, stage, (err) => {
       this.log(`Failed to write current-card marker for ${slot}:${cardId} — ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
+
+  /**
+   * Merge sessionId + pid into the existing marker file after a successful
+   * spawn. Non-fatal: if the marker was deleted or patching fails, the base
+   * info (cardId/stage) from the first write is still there so hooks work.
+   */
+  private patchCurrentCardFile(slot: string, patch: { sessionId?: string; pid?: number }): void {
+    const finalPath = getMarkerPathFromStateFile(this.stateFile, slot);
+    patchCurrentCardFile(finalPath, patch, (err) => {
+      this.log(`Failed to patch current-card marker for ${slot} with sessionId/pid — ${err instanceof Error ? err.message : String(err)}`);
     });
   }
 }

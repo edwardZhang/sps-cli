@@ -234,6 +234,27 @@ describe('WorkerManagerImpl', () => {
     });
   });
 
+  describe('cleanup (v0.41.2)', () => {
+    it('deletes per-slot marker files on cleanup', async () => {
+      ctx = setup(2);
+      // Force-create a marker by running a task (writes marker)
+      await ctx.wm.run(makeRunRequest('1'));
+
+      const { existsSync } = await import('node:fs');
+      const { resolve, dirname } = await import('node:path');
+      const markerPath = resolve(dirname(ctx.stateFile), 'worker-worker-1-current.json');
+      expect(existsSync(markerPath)).toBe(true);
+
+      ctx.wm.cleanup();
+      expect(existsSync(markerPath)).toBe(false);
+    });
+
+    it('cleanup is a no-op when no marker files exist', async () => {
+      ctx = setup(2);
+      expect(() => ctx.wm.cleanup()).not.toThrow();
+    });
+  });
+
   describe('cancel', () => {
     it('cancels a running task', async () => {
       ctx = setup(2);

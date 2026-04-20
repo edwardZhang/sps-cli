@@ -62,7 +62,7 @@ function getSharedModules() {
 
 // ─── Per-project isolated runner ─────────────────────────────────
 
-interface ProjectRunner {
+export interface ProjectRunner {
   project: string;
   ctx: ProjectContext;
   pipelineAdapter: ProjectPipelineAdapter;
@@ -331,7 +331,15 @@ export async function executeTick(
           runner.idleCount = 0;
         } else {
           runner.idleCount++;
+          // v0.41.2: promote the periodic heartbeat to info level so operators
+          // can distinguish "tick alive, just nothing to do" from "tick died".
+          // Debug log (every tick) still available if --verbose is on; info
+          // log fires on the first idle tick and then every 10th (~5 min at
+          // 30s interval).
           if (runner.idleCount === 1 || runner.idleCount % 10 === 0) {
+            const heartbeat = buildHeartbeat(runner);
+            runner.log.info(`[tick #${runner.tickNum}] ${heartbeat}`);
+          } else {
             runner.log.debug(`[tick #${runner.tickNum}] idle (${runner.idleCount})`);
           }
         }
@@ -470,6 +478,42 @@ async function runOneTick(
     recommendedActions: [],
     details: {},
   };
+}
+
+/**
+ * Build a one-line heartbeat string for idle ticks. Describes whether any
+ * workers are active and what they're doing so operators can distinguish
+ * "tick alive, just waiting on claude" from "tick died".
+ *
+ * Exported for unit testing. Production code calls it via the idle branch in
+ * the main tick loop.
+ */
+export function buildHeartbeat(runner: ProjectRunner): string {
+  try {
+    const state = readState(runner.ctx.paths.stateFile, runner.ctx.maxWorkers);
+    const workers = Object.entries(state.workers);
+    const active = workers.filter(([, w]) => w.status !== 'idle');
+    const idleCount = workers.length - active.length;
+
+    if (active.length === 0) {
+      return `heartbeat: idle (${idleCount}/${workers.length} slots free, no active cards)`;
+    }
+
+    const now = Date.now();
+    const activeSummaries = active.map(([slot, w]) => {
+      const seq = w.seq ?? '?';
+      const lease = state.leases[String(w.seq)];
+      const claimedAt = lease?.claimedAt || w.claimedAt;
+      const runningS = claimedAt ? Math.round((now - new Date(claimedAt).getTime()) / 1000) : 0;
+      const lastEvent = w.lastHeartbeat ? Math.round((now - new Date(w.lastHeartbeat).getTime()) / 1000) : null;
+      const lastEventStr = lastEvent !== null ? `, last event ${lastEvent}s ago` : '';
+      return `${slot}→seq:${seq} running ${runningS}s${lastEventStr}`;
+    }).join('; ');
+
+    return `heartbeat: ${active.length}/${workers.length} active (${activeSummaries})`;
+  } catch {
+    return `heartbeat: idle (state file unreadable)`;
+  }
 }
 
 async function checkAllDone(
