@@ -25,6 +25,7 @@ import type { Notifier } from '../interfaces/Notifier.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { ProcessSupervisor } from '../manager/supervisor.js';
+import type { WorkerManager } from '../manager/worker-manager.js';
 import { MonitorEngine } from './MonitorEngine.js';
 
 function makeTempDir(): string {
@@ -85,6 +86,20 @@ function makeSession(pid: number, slot = 'worker-1') {
   };
 }
 
+function makeWorkerManager(): WorkerManager {
+  return {
+    run: vi.fn().mockResolvedValue({ accepted: true, slot: 'worker-1', workerId: 'w', pid: 1 }),
+    resume: vi.fn().mockResolvedValue({ accepted: true, slot: 'worker-1', workerId: 'w', pid: 1 }),
+    cancel: vi.fn().mockResolvedValue(undefined),
+    sendInput: vi.fn().mockResolvedValue(undefined),
+    confirm: vi.fn().mockResolvedValue(undefined),
+    inspect: vi.fn().mockReturnValue([]),
+    onEvent: vi.fn(),
+    recover: vi.fn().mockResolvedValue({ scanned: 0, alive: 0, completed: 0, failed: 0, released: 0, queueRebuilt: 0 }),
+    cleanup: vi.fn(),
+  } as unknown as WorkerManager;
+}
+
 function makeEngine(tempDir: string): MonitorEngine {
   const ctx = makeCtx(tempDir);
   const taskBackend = { move: vi.fn().mockResolvedValue(undefined), addLabel: vi.fn(), removeLabel: vi.fn(), comment: vi.fn() } as unknown as TaskBackend;
@@ -102,7 +117,7 @@ function makeEngine(tempDir: string): MonitorEngine {
     stages: [], activeStates: [],
   } as unknown as ProjectPipelineAdapter;
 
-  return new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter);
+  return new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter, makeWorkerManager());
 }
 
 describe('MonitorEngine.checkAcpShimHealth', () => {
@@ -247,7 +262,7 @@ describe('MonitorEngine.checkAckTimeout', () => {
       activeStates: ['Planning', 'Backlog', 'Todo', 'Inprogress'],
     } as unknown as ProjectPipelineAdapter;
 
-    return { engine: new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter), addLabel };
+    return { engine: new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter, makeWorkerManager()), addLabel };
   }
 
   function writeLeaseState(seq: string, claimedAt: string) {
@@ -324,5 +339,94 @@ describe('MonitorEngine.checkAckTimeout', () => {
 
     await engine.tick();
     expect(addLabel).not.toHaveBeenCalledWith('42', 'ACK-TIMEOUT');
+  });
+});
+
+describe('MonitorEngine.autoRetry (v0.41.1 bug fixes)', () => {
+  let tempDir: string;
+
+  beforeEach(() => { tempDir = makeTempDir(); });
+  afterEach(() => { rmSync(tempDir, { recursive: true, force: true }); });
+
+  function makeRetryEngine(): {
+    engine: MonitorEngine;
+    workerManager: WorkerManager;
+    cancelMock: ReturnType<typeof vi.fn>;
+    removeLabelMock: ReturnType<typeof vi.fn>;
+  } {
+    const ctx = makeCtx(tempDir);
+    const removeLabelMock = vi.fn().mockResolvedValue(undefined);
+    const taskBackend = {
+      move: vi.fn().mockResolvedValue(undefined),
+      addLabel: vi.fn().mockResolvedValue(undefined),
+      removeLabel: removeLabelMock,
+      comment: vi.fn(),
+      listByState: vi.fn().mockResolvedValue([]),
+    } as unknown as TaskBackend;
+    const repoBackend = { getMrStatus: vi.fn().mockResolvedValue({ exists: false, state: 'unknown' }) } as unknown as RepoBackend;
+    const notifier = {
+      send: vi.fn().mockResolvedValue(undefined),
+      sendSuccess: vi.fn().mockResolvedValue(undefined),
+      sendWarning: vi.fn().mockResolvedValue(undefined),
+      sendError: vi.fn().mockResolvedValue(undefined),
+      sendDigest: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Notifier;
+    const supervisor = { kill: vi.fn().mockResolvedValue(undefined), get: vi.fn(), remove: vi.fn() } as unknown as ProcessSupervisor;
+    const pipelineAdapter = {
+      states: { ready: 'Todo', planning: 'Planning', backlog: 'Backlog', done: 'Done', review: 'QA' },
+      stages: [
+        { name: 'develop', triggerState: 'Todo', activeState: 'Inprogress', onCompleteState: 'Done' },
+        { name: 'review', triggerState: 'QA', activeState: 'QA', onCompleteState: 'Done' },
+      ],
+      activeStates: ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA'],
+    } as unknown as ProjectPipelineAdapter;
+
+    const cancelMock = vi.fn().mockResolvedValue(undefined);
+    const workerManager = {
+      ...makeWorkerManager(),
+      cancel: cancelMock,
+    } as unknown as WorkerManager;
+
+    return {
+      engine: new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter, workerManager),
+      workerManager,
+      cancelMock,
+      removeLabelMock,
+    };
+  }
+
+  it('calls workerManager.cancel to release taskSlotMap (Bug 2 fix)', async () => {
+    const { engine, cancelMock } = makeRetryEngine();
+    // Invoke the private method directly via casting — this is the core
+    // behavior we want to guarantee; integration via tick() is covered by smoke.
+    await (engine as any).autoRetry('42', 'worker-1', [], 'test');
+
+    expect(cancelMock).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: '42',
+      reason: 'anomaly',
+    }));
+  });
+
+  it('clears STARTED-<stage> labels for all stages (Bug 1 fix)', async () => {
+    const { engine, removeLabelMock } = makeRetryEngine();
+    await (engine as any).autoRetry('42', 'worker-1', [], 'test');
+
+    expect(removeLabelMock).toHaveBeenCalledWith('42', 'STARTED-develop');
+    expect(removeLabelMock).toHaveBeenCalledWith('42', 'STARTED-review');
+  });
+
+  it('clears ACK-TIMEOUT label so next retry is clean', async () => {
+    const { engine, removeLabelMock } = makeRetryEngine();
+    await (engine as any).autoRetry('42', 'worker-1', [], 'test');
+
+    expect(removeLabelMock).toHaveBeenCalledWith('42', 'ACK-TIMEOUT');
+  });
+
+  it('still clears legacy labels (CLAIMED, STALE-RUNTIME)', async () => {
+    const { engine, removeLabelMock } = makeRetryEngine();
+    await (engine as any).autoRetry('42', 'worker-1', [], 'test');
+
+    expect(removeLabelMock).toHaveBeenCalledWith('42', 'CLAIMED');
+    expect(removeLabelMock).toHaveBeenCalledWith('42', 'STALE-RUNTIME');
   });
 });

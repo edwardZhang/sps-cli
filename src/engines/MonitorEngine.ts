@@ -25,6 +25,7 @@ import type { Notifier } from '../interfaces/Notifier.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { ProcessSupervisor } from '../manager/supervisor.js';
+import type { WorkerManager } from '../manager/worker-manager.js';
 import type { ActionRecord, CheckResult, CommandResult, RecommendedAction } from '../models/types.js';
 import { isProcessAlive } from '../providers/outputParser.js';
 
@@ -51,6 +52,7 @@ export class MonitorEngine {
     private notifier: Notifier | undefined,
     private supervisor: ProcessSupervisor,
     private pipelineAdapter: ProjectPipelineAdapter,
+    private workerManager: WorkerManager,
   ) {
     this.log = new Logger('monitor', ctx.projectName, ctx.paths.logsDir);
     this.runtimeStore = new RuntimeStore(ctx);
@@ -816,9 +818,31 @@ export class MonitorEngine {
 
     if (retryCount < restartLimit) {
       try {
+        // v0.41.1: Tell WorkerManager to release its taskSlotMap entry + kill
+        // the shim process. Without this, the next launchWorker will hit
+        // `duplicate_task` and this card will be permanently skipped while
+        // newer cards get dispatched past it.
+        try {
+          await this.workerManager.cancel({
+            taskId: seq, project: this.ctx.projectName, reason: 'anomaly',
+          });
+        } catch (err) {
+          this.log.warn(`WorkerManager.cancel failed for seq ${seq} (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+        }
+
         await this.taskBackend.move(seq, this.pipelineAdapter.states.ready);
         await this.removeLabelSafe(seq, 'CLAIMED');
         await this.removeLabelSafe(seq, 'STALE-RUNTIME');
+        await this.removeLabelSafe(seq, 'ACK-TIMEOUT');
+
+        // v0.41.1: Clear every STARTED-<stage> label. If left, MonitorEngine's
+        // ACK-timeout check sees the stale label and skips the card — ACK
+        // probe silently disabled after the first retry. We don't know the
+        // stage here, so clear for every defined stage.
+        for (const stage of this.pipelineAdapter.stages) {
+          await this.removeLabelSafe(seq, `STARTED-${stage.name}`);
+        }
+
         this.runtimeStore.updateState('monitor-auto-retry', (draft) => {
           this.runtimeStore.clearWorkerSlot(draft, slotName);
           delete draft.activeCards[seq];

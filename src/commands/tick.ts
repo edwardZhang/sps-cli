@@ -178,7 +178,7 @@ function createRunner(project: string): ProjectRunner | null {
         taskBackend, repoBackend, workerManager, pipelineAdapter, notifier,
       ),
     ),
-    monitor: new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter),
+    monitor: new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter, workerManager),
     done: false,
     fatalError: false,
     tickNum: 0,

@@ -22,7 +22,9 @@ import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 import { MonitorEngine } from '../engines/MonitorEngine.js';
+import { CompletionJudge } from '../manager/completion-judge.js';
 import { ProcessSupervisor } from '../manager/supervisor.js';
+import { WorkerManagerImpl } from '../manager/worker-manager-impl.js';
 import { createNotifier, createRepoBackend, createTaskBackend } from '../providers/registry.js';
 
 export async function executeMonitorTick(
@@ -50,7 +52,14 @@ export async function executeMonitorTick(
   const notifier = createNotifier(ctx.config);
   const supervisor = new ProcessSupervisor();
   const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
-  const engine = new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter);
+  const workerManager = new WorkerManagerImpl({
+    supervisor,
+    completionJudge: new CompletionJudge(),
+    agentRuntime: null,
+    stateFile: ctx.paths.stateFile,
+    maxWorkers: ctx.maxWorkers,
+  });
+  const engine = new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter, workerManager);
   const result = await engine.tick();
 
   if (jsonOutput) {

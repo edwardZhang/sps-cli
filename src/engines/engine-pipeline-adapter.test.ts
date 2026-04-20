@@ -196,6 +196,20 @@ function makeSupervisor(): ProcessSupervisor {
   } as unknown as ProcessSupervisor;
 }
 
+function makeWorkerManagerStub() {
+  return {
+    run: vi.fn().mockResolvedValue({ accepted: true, slot: 'worker-1', workerId: 'w', pid: 1 }),
+    resume: vi.fn().mockResolvedValue({ accepted: true, slot: 'worker-1', workerId: 'w', pid: 1 }),
+    cancel: vi.fn().mockResolvedValue(undefined),
+    sendInput: vi.fn().mockResolvedValue(undefined),
+    confirm: vi.fn().mockResolvedValue(undefined),
+    inspect: vi.fn().mockReturnValue([]),
+    onEvent: vi.fn(),
+    recover: vi.fn().mockResolvedValue({ scanned: 0, alive: 0, completed: 0, failed: 0, released: 0, queueRebuilt: 0 }),
+    cleanup: vi.fn(),
+  } as any;
+}
+
 // ─── Setup pipeline adapter from YAML fixture ──────────────────────
 
 function setupAdapterWithCustomYaml(tempDir: string, config: ProjectConfig): ProjectPipelineAdapter {
@@ -448,7 +462,7 @@ describe('MonitorEngine uses adapter states', () => {
     const state = makeDefaultState(2);
     writeState(ctx.paths.stateFile, state, 'test');
 
-    const engine = new MonitorEngine(ctx, taskBackend, repoBackend, undefined, supervisor, adapter);
+    const engine = new MonitorEngine(ctx, taskBackend, repoBackend, undefined, supervisor, adapter, makeWorkerManagerStub());
     await engine.tick();
 
     // Should call listByState with custom 'Working' (not 'Inprogress')
@@ -462,7 +476,7 @@ describe('MonitorEngine uses adapter states', () => {
     const state = makeDefaultState(2);
     writeState(ctx.paths.stateFile, state, 'test');
 
-    const engine = new MonitorEngine(ctx, taskBackend, repoBackend, undefined, supervisor, adapter);
+    const engine = new MonitorEngine(ctx, taskBackend, repoBackend, undefined, supervisor, adapter, makeWorkerManagerStub());
     await engine.tick();
 
     // checkBlockedCards should iterate Queue/Ready/Working/Review (not Backlog/Todo/Inprogress/QA)
@@ -527,7 +541,7 @@ describe('MonitorEngine uses adapter states', () => {
       merged: false,
     });
 
-    const engine = new MonitorEngine(ctx, taskBackend, repoBackend, undefined, supervisor, adapter);
+    const engine = new MonitorEngine(ctx, taskBackend, repoBackend, undefined, supervisor, adapter, makeWorkerManagerStub());
     await engine.tick();
 
     // With MONITOR_AUTO_QA, stale runtime should be moved to Review (custom, not QA)
@@ -780,7 +794,7 @@ describe('Full pipeline flow with custom states (dry-run)', () => {
     }
 
     const supervisor = makeSupervisor();
-    const monitor = new MonitorEngine(ctx, taskBackend, repoBackend, undefined, supervisor, adapter);
+    const monitor = new MonitorEngine(ctx, taskBackend, repoBackend, undefined, supervisor, adapter, makeWorkerManagerStub());
     await monitor.tick();
 
     // Collect all calls to listByState and move

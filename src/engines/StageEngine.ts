@@ -968,6 +968,11 @@ export class StageEngine {
       }
 
       try { await this.taskBackend.removeLabel(seq, 'ACK-TIMEOUT'); } catch { /* best effort */ }
+      // v0.41.1: Clear STARTED-<stage> before re-dispatch. If left, the next
+      // MonitorEngine tick sees the stale STARTED label and skips the ACK
+      // check for this card — silently disabling the ACK probe after the
+      // first retry.
+      try { await this.taskBackend.removeLabel(seq, `STARTED-${this.stage.name}`); } catch { /* best effort */ }
       try { await this.taskBackend.addLabel(seq, retriedLabel); } catch { /* best effort */ }
 
       // Move back to trigger state so the normal launch flow re-dispatches
