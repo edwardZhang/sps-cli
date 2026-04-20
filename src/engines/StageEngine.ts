@@ -38,7 +38,10 @@ import type { ActionRecord, AuxiliaryState, Card, CommandResult, RecommendedActi
 // branchPushed/branchCommitsAhead removed — no worktree/branch management
 
 const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME'];
-const CLEANUP_LABELS: string[] = [...SKIP_LABELS, 'CLAIMED'];
+// CLEANUP_LABELS: cleared when a card re-enters a stage (backlog prepare step).
+// ACK-TIMEOUT: left over when a dispatch failed; must be wiped before re-try.
+// Per-stage ACK-RETRIED-<stage> is wiped separately in cleanAuxiliaryLabels().
+const CLEANUP_LABELS: string[] = [...SKIP_LABELS, 'CLAIMED', 'ACK-TIMEOUT'];
 
 /**
  * StageEngine — generic engine that handles any pipeline stage.
@@ -98,6 +101,13 @@ export class StageEngine {
     const maxActions = this.ctx.config.MAX_ACTIONS_PER_TICK;
 
     try {
+      // ── ACK timeout handling (runs before everything else) ──
+      // MonitorEngine may have flagged some active-state cards with
+      // ACK-TIMEOUT (resumeRun dispatched but Claude never ack'd with
+      // STARTED-<stage>). Handle them first: kill worker + retry once, or
+      // escalate to NEEDS-FIX if already retried. Runs for ALL stages.
+      actions.push(...await this.handleAckTimeouts(opts));
+
       // ── First stage only: reconcile PM states + prepare backlog cards ──
       if (this.isFirstStage) {
         actions.push(...await this.reconcilePmStatesWithRuntime());
@@ -884,7 +894,9 @@ export class StageEngine {
   }
 
   private async cleanAuxiliaryLabels(card: Card): Promise<void> {
-    for (const label of CLEANUP_LABELS) {
+    const perStageLabel = `ACK-RETRIED-${this.stage.name}`;
+    const targets = [...CLEANUP_LABELS, perStageLabel];
+    for (const label of targets) {
       if (card.labels.includes(label)) {
         try {
           await this.taskBackend.removeLabel(card.seq, label);
@@ -895,6 +907,86 @@ export class StageEngine {
         }
       }
     }
+  }
+
+  /**
+   * Handle cards flagged with ACK-TIMEOUT by MonitorEngine.
+   *
+   *  - First-time timeout: cancel the worker, wipe ACK-TIMEOUT, add
+   *    ACK-RETRIED-<stage>, move card back to triggerState so the normal
+   *    launch flow re-dispatches in the same tick (fresh session).
+   *  - Already retried (ACK-RETRIED-<stage> present): escalate to NEEDS-FIX.
+   *
+   * Runs for all stages; only processes cards in this stage's activeState.
+   */
+  private async handleAckTimeouts(opts: { dryRun?: boolean }): Promise<ActionRecord[]> {
+    const actions: ActionRecord[] = [];
+    if (!this.stage.activeState) return actions;
+
+    let cards: Card[] = [];
+    try {
+      cards = await this.taskBackend.listByState(this.stage.activeState as any);
+    } catch {
+      return actions;
+    }
+
+    const retriedLabel = `ACK-RETRIED-${this.stage.name}`;
+
+    for (const card of cards) {
+      if (!card.labels.includes('ACK-TIMEOUT')) continue;
+
+      const seq = card.seq;
+      const alreadyRetried = card.labels.includes(retriedLabel);
+
+      if (alreadyRetried) {
+        this.log.warn(`seq ${seq}: ACK timeout after retry, escalating to NEEDS-FIX`);
+        if (opts.dryRun) {
+          actions.push({ action: 'ack-timeout-escalate', entity: `seq:${seq}`, result: 'skip', message: '[dry-run]' });
+          continue;
+        }
+        try { await this.taskBackend.removeLabel(seq, 'ACK-TIMEOUT'); } catch { /* best effort */ }
+        await this.markNeedsFix(seq, `ACK timeout: Claude did not acknowledge prompt after ${this.ctx.config.WORKER_ACK_MAX_RETRIES} retry`);
+        actions.push({
+          action: 'ack-timeout-escalate',
+          entity: `seq:${seq}`,
+          result: 'ok',
+          message: 'Escalated to NEEDS-FIX after retry',
+        });
+        continue;
+      }
+
+      if (opts.dryRun) {
+        actions.push({ action: 'ack-timeout-retry', entity: `seq:${seq}`, result: 'skip', message: '[dry-run] would kill worker and retry' });
+        continue;
+      }
+
+      this.log.warn(`seq ${seq}: ACK timeout, killing worker and moving back to ${this.stage.triggerState} for re-dispatch`);
+      try {
+        await this.workerManager.cancel({ taskId: String(seq), project: this.ctx.projectName, reason: 'anomaly' });
+      } catch (err) {
+        this.log.error(`cancel worker for seq ${seq} failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      try { await this.taskBackend.removeLabel(seq, 'ACK-TIMEOUT'); } catch { /* best effort */ }
+      try { await this.taskBackend.addLabel(seq, retriedLabel); } catch { /* best effort */ }
+
+      // Move back to trigger state so the normal launch flow re-dispatches
+      // this card in the same tick (with a fresh claude session).
+      try {
+        await this.taskBackend.move(seq, this.stage.triggerState as any);
+      } catch (err) {
+        this.log.error(`Failed to move seq ${seq} back to ${this.stage.triggerState}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      actions.push({
+        action: 'ack-timeout-retry',
+        entity: `seq:${seq}`,
+        result: 'ok',
+        message: `Killed worker; moved to ${this.stage.triggerState} for re-dispatch`,
+      });
+    }
+
+    return actions;
   }
 
   private findRuntimeSlotName(

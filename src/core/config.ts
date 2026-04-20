@@ -58,6 +58,10 @@ export interface ProjectConfig {
   CONFLICT_DEFAULT: 'serial' | 'parallel';
   TICK_LOCK_TIMEOUT_MINUTES: number;
 
+  // ACK probe (v0.41.0+): detects resumeRun failures via STARTED-<stage> label
+  WORKER_ACK_TIMEOUT_S: number;
+  WORKER_ACK_MAX_RETRIES: number;
+
   // Paths (overridable)
   WORKTREE_DIR?: string;
 
@@ -136,6 +140,9 @@ export function loadProjectConf(projectName: string): ProjectConfig {
     MONITOR_AUTO_QA: raw.MONITOR_AUTO_QA === 'true',
     CONFLICT_DEFAULT: (raw.CONFLICT_DEFAULT as 'serial' | 'parallel') || 'serial',
     TICK_LOCK_TIMEOUT_MINUTES: parseInt(raw.TICK_LOCK_TIMEOUT_MINUTES || '30', 10),
+
+    WORKER_ACK_TIMEOUT_S: parseInt(raw.WORKER_ACK_TIMEOUT_S || '60', 10),
+    WORKER_ACK_MAX_RETRIES: parseInt(raw.WORKER_ACK_MAX_RETRIES || '1', 10),
 
     WORKTREE_DIR: raw.WORKTREE_DIR,
 

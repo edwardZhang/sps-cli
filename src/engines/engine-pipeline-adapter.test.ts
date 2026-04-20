@@ -69,6 +69,8 @@ function makeConfig(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
     TICK_LOCK_TIMEOUT_MINUTES: 10,
     WORKER_LAUNCH_TIMEOUT_S: 60,
     WORKER_IDLE_TIMEOUT_M: 30,
+    WORKER_ACK_TIMEOUT_S: 60,
+    WORKER_ACK_MAX_RETRIES: 1,
     raw: {},
     ...overrides,
   };

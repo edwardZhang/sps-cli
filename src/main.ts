@@ -54,6 +54,7 @@ import { executeAgentCommand } from './commands/agentCommand.js';
 import { executeCardAdd } from './commands/cardAdd.js';
 import { executeCardDashboard } from './commands/cardDashboard.js';
 import { executeCardMarkComplete } from './commands/cardMarkComplete.js';
+import { executeCardMarkStarted } from './commands/cardMarkStarted.js';
 import { executeHook } from './commands/hookCommand.js';
 import { executeDoctor } from './commands/doctor.js';
 import { executeLogs } from './commands/logs.js';
@@ -89,9 +90,10 @@ const COMMANDS: Record<string, CommandInfo> = {
     examples: ['sps setup', 'sps setup --force'] },
   tick:      { desc: '运行持续流水线', usage: 'sps tick <project> [--json]',
     examples: ['sps tick my-project', 'sps tick proj1 proj2'] },
-  card:      { desc: '卡片管理（创建、看板、标记完成）', usage: 'sps card <子命令> <project> [参数]', subs: {
+  card:      { desc: '卡片管理（创建、看板、标记开始/完成）', usage: 'sps card <子命令> <project> [参数]', subs: {
     add: '创建新任务卡片',
     dashboard: '展示卡片看板',
+    'mark-started': '标记卡片已开始处理（Claude UserPromptSubmit hook 使用）',
     'mark-complete': '标记卡片完成（Claude Stop hook 使用）',
   }, examples: ['sps card add my-project "New task"', 'sps card mark-complete my-project 42'] },
   doctor:    { desc: '项目健康检查与状态修复', usage: 'sps doctor <project> [--json] [--fix] [--reset-state] [--skip-remote]',
@@ -781,6 +783,14 @@ async function main() {
         process.exit(2);
       }
       await executeCardMarkComplete(args.project, args.positionals, args.flags as unknown as Record<string, unknown>);
+      return;
+    }
+    if (args.subcommand === 'mark-started') {
+      if (!args.project) {
+        console.error('Usage: sps card mark-started <project> [seq] [--stage <name>]');
+        process.exit(2);
+      }
+      await executeCardMarkStarted(args.project, args.positionals, args.flags as unknown as Record<string, unknown>);
       return;
     }
   }

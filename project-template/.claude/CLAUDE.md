@@ -27,14 +27,26 @@ read the marker file or use the `sps` CLI:
 - Marker file: `~/.coral/projects/$SPS_PROJECT/runtime/worker-$SPS_WORKER_SLOT-current.json`
 - CLI: `sps card dashboard $SPS_PROJECT` (or the command your task prompt already passed to you)
 
-## Completion protocol
+## Card lifecycle labels (for reference — all managed automatically)
 
-- When you finish the task, Claude's **Stop hook** runs automatically
-  (via `.claude/hooks/stop.sh`) and tags the card `COMPLETED-<stage>`.
-- You do NOT need to manually update card state, move the card between
-  columns, or commit on behalf of the pipeline.
-- If you declare "done" without actually implementing the work, the pipeline
-  will still advance. The user relies on your honesty here.
+Each card moves through these labels during its pipeline run:
+
+- `AI-PIPELINE` — added at `sps card add`; the pipeline admission mark
+- `CLAIMED` — added when SPS claims a worker slot for this card
+- `STARTED-<stage>` — added automatically on each prompt submit via the
+  **UserPromptSubmit** hook. This is the "ACK signal" that proves Claude
+  received the prompt. If this label doesn't appear within
+  `WORKER_ACK_TIMEOUT_S` seconds after dispatch, SPS's MonitorEngine flags
+  `ACK-TIMEOUT` and StageEngine kills the worker + retries.
+- `COMPLETED-<stage>` — added on turn end via the **Stop hook**. Tells SPS
+  to advance the card to the next stage (or Done).
+
+You do NOT need to manually update card state, move the card between
+columns, or commit on behalf of the pipeline. The hooks do it all.
+
+**Honesty note**: If you declare "done" without actually implementing the
+work, the pipeline will still advance (the Stop hook fires regardless). The
+user relies on your honesty here.
 
 ## Memory
 

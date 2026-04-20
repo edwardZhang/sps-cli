@@ -295,6 +295,16 @@ export INPROGRESS_TIMEOUT_HOURS=2
 # export WORKER_IDLE_TIMEOUT_M=30
 # WORKER_RESTART_LIMIT: Max auto-retry count on worker failure
 # export WORKER_RESTART_LIMIT=2
+# WORKER_ACK_TIMEOUT_S: ACK probe timeout (seconds)
+#   After dispatch, if no STARTED-<stage> label appears within this window,
+#   MonitorEngine flags ACK-TIMEOUT (Claude never acknowledged the prompt via
+#   its UserPromptSubmit hook). Default 60s (= 2 tick intervals). Raise if your
+#   PM backend is slow (network-heavy Plane/Trello).
+# export WORKER_ACK_TIMEOUT_S=60
+# WORKER_ACK_MAX_RETRIES: Max ACK retry attempts before escalating to NEEDS-FIX
+#   On ACK-TIMEOUT, StageEngine kills the worker and re-dispatches this many
+#   times (with a fresh claude-agent-acp session). Default 1.
+# export WORKER_ACK_MAX_RETRIES=1
 # MONITOR_AUTO_QA: Auto-advance to QA when stale runtime detected
 #   true = auto-advance (for fully automated pipelines)
 #   false = only label STALE-RUNTIME, requires manual action

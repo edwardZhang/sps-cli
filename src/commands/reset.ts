@@ -183,10 +183,15 @@ export async function executeReset(
       await taskBackend.move(seq, 'Planning');
 
       // Clean auxiliary labels (best effort)
-      const auxLabels = ['STALE-RUNTIME', 'NEEDS-FIX', 'BLOCKED', 'CLAIMED', 'CONFLICT', 'WAITING-CONFIRMATION'];
-      // Also clean all COMPLETED-<stage> labels so the card genuinely starts over
-      const completedLabels = card.labels.filter(l => l.startsWith('COMPLETED-'));
-      for (const label of [...auxLabels, ...completedLabels]) {
+      const auxLabels = ['STALE-RUNTIME', 'NEEDS-FIX', 'BLOCKED', 'CLAIMED', 'CONFLICT', 'WAITING-CONFIRMATION', 'ACK-TIMEOUT'];
+      // Also clean per-stage lifecycle labels so the card genuinely starts over:
+      //   COMPLETED-<stage>  — completion markers
+      //   STARTED-<stage>    — dispatch ack signal
+      //   ACK-RETRIED-<stage> — retry bookkeeping
+      const dynamicLabels = card.labels.filter(l =>
+        l.startsWith('COMPLETED-') || l.startsWith('STARTED-') || l.startsWith('ACK-RETRIED-'),
+      );
+      for (const label of [...auxLabels, ...dynamicLabels]) {
         if (card.labels.includes(label)) {
           try { await taskBackend.removeLabel(seq, label); } catch { /* best effort */ }
         }

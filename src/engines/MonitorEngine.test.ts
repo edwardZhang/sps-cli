@@ -31,7 +31,7 @@ function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'sps-monitor-test-'));
 }
 
-function makeCtx(tempDir: string): ProjectContext {
+function makeCtx(tempDir: string, overrides: Record<string, unknown> = {}): ProjectContext {
   return {
     projectName: 'test',
     maxWorkers: 1,
@@ -40,6 +40,10 @@ function makeCtx(tempDir: string): ProjectContext {
       WORKER_LAUNCH_TIMEOUT_S: 300,
       WORKER_IDLE_TIMEOUT_M: 10,
       WORKER_RESTART_LIMIT: 3,
+      WORKER_ACK_TIMEOUT_S: 60,
+      WORKER_ACK_MAX_RETRIES: 1,
+      INPROGRESS_TIMEOUT_HOURS: 8,
+      ...overrides,
     },
   } as unknown as ProjectContext;
 }
@@ -201,5 +205,124 @@ describe('MonitorEngine.checkAcpShimHealth', () => {
 
     const check = (result.details as any).checks.find((c: any) => c.name === 'acp-shim-health');
     expect(check?.status).toBe('pass');
+  });
+});
+
+describe('MonitorEngine.checkAckTimeout', () => {
+  let tempDir: string;
+
+  beforeEach(() => { tempDir = makeTempDir(); });
+  afterEach(() => { rmSync(tempDir, { recursive: true, force: true }); });
+
+  function makeAckEngine(
+    cards: Array<{ seq: string; labels: string[] }>,
+    configOverrides: Record<string, unknown> = {},
+  ): { engine: MonitorEngine; addLabel: ReturnType<typeof vi.fn> } {
+    const ctx = makeCtx(tempDir, configOverrides);
+    const addLabel = vi.fn().mockResolvedValue(undefined);
+    const taskBackend = {
+      move: vi.fn().mockResolvedValue(undefined),
+      addLabel,
+      removeLabel: vi.fn(),
+      comment: vi.fn(),
+      listByState: vi.fn().mockImplementation(async (state: string) => {
+        if (state === 'Inprogress') return cards;
+        return [];
+      }),
+    } as unknown as TaskBackend;
+    const repoBackend = { getMrStatus: vi.fn().mockResolvedValue({ exists: false, state: 'unknown' }) } as unknown as RepoBackend;
+    const notifier = {
+      send: vi.fn().mockResolvedValue(undefined),
+      sendSuccess: vi.fn().mockResolvedValue(undefined),
+      sendWarning: vi.fn().mockResolvedValue(undefined),
+      sendError: vi.fn().mockResolvedValue(undefined),
+      sendDigest: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Notifier;
+    const supervisor = { kill: vi.fn().mockResolvedValue(undefined), get: vi.fn(), remove: vi.fn() } as unknown as ProcessSupervisor;
+    const pipelineAdapter = {
+      states: { ready: 'Todo', planning: 'Planning', backlog: 'Backlog', done: 'Done', review: 'QA' },
+      stages: [
+        { name: 'develop', triggerState: 'Todo', activeState: 'Inprogress', onCompleteState: 'Done' },
+      ],
+      activeStates: ['Planning', 'Backlog', 'Todo', 'Inprogress'],
+    } as unknown as ProjectPipelineAdapter;
+
+    return { engine: new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter), addLabel };
+  }
+
+  function writeLeaseState(seq: string, claimedAt: string) {
+    writeState(join(tempDir, 'state.json'), buildState({
+      leases: {
+        [seq]: {
+          seq, slot: 'worker-1', phase: 'coding', claimedAt,
+          sessionId: null, runId: null, worktree: null, branch: null,
+          targetBranch: 'main', pmStateObserved: 'Inprogress',
+          retryCount: 0, lastTransitionAt: claimedAt,
+        } as any,
+      },
+    }), 'test-setup');
+  }
+
+  it('flags ACK-TIMEOUT when card past timeout with no STARTED-<stage> label', async () => {
+    const oldTime = new Date(Date.now() - 120_000).toISOString(); // 2 min ago
+    writeLeaseState('42', oldTime);
+
+    const { engine, addLabel } = makeAckEngine([
+      { seq: '42', labels: ['AI-PIPELINE', 'CLAIMED'] },
+    ]);
+
+    const result = await engine.tick();
+    const check = (result.details as any).checks.find((c: any) => c.name === 'ack-timeout');
+
+    expect(check.status).toBe('warn');
+    expect(addLabel).toHaveBeenCalledWith('42', 'ACK-TIMEOUT');
+  });
+
+  it('does NOT flag when STARTED-<stage> label is present', async () => {
+    const oldTime = new Date(Date.now() - 120_000).toISOString();
+    writeLeaseState('42', oldTime);
+
+    const { engine, addLabel } = makeAckEngine([
+      { seq: '42', labels: ['AI-PIPELINE', 'CLAIMED', 'STARTED-develop'] },
+    ]);
+
+    await engine.tick();
+    expect(addLabel).not.toHaveBeenCalledWith('42', 'ACK-TIMEOUT');
+  });
+
+  it('does NOT flag when still within ACK timeout window', async () => {
+    const recentTime = new Date(Date.now() - 10_000).toISOString(); // 10s ago, well under 60s
+    writeLeaseState('42', recentTime);
+
+    const { engine, addLabel } = makeAckEngine([
+      { seq: '42', labels: ['AI-PIPELINE', 'CLAIMED'] },
+    ]);
+
+    await engine.tick();
+    expect(addLabel).not.toHaveBeenCalledWith('42', 'ACK-TIMEOUT');
+  });
+
+  it('does NOT double-flag when ACK-TIMEOUT label is already present', async () => {
+    const oldTime = new Date(Date.now() - 120_000).toISOString();
+    writeLeaseState('42', oldTime);
+
+    const { engine, addLabel } = makeAckEngine([
+      { seq: '42', labels: ['AI-PIPELINE', 'CLAIMED', 'ACK-TIMEOUT'] },
+    ]);
+
+    await engine.tick();
+    expect(addLabel).not.toHaveBeenCalledWith('42', 'ACK-TIMEOUT');
+  });
+
+  it('skips cards already in NEEDS-FIX (different failure path)', async () => {
+    const oldTime = new Date(Date.now() - 120_000).toISOString();
+    writeLeaseState('42', oldTime);
+
+    const { engine, addLabel } = makeAckEngine([
+      { seq: '42', labels: ['AI-PIPELINE', 'NEEDS-FIX'] },
+    ]);
+
+    await engine.tick();
+    expect(addLabel).not.toHaveBeenCalledWith('42', 'ACK-TIMEOUT');
   });
 });

@@ -87,6 +87,7 @@ export class MonitorEngine {
       await this.checkWorkerHealth(checks, actions);
       await this.checkAcpShimHealth(checks, actions);
       await this.checkOrphanSlots(checks, actions);
+      await this.checkAckTimeout(checks, actions);
       await this.checkStaleRuntimes(checks, actions, recommendedActions);
       await this.checkTimeouts(checks, actions, recommendedActions);
       await this.checkWaitingConfirmation(checks, actions);
@@ -194,6 +195,72 @@ export class MonitorEngine {
       message: orphansFound > 0
         ? `Released ${orphansFound} orphan slot(s)`
         : 'No orphan slots detected',
+    });
+  }
+
+  // ─── Check 1b: ACK Timeout Detection ──────────────────────────
+  //
+  // Detects resumeRun failures — when SPS dispatched a card but Claude never
+  // started processing (no UserPromptSubmit hook → no STARTED-<stage> label).
+  // Fires on a short time-scale (WORKER_ACK_TIMEOUT_S, default 60s) before the
+  // longer-scale stale/timeout checks. Labels the card with ACK-TIMEOUT;
+  // StageEngine responds in the next tick by killing the worker and retrying
+  // (or escalating to NEEDS-FIX if already retried once).
+
+  private async checkAckTimeout(
+    checks: CheckResult[],
+    actions: ActionRecord[],
+  ): Promise<void> {
+    const timeoutS = this.ctx.config.WORKER_ACK_TIMEOUT_S;
+    const now = Date.now();
+    let ackTimeoutCount = 0;
+
+    // Per-stage scan: each stage's activeState cards need their own STARTED-<stageName>
+    // to count as "acknowledged". A card that finished develop and entered review
+    // still has STARTED-develop, but needs STARTED-review to prove review started.
+    for (const stage of this.pipelineAdapter.stages) {
+      if (!stage.activeState) continue;
+      let cards: Array<{ seq: string; labels: string[] }> = [];
+      try {
+        cards = await this.taskBackend.listByState(stage.activeState as any) as any;
+      } catch { continue; }
+
+      const expectedLabel = `STARTED-${stage.name}`;
+
+      for (const card of cards) {
+        if (card.labels.includes(expectedLabel)) continue;           // acknowledged
+        if (card.labels.includes('NEEDS-FIX')) continue;              // already failed
+        if (card.labels.includes('ACK-TIMEOUT')) continue;            // already flagged, StageEngine handles
+        if (card.labels.includes('STALE-RUNTIME')) continue;          // different failure path
+        if (card.labels.includes('CONFLICT')) continue;               // different failure path
+
+        const state = this.runtimeStore.readState();
+        const lease = state.leases[card.seq];
+        if (!lease || !lease.claimedAt) continue;                     // no dispatch timestamp to compare against
+
+        const elapsedS = (now - new Date(lease.claimedAt).getTime()) / 1000;
+        if (elapsedS <= timeoutS) continue;                           // within ack window
+
+        this.log.warn(
+          `seq ${card.seq}: ACK timeout — dispatched ${Math.round(elapsedS)}s ago, no ${expectedLabel} label`,
+        );
+        await this.addLabelSafe(card.seq, 'ACK-TIMEOUT');
+        actions.push({
+          action: 'mark-ack-timeout',
+          entity: `seq:${card.seq}`,
+          result: 'ok',
+          message: `dispatched ${Math.round(elapsedS)}s ago, no ${expectedLabel}`,
+        });
+        ackTimeoutCount++;
+      }
+    }
+
+    checks.push({
+      name: 'ack-timeout',
+      status: ackTimeoutCount > 0 ? 'warn' : 'pass',
+      message: ackTimeoutCount > 0
+        ? `Found ${ackTimeoutCount} card(s) past ACK timeout`
+        : 'No ACK timeouts',
     });
   }
 

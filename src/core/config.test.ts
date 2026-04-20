@@ -39,6 +39,8 @@ function makeConfig(overrides?: Partial<ProjectConfig>): ProjectConfig {
     MONITOR_AUTO_QA: false,
     CONFLICT_DEFAULT: 'serial',
     TICK_LOCK_TIMEOUT_MINUTES: 30,
+    WORKER_ACK_TIMEOUT_S: 60,
+    WORKER_ACK_MAX_RETRIES: 1,
     raw: {} as RawConfig,
     ...overrides,
   };

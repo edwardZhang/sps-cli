@@ -25,6 +25,7 @@
  */
 import { executeCardMarkComplete } from './cardMarkComplete.js';
 import { ProjectContext } from '../core/context.js';
+import { readCurrentCardMarker } from '../core/markerFile.js';
 import { createTaskBackend } from '../providers/registry.js';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
 
@@ -65,44 +66,64 @@ async function parseStdinAsJson(): Promise<ClaudeHookPayload | null> {
 // ─── Subcommand: stop ────────────────────────────────────────────
 
 /**
- * Called from .claude/settings.json's Stop hook. Adds COMPLETED-<stage> label
- * to the current card. Requires SPS_PROJECT + SPS_CARD_ID + SPS_STAGE env vars.
+ * Called from .claude/settings.json's Stop hook as an alternative to the
+ * project-template bash stop.sh. Reads the per-slot marker file to find the
+ * current card, then delegates to mark-complete.
+ *
+ * v0.40.2+: We no longer trust $SPS_CARD_ID env (frozen at spawn, stale on
+ * process reuse). Only $SPS_PROJECT + $SPS_WORKER_SLOT are stable.
  */
 async function hookStop(flags: Record<string, unknown>): Promise<void> {
   const project = process.env.SPS_PROJECT;
-  const cardId = process.env.SPS_CARD_ID;
-  const stage = process.env.SPS_STAGE;
+  const slot = process.env.SPS_WORKER_SLOT;
 
-  if (!project || !cardId) {
+  if (!project || !slot) {
     // Worker process not running inside SPS pipeline — skip silently.
-    // This happens if user runs claude manually in a cwd with .claude/settings.json,
-    // without SPS having spawned the worker.
-    process.stderr.write('[sps hook stop] SPS_PROJECT or SPS_CARD_ID not set — not in SPS pipeline, skipping\n');
+    process.stderr.write('[sps hook stop] SPS_PROJECT or SPS_WORKER_SLOT not set — not in SPS pipeline, skipping\n');
     return;
   }
 
-  // Drain stdin to avoid blocking claude-agent-acp (payload is optional here).
+  // Drain stdin to avoid blocking claude-agent-acp.
   await readStdin();
 
-  // Delegate to mark-complete (handles stage resolution + idempotency).
-  await executeCardMarkComplete(project, [cardId], { ...flags, stage });
+  // Delegate to mark-complete; it will read the marker file itself (no seq
+  // arg passed, so it falls back to marker lookup).
+  await executeCardMarkComplete(project, [], flags);
 }
 
 // ─── Subcommand: user-prompt-submit ──────────────────────────────
 
 /**
- * Called from .claude/settings.json's UserPromptSubmit hook. If the current
- * card has skill:<name> labels, emit a Claude hookSpecificOutput JSON so the
- * prompt is prefixed with "You MUST use skill <name>" instruction.
+ * Called from .claude/settings.json's UserPromptSubmit hook. Two responsibilities:
+ *
+ *   1. Add STARTED-<stage> label to the current card. This is the "ACK signal"
+ *      that SPS uses to confirm claude actually received the prompt and started
+ *      processing (not just that resumeRun returned successfully). MonitorEngine
+ *      uses the absence of this label past WORKER_ACK_TIMEOUT_S to detect
+ *      resume failure.
+ *
+ *   2. If the card has skill:<name> labels, emit hookSpecificOutput so the
+ *      prompt is prefixed with skill usage instructions.
+ *
+ * v0.40.2+ reads the marker file for current cardId (not $SPS_CARD_ID env,
+ * which is no longer injected).
  */
 async function hookUserPromptSubmit(_flags: Record<string, unknown>): Promise<void> {
   const project = process.env.SPS_PROJECT;
-  const cardId = process.env.SPS_CARD_ID;
+  const slot = process.env.SPS_WORKER_SLOT;
 
-  // Drain stdin (payload not needed for this hook)
+  // Drain stdin (payload not needed for this hook).
   await readStdin();
 
-  if (!project || !cardId) return; // not in pipeline, nothing to inject
+  if (!project || !slot) return; // not in pipeline, nothing to do
+
+  const marker = readCurrentCardMarker(project, slot);
+  if (!marker) {
+    process.stderr.write(`[sps hook user-prompt-submit] No marker file at worker-${slot}-current.json — cannot identify card, skipping\n`);
+    return;
+  }
+  const cardId = marker.cardId;
+  const stage = marker.stage || 'develop';
 
   let ctx: ProjectContext;
   try {
@@ -119,6 +140,17 @@ async function hookUserPromptSubmit(_flags: Record<string, unknown>): Promise<vo
   ].filter(Boolean))];
   const taskBackend = createTaskBackend(ctx.config, allStateNames);
 
+  // ─── 1. Add STARTED-<stage> label (ACK signal) ────────────────
+  const startedLabel = `STARTED-${stage}`;
+  try {
+    await taskBackend.addLabel(cardId, startedLabel);
+  } catch (err) {
+    // Non-fatal for prompt processing — log and continue. MonitorEngine will
+    // detect ACK timeout if the label never lands.
+    process.stderr.write(`[sps hook user-prompt-submit] addLabel ${startedLabel} failed (non-fatal): ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+
+  // ─── 2. Skill hints (if any) ──────────────────────────────────
   let card: { labels: string[] } | null = null;
   try {
     card = await taskBackend.getBySeq(cardId);
@@ -138,8 +170,6 @@ async function hookUserPromptSubmit(_flags: Record<string, unknown>): Promise<vo
     .map(n => `- \`${n}\` (see ~/.claude/skills/${n}/SKILL.md)`)
     .join('\n');
 
-  // Claude Code hookSpecificOutput format for UserPromptSubmit: the `additionalContext`
-  // string is prepended to the prompt before Claude processes it.
   const output = {
     hookSpecificOutput: {
       hookEventName: 'UserPromptSubmit',
