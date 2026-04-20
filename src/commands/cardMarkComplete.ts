@@ -22,10 +22,34 @@
  * - 命令只打标签，不动卡片状态；pipeline tick 看到标签后按 YAML 推进
  * - 幂等：已有同名标签不报错
  */
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import { createTaskBackend } from '../providers/registry.js';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+
+/**
+ * Read the per-slot current-card marker that the worker manager writes on
+ * each dispatch. Returns { cardId, stage } or null if unreadable.
+ *
+ * Why: when a single claude process is reused across cards, its env vars
+ * (SPS_CARD_ID/SPS_STAGE) are frozen at spawn — they always point to the
+ * first card. The marker file is the authoritative "current card" source.
+ */
+function readCurrentCardMarker(project: string, slot: string): { cardId: string; stage: string } | null {
+  const home = process.env.HOME || '';
+  const markerPath = resolve(home, '.coral', 'projects', project, 'runtime', `worker-${slot}-current.json`);
+  if (!existsSync(markerPath)) return null;
+  try {
+    const raw = readFileSync(markerPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed.cardId) return null;
+    return { cardId: String(parsed.cardId), stage: String(parsed.stage ?? '') };
+  } catch {
+    return null;
+  }
+}
 
 export async function executeCardMarkComplete(
   project: string,
@@ -34,17 +58,41 @@ export async function executeCardMarkComplete(
 ): Promise<void> {
   const log = new Logger('card-mark-complete', project);
   const jsonOutput = !!flags.json;
-  const seq = positionals[0];
+
+  // Resolve seq and stage.
+  //
+  // Priority order (seq):
+  //   1. Positional arg (explicit CLI usage)
+  //   2. runtime/worker-<SPS_WORKER_SLOT>-current.json (hook usage — reliable
+  //      across claude process reuse)
+  //
+  // We intentionally DO NOT fall back to $SPS_CARD_ID because it's frozen at
+  // subprocess spawn time and causes the wrong card to be marked when the
+  // claude process is reused for the next card.
+  let seq = positionals[0];
+  const stageFromFlag = typeof flags.stage === 'string' ? flags.stage : undefined;
+  let stageFromMarker: string | undefined;
 
   if (!seq) {
-    console.error('Usage: sps card mark-complete <project> <seq> [--stage <name>]');
-    process.exit(2);
+    const slot = process.env.SPS_WORKER_SLOT;
+    if (!slot) {
+      console.error('Usage: sps card mark-complete <project> <seq> [--stage <name>]');
+      console.error('       (when called without seq, SPS_WORKER_SLOT env is required)');
+      process.exit(2);
+    }
+    const marker = readCurrentCardMarker(project, slot);
+    if (!marker) {
+      console.error(`No current-card marker found at runtime/worker-${slot}-current.json`);
+      console.error('Either pass <seq> explicitly, or ensure the worker manager wrote the marker before dispatch.');
+      process.exit(2);
+    }
+    seq = marker.cardId;
+    if (marker.stage) stageFromMarker = marker.stage;
   }
 
-  // Resolve stage: --stage flag > $SPS_STAGE env > 'develop' (default)
-  const stageFromFlag = typeof flags.stage === 'string' ? flags.stage : undefined;
+  // Resolve stage: --stage flag > marker file > $SPS_STAGE env > 'develop'
   const stageFromEnv = process.env.SPS_STAGE;
-  const stage = stageFromFlag || stageFromEnv || 'develop';
+  const stage = stageFromFlag || stageFromMarker || stageFromEnv || 'develop';
 
   let ctx: ProjectContext;
   try {

@@ -14,6 +14,8 @@
  * @boundedContext worker-lifecycle
  */
 import { execFileSync } from 'node:child_process';
+import { renameSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import type { RuntimeState, TaskLease, WorktreeEvidence } from '../core/state.js';
 import { createIdleWorkerSlot, readState, writeState } from '../core/state.js';
 import type { AgentRuntime } from '../interfaces/AgentRuntime.js';
@@ -297,6 +299,13 @@ export class WorkerManagerImpl implements WorkerManager {
         SPS_WORKER_SLOT: slot,
       };
       if (cardTitle) extraEnv.SPS_CARD_TITLE = cardTitle;
+
+      // Atomically write per-slot "current card" marker. Env vars are frozen
+      // at subprocess spawn; when the same claude process is reused for the
+      // next card, its env still points to the first card. Stop hooks must
+      // read this file (not env) to know the current card.
+      this.writeCurrentCardFile(slot, taskId, stageName);
+
       const session = resumeSessionId
         ? await this.agentRuntime.resumeRun(slot, prompt)
         : await this.agentRuntime.startRun(slot, prompt, tool, cwd, { extraEnv });
@@ -816,4 +825,25 @@ export class WorkerManagerImpl implements WorkerManager {
   }
 
   private log(msg: string): void { process.stderr.write(`[worker-manager] ${msg}\n`); }
+
+  /**
+   * Atomically write the per-slot "current card" marker file that Stop hooks
+   * consult to know which card is currently being worked on. Uses tmp +
+   * renameSync for POSIX-atomic swap so the hook never reads a half-written
+   * file. Path: <runtime-dir>/worker-<slot>-current.json.
+   */
+  private writeCurrentCardFile(slot: string, cardId: string, stage: string): void {
+    try {
+      const runtimeDir = dirname(this.stateFile);
+      const finalPath = resolve(runtimeDir, `worker-${slot}-current.json`);
+      const tmpPath = `${finalPath}.tmp`;
+      const payload = JSON.stringify({ cardId, stage, dispatchedAt: new Date().toISOString() });
+      writeFileSync(tmpPath, payload);
+      renameSync(tmpPath, finalPath);
+    } catch (err) {
+      // Non-fatal: hook will fall through to error if file missing, which is
+      // preferable to silently mis-marking a card.
+      this.log(`Failed to write current-card marker for ${slot}:${cardId} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 }

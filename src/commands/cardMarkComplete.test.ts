@@ -13,6 +13,9 @@
  * @layer         command
  * @boundedContext taskManagement
  */
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock dependencies BEFORE importing the module under test.
@@ -99,8 +102,55 @@ describe('executeCardMarkComplete', () => {
     });
   });
 
-  it('exits with code 2 when seq missing', async () => {
+  it('exits with code 2 when seq missing AND SPS_WORKER_SLOT not set', async () => {
+    delete process.env.SPS_WORKER_SLOT;
     const { executeCardMarkComplete } = await import('./cardMarkComplete.js');
     await expect(executeCardMarkComplete('p', [], {})).rejects.toThrow('exit:2');
+  });
+
+  describe('current-card marker fallback (claude process reuse)', () => {
+    const originalHome = process.env.HOME;
+    const originalSlot = process.env.SPS_WORKER_SLOT;
+    let tmpHome: string;
+
+    beforeEach(() => {
+      tmpHome = mkdtempSync(resolve(tmpdir(), 'sps-marker-'));
+      mkdirSync(resolve(tmpHome, '.coral', 'projects', 'p', 'runtime'), { recursive: true });
+      process.env.HOME = tmpHome;
+      process.env.SPS_WORKER_SLOT = 'worker-1';
+    });
+
+    afterEach(() => {
+      rmSync(tmpHome, { recursive: true, force: true });
+      if (originalHome !== undefined) process.env.HOME = originalHome;
+      else delete process.env.HOME;
+      if (originalSlot !== undefined) process.env.SPS_WORKER_SLOT = originalSlot;
+      else delete process.env.SPS_WORKER_SLOT;
+    });
+
+    it('reads seq + stage from marker file when seq omitted', async () => {
+      const markerPath = resolve(tmpHome, '.coral', 'projects', 'p', 'runtime', 'worker-worker-1-current.json');
+      writeFileSync(markerPath, JSON.stringify({ cardId: '99', stage: 'review', dispatchedAt: new Date().toISOString() }));
+      const { executeCardMarkComplete } = await import('./cardMarkComplete.js');
+      await executeCardMarkComplete('p', [], {});
+      expect(addLabelMock).toHaveBeenCalledWith('99', 'COMPLETED-review');
+    });
+
+    it('does NOT fall back to $SPS_CARD_ID env (prevents mis-marking on reuse)', async () => {
+      // No marker file written → must fail, not silently use stale env.
+      process.env.SPS_CARD_ID = '1';
+      const { executeCardMarkComplete } = await import('./cardMarkComplete.js');
+      await expect(executeCardMarkComplete('p', [], {})).rejects.toThrow('exit:2');
+      expect(addLabelMock).not.toHaveBeenCalled();
+      delete process.env.SPS_CARD_ID;
+    });
+
+    it('explicit seq still takes precedence over marker', async () => {
+      const markerPath = resolve(tmpHome, '.coral', 'projects', 'p', 'runtime', 'worker-worker-1-current.json');
+      writeFileSync(markerPath, JSON.stringify({ cardId: '99', stage: 'review' }));
+      const { executeCardMarkComplete } = await import('./cardMarkComplete.js');
+      await executeCardMarkComplete('p', ['42'], { stage: 'develop' });
+      expect(addLabelMock).toHaveBeenCalledWith('42', 'COMPLETED-develop');
+    });
   });
 });

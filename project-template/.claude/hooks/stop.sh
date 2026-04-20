@@ -4,12 +4,13 @@
 # Triggered when Claude finishes its current turn. The pipeline depends on
 # Phase 1 to advance card state. Phase 2+ is user-customizable.
 #
-# Env vars (set by SPS worker at spawn time):
-#   SPS_PROJECT       Project name (matches ~/.coral/projects/<name>/)
-#   SPS_CARD_ID       Card sequence number
-#   SPS_CARD_TITLE    Human-readable card title (optional)
-#   SPS_STAGE         Pipeline stage name (develop, qa, integrate, ...)
-#   SPS_WORKER_SLOT   Worker slot (worker-1, ...)
+# Env vars (set by SPS worker at spawn time, FROZEN for the process lifetime):
+#   SPS_PROJECT       Project name (stable across card reuse)
+#   SPS_WORKER_SLOT   Worker slot (stable across card reuse)
+#   SPS_CARD_ID       Card sequence — NOTE: stale when claude is reused for
+#                     the next card. Do NOT use for mark-complete.
+#   SPS_STAGE         Pipeline stage — also stale on reuse.
+#   SPS_CARD_TITLE    Card title (optional)
 #
 # Claude-native env also available:
 #   CLAUDE_PROJECT_DIR, CLAUDE_SESSION_ID
@@ -18,8 +19,12 @@ set -e
 
 # ─── Phase 1: SPS official action (do NOT remove) ────────────────────
 # Mark the card complete so pipeline can advance state.
-if [ -n "$SPS_PROJECT" ] && [ -n "$SPS_CARD_ID" ]; then
-  sps card mark-complete "$SPS_PROJECT" "$SPS_CARD_ID"
+# We call mark-complete WITHOUT a seq — the command reads the per-slot
+# current-card marker file (written by the worker manager on each dispatch)
+# to get the authoritative current card. This is the only way to be correct
+# when the same claude process handles multiple cards in sequence.
+if [ -n "$SPS_PROJECT" ] && [ -n "$SPS_WORKER_SLOT" ]; then
+  sps card mark-complete "$SPS_PROJECT"
 fi
 
 # ─── Phase 2: User-customizable actions (edit as needed) ────────────
