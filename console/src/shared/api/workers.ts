@@ -1,0 +1,41 @@
+import { apiGet } from './client';
+
+export interface Worker {
+  slot: number;
+  pid: number | null;
+  state: 'idle' | 'running' | 'stuck' | 'crashed';
+  card: { seq: number; title: string } | null;
+  stage: string | null;
+  startedAt: string | null;
+  runtimeMs: number | null;
+  markerUpdatedAt: string | null;
+}
+
+export function listWorkers(project: string) {
+  return apiGet<{ data: Worker[] }>(
+    `/api/projects/${encodeURIComponent(project)}/workers`,
+  );
+}
+
+async function postJson(path: string, body?: unknown): Promise<unknown> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json().catch(() => ({}));
+}
+
+export function killWorker(project: string, slot: number) {
+  return postJson(
+    `/api/projects/${encodeURIComponent(project)}/workers/${slot}/kill`,
+  );
+}
+
+export function launchWorker(project: string, slot: number, seq?: number) {
+  return postJson(
+    `/api/projects/${encodeURIComponent(project)}/workers/${slot}/launch`,
+    seq ? { seq } : undefined,
+  );
+}

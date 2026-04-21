@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.44.0**
+**v0.45.0**
 
 SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Three modes:
 

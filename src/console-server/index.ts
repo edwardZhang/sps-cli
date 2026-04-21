@@ -21,10 +21,19 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Logger } from '../core/logger.js';
+import { createCardsRoute } from './routes/cards.js';
+import { createChatRoute, createChatStreamRoute } from './routes/chat.js';
+import { createLogsRoute, createLogsStreamRoute } from './routes/logs.js';
+import { createPipelineRoute } from './routes/pipeline.js';
 import { createProjectsRoute } from './routes/projects.js';
+import { createSkillsRoute } from './routes/skills.js';
 import { createSystemRoute } from './routes/system.js';
+import { createWorkersRoute } from './routes/workers.js';
 import { eventBus } from './sse/eventBus.js';
+import { createProjectStreamRoute } from './sse/projectStream.js';
 import { startCardWatcher } from './watchers/cardWatcher.js';
+import { startMarkerWatcher } from './watchers/markerWatcher.js';
+import { startPipelinePoller } from './watchers/pipelinePoller.js';
 
 const HOME = process.env.HOME || '/home/coral';
 const CORAL_ROOT = resolve(HOME, '.coral');
@@ -86,7 +95,16 @@ export async function startConsoleServer(
 
   // API 路由
   app.route('/api/projects', createProjectsRoute());
+  app.route('/api/projects', createCardsRoute());
+  app.route('/api/projects', createPipelineRoute(log));
+  app.route('/api/projects', createWorkersRoute());
+  app.route('/api/logs', createLogsRoute(log));
+  app.route('/api/skills', createSkillsRoute());
   app.route('/api/system', createSystemRoute(version, startedAt));
+  app.route('/api/chat', createChatRoute(log));
+  app.route('/stream/projects', createProjectStreamRoute());
+  app.route('/stream/logs', createLogsStreamRoute(log));
+  app.route('/stream/chat', createChatStreamRoute());
 
   // SSE heartbeat（占位，M3 加完整事件流）
   app.get('/stream/heartbeat', async (c) => {
@@ -161,21 +179,22 @@ export async function startConsoleServer(
 
   // 启动 watchers
   const watchers: FSWatcher[] = [];
+  const stopFns: Array<() => void> = [];
   try {
     watchers.push(startCardWatcher(CORAL_ROOT));
-    log.info(`cardWatcher started (${CORAL_ROOT}/projects/*/cards/*.md)`);
+    watchers.push(startMarkerWatcher(CORAL_ROOT));
+    stopFns.push(startPipelinePoller(CORAL_ROOT));
+    log.info('watchers started: cards, markers, pipeline-poller');
   } catch (err) {
-    log.warn(`cardWatcher failed: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn(`watcher setup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const close = async (): Promise<void> => {
-    // 关 watchers
+    for (const stop of stopFns) stop();
     await Promise.all(watchers.map((w) => w.close()));
-    // 关 server
     await new Promise<void>((r) => {
       server.close(() => r());
     });
-    // 清 event history
     eventBus.clearHistory();
   };
 
