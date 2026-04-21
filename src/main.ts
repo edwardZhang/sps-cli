@@ -156,9 +156,14 @@ const COMMANDS: Record<string, CommandInfo> = {
     examples: ['sps stop my-project', 'sps stop --all'] },
   reset:     { desc: '重置卡片状态，清理 worktree 和 branch，准备重跑', usage: 'sps reset <project> [--all] [--card N,N,N]',
     examples: ['sps reset my-project', 'sps reset my-project --all', 'sps reset my-project --card 5,6,7'] },
-  skill:     { desc: 'Skill 管理', usage: 'sps skill <子命令>', subs: {
-    sync: '同步 ~/.coral/skills/ 到 agent 目录',
-  }, examples: ['sps skill sync'] },
+  skill:     { desc: 'Skill 管理（symlink 分发到项目 .claude/skills/）', usage: 'sps skill <子命令> [name] [--project <name>]', subs: {
+    list: '列出 user-level skills 与项目链接状态',
+    add: '在当前项目建 symlink（自动 fallback 到 cpSync）',
+    remove: '从当前项目移除 skill',
+    freeze: 'symlink → 真实副本（允许项目级定制）',
+    unfreeze: '真实副本 → symlink（重新跟随全局）',
+    sync: '① bundled → ~/.coral/skills/，② ~/.coral/skills/ → ~/.claude/skills/',
+  }, examples: ['sps skill list', 'sps skill add python', 'sps skill freeze backend', 'sps skill sync'] },
   status:    { desc: '显示所有项目运行状态', usage: 'sps status [--json]',
     examples: ['sps status', 'sps status --json'] },
   hook:      { desc: 'Claude Code hook 事件包装（由 .claude/settings.json 调用）', usage: 'sps hook <event>', subs: {
@@ -479,20 +484,17 @@ async function main() {
 
   // ─── skill ──────────────────────────────────────────────────────
   if (args.command === 'skill') {
-    if (args.subcommand === 'sync') {
-      const { syncSkills } = await import('./commands/setup.js');
-      const { Logger } = await import('./core/logger.js');
-      const log = new Logger('skill-sync', '');
-      const synced = syncSkills(log);
-      if (synced > 0) {
-        console.log(`  ✓ Synced ${synced} skill(s)`);
-      } else {
-        console.log('  No skills to sync. Create skills in ~/.coral/skills/<name>/SKILL.md');
-      }
-      return;
+    if (!args.subcommand) {
+      console.error('Usage: sps skill <list|add|remove|freeze|unfreeze|sync> [name] [--project <name>]');
+      process.exit(2);
     }
-    console.error('Usage: sps skill sync');
-    process.exit(2);
+    const { executeSkillCommand } = await import('./commands/skillCommand.js');
+    // 首个 positional 在 SUBCOMMAND_COMMANDS 解析下是 args.project（name 参数）
+    const positionals: string[] = [];
+    if (args.project) positionals.push(args.project);
+    positionals.push(...args.positionals);
+    await executeSkillCommand(args.subcommand, positionals, args.flags as unknown as Record<string, unknown>);
+    return;
   }
 
   // ─── status ─────────────────────────────────────────────────────

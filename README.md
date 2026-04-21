@@ -4,7 +4,7 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.35.0**
+**v0.43.0**
 
 SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Two modes:
 
@@ -214,11 +214,42 @@ sps worker kill my-project 42         # kill specific worker by seq
 
 ### Skill Management
 
-Skills are loaded from `~/.coral/skills/` via symlink to agent directories:
+SPS ships 27 bundled skills (23 developer skills + 4 worker profiles). Three-tier
+distribution:
+
+```
+npm package                           user level                    project level
+workflow-cli/skills/    ──cpSync──▶   ~/.coral/skills/   ──symlink──▶   <project>/.claude/skills/
+(bundled)                              (stable path)                    (gitignored)
+```
+
+Bundled skills cover languages (`python`, `typescript`, `golang`, `rust`, `kotlin`,
+`swift`, `java`), ends (`frontend`, `backend`, `mobile`, `database`, `devops`),
+personas (`backend-architect`, `code-reviewer`, `qa-tester`, ...), and workflows
+(`coding-standards`, `git-workflow`, `architecture-decision-records`,
+`debugging-workflow`). Card frontmatter references them by name:
+
+```yaml
+---
+title: "Implement login API"
+skills: [backend, python, security-engineer]
+---
+```
+
+Command family:
 
 ```bash
-sps skill sync                        # sync skills to ~/.claude/skills/
+sps skill list                        # list user-level skills + project link state
+sps skill add python                  # symlink into current project's .claude/skills/
+sps skill remove python               # remove the link (user-level source untouched)
+sps skill freeze backend              # symlink → real copy (allow project-level customization)
+sps skill unfreeze backend            # real copy → symlink (drop local edits, re-follow global)
+sps skill sync                        # (1) bundled → user, (2) user → ~/.claude/skills/
 ```
+
+`add` uses `symlinkSync` (with `cpSync` fallback). First run auto-appends
+`.claude/skills/` to the project's `.gitignore` — per-user symlinks shouldn't
+go into the repo.
 
 ### Memory System
 

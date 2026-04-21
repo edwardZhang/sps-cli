@@ -18,11 +18,12 @@
  * @outputs       初始化后的项目目录和配置文件
  * @workflow      1. 查找模板目录 → 2. 创建项目目录 → 3. 复制模板文件 → 4. 写入配置
  */
-import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { Logger } from '../core/logger.js';
+import { ensureSkillsGitignore, syncAllSkillsToProject } from '../core/skillStore.js';
 
 const HOME = process.env.HOME || '/home/coral';
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -92,22 +93,27 @@ function installClaudePreset(projectDir: string, projectName: string, log: Logge
     }
   }
 
-  // v0.42.0: Copy skills from ~/.coral/skills/ to project-level .claude/skills/.
-  // Each skill (directory with SKILL.md) is copied as a whole. Project-level
-  // skills override user-level ones and can be git-committed for team sharing.
-  // Non-destructive: `force: false` so user edits to existing skill dirs are
-  // preserved. Run `sps skill update <project>` to re-sync from ~/.coral/skills/.
-  installProjectSkills(targetClaude, log);
+  // v0.43.0: Link skills from ~/.coral/skills/ to project-level .claude/skills/.
+  // 默认 symlink（本机稳定路径，省空间，自动跟随 ~/.coral/skills/ 更新）；
+  // symlink 失败（比如 Windows 无权限）回退 cpSync。
+  // 已存在的 skill 目录保留——frozen 副本不覆盖。
+  installProjectSkills(projectDir, log);
 
-  // Append .claude/settings.local.json to .gitignore (idempotent).
+  // Append .claude/ entries to .gitignore (idempotent).
+  // settings.local.json: 本地覆盖不进仓库。
+  // skills/: symlink 到本机 ~/.coral/，不该入库。
   const gitignore = resolve(projectDir, '.gitignore');
-  const entry = '.claude/settings.local.json';
+  const entries = ['.claude/settings.local.json'];
   let existing = '';
   if (existsSync(gitignore)) existing = readFileSync(gitignore, 'utf-8');
-  if (!existing.split('\n').some(line => line.trim() === entry)) {
-    const prefix = existing && !existing.endsWith('\n') ? '\n' : '';
-    appendFileSync(gitignore, `${prefix}${entry}\n`);
+  for (const entry of entries) {
+    if (!existing.split('\n').some(line => line.trim() === entry)) {
+      const prefix = existing && !existing.endsWith('\n') ? '\n' : '';
+      appendFileSync(gitignore, `${prefix}${entry}\n`);
+      existing += `${prefix}${entry}\n`;
+    }
   }
+  ensureSkillsGitignore(projectDir);
 
   log.ok(preExisted
     ? `Refreshed .claude/ preset in ${projectDir} (existing files preserved)`
@@ -115,52 +121,31 @@ function installClaudePreset(projectDir: string, projectName: string, log: Logge
 }
 
 /**
- * v0.42.0: Copy user-level skills (~/.coral/skills/) into the project's
- * .claude/skills/ directory. Non-destructive — existing project-level
- * skill dirs are preserved.
+ * v0.43.0: Link user-level skills (~/.coral/skills/) into the project's
+ * .claude/skills/ directory via symlink (cpSync fallback).
  *
- * Each skill is a directory containing SKILL.md; the directory name matches
- * the `skills:` field value on cards (e.g., "frontend" → .claude/skills/frontend/).
+ * Idempotent:
+ *  - absent → symlink（或回退 cpSync）
+ *  - linked / frozen → 保留
+ *
+ * 每个 skill 是含 SKILL.md 的目录；目录名对应卡片 `skills:` 字段值
+ * （例如 "frontend" → .claude/skills/frontend/ → ~/.coral/skills/frontend/）。
  */
-function installProjectSkills(targetClaude: string, log: Logger): void {
-  const skillsSrc = resolve(HOME, '.coral', 'skills');
-  if (!existsSync(skillsSrc)) {
-    log.info(`No user-level skills at ${skillsSrc} — nothing to copy to project`);
-    return;
-  }
-
-  const targetSkills = resolve(targetClaude, 'skills');
-  if (!existsSync(targetSkills)) mkdirSync(targetSkills, { recursive: true });
-
-  let copied = 0;
-  let skipped = 0;
+function installProjectSkills(projectDir: string, log: Logger): void {
   try {
-    const entries = readdirSync(skillsSrc, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const skillSrc = resolve(skillsSrc, entry.name);
-      // Only copy skills with SKILL.md (that's the Claude Code contract)
-      if (!existsSync(resolve(skillSrc, 'SKILL.md'))) continue;
-
-      const skillDst = resolve(targetSkills, entry.name);
-      if (existsSync(skillDst)) {
-        skipped++;
-        continue;
-      }
-      cpSync(skillSrc, skillDst, { recursive: true, force: false });
-      copied++;
+    const { linked, copied, kept } = syncAllSkillsToProject(projectDir);
+    if (linked + copied + kept === 0) {
+      log.info(`No user-level skills at ~/.coral/skills/ — nothing to link`);
+      return;
     }
+    const parts: string[] = [];
+    if (linked > 0) parts.push(`${linked} linked`);
+    if (copied > 0) parts.push(`${copied} copied (symlink fallback)`);
+    if (kept > 0) parts.push(`${kept} kept`);
+    log.ok(`Project skills: ${parts.join(', ')}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    log.warn(`Skill copy failed (non-fatal): ${msg}`);
-    return;
-  }
-
-  if (copied > 0 || skipped > 0) {
-    const parts: string[] = [];
-    if (copied > 0) parts.push(`${copied} copied`);
-    if (skipped > 0) parts.push(`${skipped} already present (skipped)`);
-    log.ok(`Project skills synced: ${parts.join(', ')}`);
+    log.warn(`Skill install failed (non-fatal): ${msg}`);
   }
 }
 
