@@ -1,6 +1,6 @@
 {
   "name": "@coralai/sps-cli",
-  "version": "0.43.0",
+  "version": "0.44.0",
   "description": "SPS CLI — AI-driven development pipeline orchestrator",
   "type": "module",
   "main": "dist/main.js",
@@ -8,7 +8,9 @@
     "sps": "dist/main.js"
   },
   "scripts": {
-    "build": "tsc && rm -rf ./project-template && cp -r ../project-template ./project-template",
+    "build": "npm run build:cli && npm run build:console",
+    "build:cli": "tsc && rm -rf ./project-template && cp -r ../project-template ./project-template",
+    "build:console": "cd console && npm install --no-audit --no-fund --silent && npm run build && cd .. && rm -rf ./dist/console-assets && cp -r ./console/dist ./dist/console-assets",
     "dev": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -45,6 +47,10 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.0",
+    "@hono/node-server": "^2.0.0",
+    "chokidar": "^5.0.0",
+    "hono": "^4.12.14",
+    "open": "^11.0.0",
     "yaml": "^2.8.3",
     "zod": "^3.25.0"
   }

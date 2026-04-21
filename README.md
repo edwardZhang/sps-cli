@@ -4,12 +4,13 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.43.0**
+**v0.44.0**
 
-SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Two modes:
+SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Three modes:
 
 - **Harness mode** (`sps agent`): Zero-config agent interaction — one-shot, multi-turn chat, persistent sessions
 - **Pipeline mode** (`sps pipeline`): Fully automated card-driven development workflow with YAML-configurable stages
+- **Console mode** (`sps console`, **v0.44+**): Local web dashboard — project list, kanban, workers, logs, skills management in one UI
 
 ```bash
 # Harness mode — talk to Claude Code instantly
@@ -211,6 +212,29 @@ sps pipeline use my-project docs      # switch to docs.yaml
 sps worker ps my-project              # show worker status, pid, runtime
 sps worker kill my-project 42         # kill specific worker by seq
 ```
+
+### Console Mode (`sps console`, v0.44+)
+
+Local web dashboard — a Pastel Neubrutalism UI over all SPS data. One command:
+
+```bash
+sps console                # starts server, opens browser at http://localhost:4311
+sps console --port 5000    # custom port
+sps console --no-open      # don't auto-open browser
+sps console --dev          # dev mode (proxy to Vite HMR server)
+sps console --kill         # stop running console
+```
+
+What you get:
+- **Project list** — all `~/.coral/projects/*` at a glance, with card/worker stats
+- **Kanban board** — cards by state, per-project, SSE live updates (M2)
+- **Workers** — 4-slot table with running/stuck/crashed/idle, log tail per slot (M3)
+- **Logs** — live tail with level filter, search (M3)
+- **Skills** — link/freeze/unfreeze, category-colored grid (M4)
+- **System** — version, env config, doctor (M4)
+- **Chat** — `sps agent` daemon sessions, streamed (M5)
+
+Under the hood: Node + Hono on `127.0.0.1:4311`, chokidar watchers pushing SSE to a React 19 + Vite + Tailwind v4 + shadcn/ui frontend. Design system locked in `console/DESIGN.md`.
 
 ### Skill Management
 

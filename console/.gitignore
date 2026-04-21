@@ -1,0 +1,6 @@
+
+# TS build cache
+tsconfig.tsbuildinfo
+**/.vite/
+**/dist/
+**/node_modules/

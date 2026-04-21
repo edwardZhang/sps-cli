@@ -164,6 +164,8 @@ const COMMANDS: Record<string, CommandInfo> = {
     unfreeze: '真实副本 → symlink（重新跟随全局）',
     sync: '① bundled → ~/.coral/skills/，② ~/.coral/skills/ → ~/.claude/skills/',
   }, examples: ['sps skill list', 'sps skill add python', 'sps skill freeze backend', 'sps skill sync'] },
+  console:   { desc: '启动 SPS Console Web 控制台（本机浏览器）', usage: 'sps console [--port 4311] [--host 127.0.0.1] [--no-open] [--dev] [--kill]',
+    examples: ['sps console', 'sps console --port 5000', 'sps console --no-open', 'sps console --kill'] },
   status:    { desc: '显示所有项目运行状态', usage: 'sps status [--json]',
     examples: ['sps status', 'sps status --json'] },
   hook:      { desc: 'Claude Code hook 事件包装（由 .claude/settings.json 调用）', usage: 'sps hook <event>', subs: {
@@ -494,6 +496,13 @@ async function main() {
     if (args.project) positionals.push(args.project);
     positionals.push(...args.positionals);
     await executeSkillCommand(args.subcommand, positionals, args.flags as unknown as Record<string, unknown>);
+    return;
+  }
+
+  // ─── console ───────────────────────────────────────────────────
+  if (args.command === 'console') {
+    const { executeConsole } = await import('./commands/consoleCommand.js');
+    await executeConsole(args.flags as unknown as Record<string, unknown>);
     return;
   }
 

@@ -1,0 +1,211 @@
+/**
+ * SPS Console · Pastel Neubrutalism
+ * 完整 token 定义见 ../DESIGN.md
+ */
+@import "tailwindcss";
+
+/* Tailwind v4 CSS-first 主题配置 */
+@theme {
+  /* 基础色 */
+  --color-bg:              #FFFFFF;
+  --color-bg-cream:        #FFF9F5;
+  --color-bg-soft:         #FAFBFD;
+
+  /* 文字 + 边 */
+  --color-text:            #2D3748;
+  --color-text-muted:      #64748B;
+  --color-text-subtle:     #94A3B8;
+  --color-border-light:    #E2E8F0;
+
+  /* Pastel 色板（edu-platform 实测 hex）*/
+  --color-primary:         #FDBCB4;
+  --color-primary-dark:    #F5A69D;
+  --color-secondary:       #ADD8E6;
+  --color-secondary-dark:  #8BC4D6;
+  --color-accent-mint:     #98FF98;
+  --color-accent-purple:   #E6E6FA;
+  --color-accent-yellow:   #FFF3B0;
+  --color-accent-pink:     #FFD1DC;
+
+  /* 状态色 */
+  --color-running:         #86EFAC;
+  --color-running-bg:      #D4F5E4;
+  --color-stuck:           #FDBA74;
+  --color-stuck-bg:        #FFE8CF;
+  --color-crashed:         #FCA5A5;
+  --color-crashed-bg:      #FFE4E6;
+  --color-idle:            #CBD5E1;
+  --color-idle-bg:         #F1F5F9;
+
+  /* CTA */
+  --color-cta:             #22C55E;
+  --color-cta-dark:        #16A34A;
+
+  /* 字体 */
+  --font-heading: "Fredoka", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-body:    "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono:    "JetBrains Mono", "SF Mono", Monaco, Consolas, monospace;
+
+  /* 圆角 */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  /* Neu 硬偏移阴影 */
+  --shadow-nb-sm: 3px 3px 0 #2D3748;
+  --shadow-nb:    5px 5px 0 #2D3748;
+  --shadow-nb-lg: 8px 8px 0 #2D3748;
+}
+
+/* Base 样式 */
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+  body {
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--color-text);
+    background: var(--color-bg-cream);
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4, h5 {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-weight: 700;
+    color: var(--color-text);
+    letter-spacing: -0.01em;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-text);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* Neu component utilities */
+@layer components {
+  /* 卡片 */
+  .nb-card {
+    background: var(--color-bg);
+    border: 3px solid var(--color-text);
+    border-radius: 16px;
+    padding: 16px;
+    box-shadow: 5px 5px 0 var(--color-text);
+  }
+  .nb-card-interactive {
+    transition: transform 180ms ease-out, box-shadow 180ms ease-out;
+    cursor: pointer;
+  }
+  .nb-card-interactive:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 7px 7px 0 var(--color-text);
+  }
+  .nb-card-interactive:active {
+    transform: translate(1px, 1px);
+    box-shadow: 3px 3px 0 var(--color-text);
+  }
+
+  /* 按钮 */
+  .nb-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border: 3px solid var(--color-text);
+    border-radius: 12px;
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 20px;
+    color: var(--color-text);
+    background: var(--color-bg);
+    box-shadow: 3px 3px 0 var(--color-text);
+    transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+    user-select: none;
+    cursor: pointer;
+  }
+  .nb-btn:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 var(--color-text);
+  }
+  .nb-btn:active {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 var(--color-text);
+  }
+  .nb-btn-primary  { background: var(--color-cta); }
+  .nb-btn-mint     { background: var(--color-accent-mint); }
+  .nb-btn-peach    { background: var(--color-primary); }
+  .nb-btn-blue     { background: var(--color-secondary); }
+  .nb-btn-yellow   { background: var(--color-accent-yellow); }
+  .nb-btn-purple   { background: var(--color-accent-purple); }
+  .nb-btn-danger   { background: var(--color-crashed); }
+
+  /* Input */
+  .nb-input {
+    padding: 10px 16px;
+    border: 3px solid var(--color-text);
+    border-radius: 12px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+    box-shadow: 3px 3px 0 var(--color-text);
+    transition: transform 120ms, box-shadow 120ms;
+  }
+  .nb-input:focus {
+    outline: none;
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 var(--color-text);
+  }
+
+  /* Badge */
+  .nb-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: 2px solid var(--color-text);
+    border-radius: 9999px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 16px;
+    color: var(--color-text);
+    background: var(--color-bg);
+  }
+
+  /* Status */
+  .nb-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px 4px 9px;
+    border: 2px solid var(--color-text);
+    border-radius: 9999px;
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 16px;
+    color: var(--color-text);
+  }
+  .nb-status::before {
+    content: "";
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    border: 1.5px solid var(--color-text);
+  }
+}
