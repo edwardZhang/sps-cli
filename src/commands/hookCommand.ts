@@ -151,7 +151,7 @@ async function hookUserPromptSubmit(_flags: Record<string, unknown>): Promise<vo
   }
 
   // ─── 2. Skill hints (if any) ──────────────────────────────────
-  let card: { labels: string[] } | null = null;
+  let card: { labels: string[]; skills?: string[] } | null = null;
   try {
     card = await taskBackend.getBySeq(cardId);
   } catch {
@@ -159,15 +159,14 @@ async function hookUserPromptSubmit(_flags: Record<string, unknown>): Promise<vo
   }
   if (!card) return;
 
-  const skillLabels = card.labels
-    .filter(l => l.startsWith('skill:'))
-    .map(l => l.slice('skill:'.length))
-    .filter(Boolean);
+  // v0.42.0+: `skills` is a first-class frontmatter field. Legacy `skill:*`
+  // labels are no longer parsed (hard break per v0.42 design decision #5).
+  const skillNames = Array.isArray(card.skills) ? card.skills.filter(Boolean) : [];
 
-  if (skillLabels.length === 0) return;
+  if (skillNames.length === 0) return;
 
-  const skillHint = skillLabels
-    .map(n => `- \`${n}\` (see ~/.claude/skills/${n}/SKILL.md)`)
+  const skillHint = skillNames
+    .map(n => `- \`${n}\` (project-local: .claude/skills/${n}/SKILL.md)`)
     .join('\n');
 
   const output = {

@@ -15,13 +15,30 @@
  */
 
 /** Unified card representation across PM backends */
+export interface ChecklistItem {
+  text: string;
+  done: boolean;
+}
+
+export interface ChecklistStats {
+  total: number;
+  done: number;
+  percent: number;
+  items: ChecklistItem[];
+}
+
 export interface Card {
   id: string;
   seq: string;
-  name: string;
+  /** Card title — user-visible task name. v0.42.0 renamed from `name`. */
+  title: string;
   desc: string;
   state: CardState;
   labels: string[];
+  /** Business metadata: skills required for this task (v0.42.0+). */
+  skills?: string[];
+  /** Runtime-parsed checklist progress from the "## 检查清单" markdown section. */
+  checklist?: ChecklistStats;
   meta: Record<string, unknown>;
   /** Retry count for current task — incremented on failure, reset on success or manual reset */
   retryCount?: number;

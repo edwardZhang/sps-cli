@@ -36,7 +36,7 @@ export interface ProjectConfig {
   GITLAB_MERGE_BRANCH: string;
 
   // PM backend
-  PM_TOOL: 'trello' | 'plane' | 'markdown';
+  PM_TOOL: 'markdown';
 
   // Pipeline
   PIPELINE_LABEL?: string;
@@ -123,7 +123,7 @@ export function loadProjectConf(projectName: string): ProjectConfig {
     GITLAB_PROJECT_ID: raw.GITLAB_PROJECT_ID || '',
     GITLAB_MERGE_BRANCH: raw.GITLAB_MERGE_BRANCH || 'develop',
 
-    PM_TOOL: (raw.PM_TOOL as ProjectConfig['PM_TOOL']) || 'trello',
+    PM_TOOL: 'markdown',
 
     PIPELINE_LABEL: raw.PIPELINE_LABEL,
     MR_MODE: (raw.MR_MODE as ProjectConfig['MR_MODE']) || 'none',

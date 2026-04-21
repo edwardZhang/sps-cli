@@ -57,7 +57,7 @@ function makeConfig(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
     GITLAB_PROJECT: 'test/project',
     GITLAB_PROJECT_ID: '1',
     GITLAB_MERGE_BRANCH: 'main',
-    PM_TOOL: 'plane',
+    PM_TOOL: 'markdown',
     MR_MODE: 'create',
     WORKER_TRANSPORT: 'acp-sdk',
     MAX_CONCURRENT_WORKERS: 2,
@@ -101,7 +101,7 @@ function makeCard(seq: string, state: string, overrides: Partial<Card> = {}): Ca
   return {
     id: `card-${seq}`,
     seq,
-    name: `Test card ${seq}`,
+    title: `Test card ${seq}`,
     desc: `Description for card ${seq}`,
     state,
     labels: [],

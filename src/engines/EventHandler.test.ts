@@ -93,7 +93,7 @@ describe('SPSEventHandler.onCompleted (label gating)', () => {
   it('moves card to onCompleteState when COMPLETED-<stage> label present', async () => {
     writeState(join(dir, 'state.json'), makeState(), 'init');
     const card: Card = {
-      id: 'c42', seq: '42', name: 't', desc: '', state: 'Inprogress',
+      id: 'c42', seq: '42', title: 't', desc: '', state: 'Inprogress',
       labels: ['COMPLETED-develop'], meta: {},
     };
     const move = vi.fn(async () => {});
@@ -127,7 +127,7 @@ describe('SPSEventHandler.onCompleted (label gating)', () => {
   it('marks NEEDS-FIX when COMPLETED-<stage> label missing', async () => {
     writeState(join(dir, 'state.json'), makeState(), 'init');
     const card: Card = {
-      id: 'c42', seq: '42', name: 't', desc: '', state: 'Inprogress',
+      id: 'c42', seq: '42', title: 't', desc: '', state: 'Inprogress',
       labels: [], meta: {},   // no COMPLETED label
     };
     const move = vi.fn(async () => {});
@@ -161,7 +161,7 @@ describe('SPSEventHandler.onCompleted (label gating)', () => {
     writeState(join(dir, 'state.json'), makeState(), 'init');
     const qaStage = makeStage('qa');
     const card: Card = {
-      id: 'c42', seq: '42', name: 't', desc: '', state: 'QA',
+      id: 'c42', seq: '42', title: 't', desc: '', state: 'QA',
       labels: ['COMPLETED-qa'], meta: {},
     };
     const move = vi.fn(async () => {});

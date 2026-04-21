@@ -68,7 +68,7 @@ export async function executePmCommand(
         } else {
           for (const card of allCards) {
             const labels = card.labels.length > 0 ? ` [${card.labels.join(', ')}]` : '';
-            console.log(`  ${card.seq.padStart(4)} | ${card.state.padEnd(11)} | ${card.name}${labels}`);
+            console.log(`  ${card.seq.padStart(4)} | ${card.state.padEnd(11)} | ${card.title}${labels}`);
           }
           console.log(`\n  Total: ${allCards.length} card(s)`);
         }

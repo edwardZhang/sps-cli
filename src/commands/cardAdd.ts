@@ -26,16 +26,23 @@ import { createTaskBackend } from '../providers/registry.js';
 export async function executeCardAdd(
   project: string,
   positionals: string[],
-  flags: Record<string, boolean>,
+  flags: Record<string, boolean | string>,
 ): Promise<void> {
   const log = new Logger('card-add', project);
   const jsonOutput = !!flags.json;
 
-  const name = positionals[0];
+  const title = positionals[0];
   const desc = positionals.slice(1).join(' ');
 
-  if (!name) {
-    console.error('Usage: sps card add <project> "<title>" ["description"]');
+  // v0.42.0: `--skill frontend,typescript` populates the `skills` frontmatter
+  // field directly. Replaces the v0.41.x `skill:xxx` label pattern.
+  const skillFlag = typeof flags.skill === 'string' ? flags.skill : '';
+  const skills = skillFlag
+    ? skillFlag.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+
+  if (!title) {
+    console.error('Usage: sps card add <project> "<title>" ["description"] [--skill name1,name2]');
     process.exit(2);
   }
 
@@ -63,10 +70,15 @@ export async function executeCardAdd(
     await taskBackend.bootstrap();
 
     // 1. Create card in Planning
-    const card = await taskBackend.create(name, desc || '', 'Planning');
+    const card = await taskBackend.create(title, desc || '', 'Planning');
 
     // 2. Add AI-PIPELINE label
     await taskBackend.addLabel(card.seq, pipelineLabel);
+
+    // 2b. v0.42.0: --skill flag → skills frontmatter field (not label)
+    if (skills.length > 0) {
+      await taskBackend.setSkills(card.seq, skills);
+    }
 
     // 3. Append to pipeline_order.json (if file exists)
     const seqNum = parseInt(card.seq, 10);
@@ -82,12 +94,12 @@ export async function executeCardAdd(
       console.log(JSON.stringify({
         status: 'ok',
         seq: card.seq,
-        name: card.name,
+        title: card.title,
         state: 'Planning',
         label: pipelineLabel,
       }, null, 2));
     } else {
-      log.ok(`Created seq:${card.seq} "${card.name}" in Planning [${pipelineLabel}]`);
+      log.ok(`Created seq:${card.seq} "${card.title}" in Planning [${pipelineLabel}]`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

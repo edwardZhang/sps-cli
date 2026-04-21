@@ -18,7 +18,7 @@
  * @outputs       初始化后的项目目录和配置文件
  * @workflow      1. 查找模板目录 → 2. 创建项目目录 → 3. 复制模板文件 → 4. 写入配置
  */
-import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -85,10 +85,19 @@ function installClaudePreset(projectDir: string, projectName: string, log: Logge
   }
 
   // Ensure hook scripts are executable (cpSync preserves mode, but play safe).
-  const stopHook = resolve(targetClaude, 'hooks', 'stop.sh');
-  if (existsSync(stopHook)) {
-    try { chmodSync(stopHook, 0o755); } catch { /* non-fatal */ }
+  for (const name of ['stop.sh', 'start.sh']) {
+    const hookPath = resolve(targetClaude, 'hooks', name);
+    if (existsSync(hookPath)) {
+      try { chmodSync(hookPath, 0o755); } catch { /* non-fatal */ }
+    }
   }
+
+  // v0.42.0: Copy skills from ~/.coral/skills/ to project-level .claude/skills/.
+  // Each skill (directory with SKILL.md) is copied as a whole. Project-level
+  // skills override user-level ones and can be git-committed for team sharing.
+  // Non-destructive: `force: false` so user edits to existing skill dirs are
+  // preserved. Run `sps skill update <project>` to re-sync from ~/.coral/skills/.
+  installProjectSkills(targetClaude, log);
 
   // Append .claude/settings.local.json to .gitignore (idempotent).
   const gitignore = resolve(projectDir, '.gitignore');
@@ -103,6 +112,56 @@ function installClaudePreset(projectDir: string, projectName: string, log: Logge
   log.ok(preExisted
     ? `Refreshed .claude/ preset in ${projectDir} (existing files preserved)`
     : `Installed .claude/ preset into ${projectDir}`);
+}
+
+/**
+ * v0.42.0: Copy user-level skills (~/.coral/skills/) into the project's
+ * .claude/skills/ directory. Non-destructive — existing project-level
+ * skill dirs are preserved.
+ *
+ * Each skill is a directory containing SKILL.md; the directory name matches
+ * the `skills:` field value on cards (e.g., "frontend" → .claude/skills/frontend/).
+ */
+function installProjectSkills(targetClaude: string, log: Logger): void {
+  const skillsSrc = resolve(HOME, '.coral', 'skills');
+  if (!existsSync(skillsSrc)) {
+    log.info(`No user-level skills at ${skillsSrc} — nothing to copy to project`);
+    return;
+  }
+
+  const targetSkills = resolve(targetClaude, 'skills');
+  if (!existsSync(targetSkills)) mkdirSync(targetSkills, { recursive: true });
+
+  let copied = 0;
+  let skipped = 0;
+  try {
+    const entries = readdirSync(skillsSrc, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillSrc = resolve(skillsSrc, entry.name);
+      // Only copy skills with SKILL.md (that's the Claude Code contract)
+      if (!existsSync(resolve(skillSrc, 'SKILL.md'))) continue;
+
+      const skillDst = resolve(targetSkills, entry.name);
+      if (existsSync(skillDst)) {
+        skipped++;
+        continue;
+      }
+      cpSync(skillSrc, skillDst, { recursive: true, force: false });
+      copied++;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`Skill copy failed (non-fatal): ${msg}`);
+    return;
+  }
+
+  if (copied > 0 || skipped > 0) {
+    const parts: string[] = [];
+    if (copied > 0) parts.push(`${copied} copied`);
+    if (skipped > 0) parts.push(`${skipped} already present (skipped)`);
+    log.ok(`Project skills synced: ${parts.join(', ')}`);
+  }
 }
 
 export async function executeProjectInit(
@@ -157,7 +216,6 @@ export async function executeProjectInit(
 
     // Required
     const projectDir = await ask('Repository path', resolve(HOME, 'projects', project));
-    const pmTool = await ask('PM backend (markdown/plane/trello)', 'markdown');
     const mergeBranch = await ask('Merge target branch', 'main');
     const maxWorkers = await ask('Max concurrent workers', '1');
 
@@ -165,17 +223,6 @@ export async function executeProjectInit(
     console.log('\n  ── Git Remote (optional, leave blank to skip) ──');
     const gitlabProject = await ask('Git remote project path (e.g. user/repo)', '');
     const gitlabProjectId = gitlabProject ? await ask('GitLab project ID (number, blank if GitHub)', '') : '';
-
-    // PM-specific
-    let planeProjectId = '';
-    let trelloBoardId = '';
-    if (pmTool === 'plane') {
-      console.log('\n  ── Plane ──');
-      planeProjectId = await ask('Plane project ID', '');
-    } else if (pmTool === 'trello') {
-      console.log('\n  ── Trello ──');
-      trelloBoardId = await ask('Trello board ID', '');
-    }
 
     // Notification
     console.log('\n  ── Notifications ──');
@@ -197,9 +244,8 @@ export async function executeProjectInit(
     if (gitlabProjectId) confLines.push(`export GITLAB_PROJECT_ID="${gitlabProjectId}"`);
     confLines.push(`export GITLAB_MERGE_BRANCH="${mergeBranch}"`);
     confLines.push('');
-    confLines.push(`export PM_TOOL="${pmTool}"`);
-    if (pmTool === 'plane' && planeProjectId) confLines.push(`export PLANE_PROJECT_ID="${planeProjectId}"`);
-    if (pmTool === 'trello' && trelloBoardId) confLines.push(`export TRELLO_BOARD_ID="${trelloBoardId}"`);
+    // v0.42.0: PM_TOOL is always markdown (Plane/Trello removed)
+    confLines.push(`export PM_TOOL="markdown"`);
     confLines.push('export PIPELINE_LABEL="AI-PIPELINE"');
     confLines.push('export MR_MODE="none"');
     confLines.push('');
@@ -249,17 +295,9 @@ export GITLAB_PROJECT_ID="42"
 export GITLAB_MERGE_BRANCH="main"
 
 # ── PM Backend ───────────────────────────────────────────────────
-# PM_TOOL: Task management backend
-#   - markdown: Local markdown files (zero-config, good for solo projects)
-#   - plane: Plane CE/Cloud (requires PLANE_* credentials in ~/.coral/env)
-#   - trello: Trello (requires TRELLO_* credentials in ~/.coral/env)
+# PM_TOOL: Task management backend (v0.42.0+: markdown is the only option)
+#   Cards are stored as markdown files under ~/.coral/projects/<name>/cards/<state>/
 export PM_TOOL="markdown"
-# PLANE_PROJECT_ID: Plane project ID (only when PM_TOOL=plane)
-# export PLANE_PROJECT_ID=""
-# TRELLO_BOARD_ID: Trello board ID (only when PM_TOOL=trello)
-# export TRELLO_BOARD_ID=""
-# TRELLO_ACCOUNT: Multi-account Trello (maps to TRELLO_*_<account> vars in env)
-# export TRELLO_ACCOUNT="default"
 
 # ── Pipeline Control ────────────────────────────────────────────
 # PIPELINE_LABEL: Label that marks a card for pipeline processing (required on each card)

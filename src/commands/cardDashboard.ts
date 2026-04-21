@@ -304,7 +304,7 @@ async function buildProjectBoard(projectName: string): Promise<ProjectBoardSnaps
       const blockedReason = deriveBlockedReason(card.labels, runtimeStatus, lease, evidence);
       return {
         seq: card.seq,
-        title: card.name,
+        title: card.title,
         state: effectiveState,
         labels: card.labels,
         workerSlot: runtimeOwned ? workerSlot : null,

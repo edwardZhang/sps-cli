@@ -371,7 +371,7 @@ export class MonitorEngine {
     });
   }
 
-  private async listRuntimeAwareInprogressCards(): Promise<{ seq: string; name: string; labels: string[] }[]> {
+  private async listRuntimeAwareInprogressCards(): Promise<{ seq: string; title: string; labels: string[] }[]> {
     // Collect cards from all stage activeStates (not just the first stage)
     const bySeq = new Map<string, import('../models/types.js').Card>();
     for (const stage of this.pipelineAdapter.stages) {
@@ -389,7 +389,7 @@ export class MonitorEngine {
 
     return Array.from(bySeq.values())
       .sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10))
-      .map(card => ({ seq: card.seq, name: card.name, labels: card.labels }));
+      .map(card => ({ seq: card.seq, title: card.title, labels: card.labels }));
   }
 
   private async handleStaleRuntime(
@@ -931,8 +931,8 @@ export class MonitorEngine {
 
   // ─── Helpers ──────────────────────────────────────────────────
 
-  private buildBranchName(card: { seq: string; name: string }): string {
-    const slug = card.name
+  private buildBranchName(card: { seq: string; title: string }): string {
+    const slug = card.title
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')

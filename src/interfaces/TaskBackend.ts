@@ -26,7 +26,9 @@ export interface TaskBackend {
   claim(seq: string, workerSlot: string): Promise<void>;
   releaseClaim(seq: string): Promise<void>;
   comment(seq: string, text: string): Promise<void>;
-  create(name: string, desc: string, state: CardState): Promise<Card>;
+  create(title: string, desc: string, state: CardState): Promise<Card>;
+  /** v0.42.0+: set the `skills` frontmatter field on a card (replaces any existing value). */
+  setSkills(seq: string, skills: string[]): Promise<void>;
   checklistCreate(seq: string, items: string[]): Promise<void>;
   checklistList(seq: string): Promise<{ id: string; text: string; checked: boolean }[]>;
   checklistCheck(seq: string, itemId: string): Promise<void>;

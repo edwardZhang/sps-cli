@@ -27,7 +27,7 @@ function makeConfig(overrides?: Partial<ProjectConfig>): ProjectConfig {
     GITLAB_PROJECT: 'group/test-project',
     GITLAB_PROJECT_ID: '42',
     GITLAB_MERGE_BRANCH: 'develop',
-    PM_TOOL: 'plane',
+    PM_TOOL: 'markdown',
     MR_MODE: 'none',
     WORKER_TRANSPORT: 'acp-sdk',
     MAX_CONCURRENT_WORKERS: 3,
@@ -199,7 +199,7 @@ describe('loadProjectConf', () => {
     expect(config.MAX_CONCURRENT_WORKERS).toBe(3);
     expect(config.WORKER_RESTART_LIMIT).toBe(2);
     expect(config.MR_MODE).toBe('none');
-    expect(config.PM_TOOL).toBe('trello');
+    expect(config.PM_TOOL).toBe('markdown');
     expect(config.CONFLICT_DEFAULT).toBe('serial');
     expect(config.MONITOR_AUTO_QA).toBe(false);
   });
@@ -277,8 +277,11 @@ describe('loadProjectConf', () => {
     expect(config.raw.GITLAB_TOKEN).toBe('secret-token');
   });
 
-  it('parses PM_TOOL variants', () => {
-    for (const tool of ['plane', 'trello', 'markdown'] as const) {
+  it('forces PM_TOOL to "markdown" regardless of legacy conf value (v0.42+)', () => {
+    // v0.42.0 removed Plane/Trello. Legacy conf files with PM_TOOL=plane/trello
+    // still load, but the effective value is always 'markdown'. This ensures
+    // smooth upgrade path for configs left over from v0.41.x and earlier.
+    for (const tool of ['plane', 'trello', 'markdown']) {
       writeConf(`pm-${tool}`, [
         'PROJECT_NAME=test',
         'GITLAB_PROJECT=g/test',
@@ -287,7 +290,7 @@ describe('loadProjectConf', () => {
       ].join('\n'));
 
       const config = loadProjectConf(`pm-${tool}`);
-      expect(config.PM_TOOL).toBe(tool);
+      expect(config.PM_TOOL).toBe('markdown');
     }
   });
 

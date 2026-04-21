@@ -60,7 +60,7 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
   console.log('  AI-Driven Development Pipeline Orchestrator');
   console.log('  ──────────────────────────────────────────────────────────────────────');
   console.log('  Automate the full dev lifecycle: task cards → AI coding → push → merge.');
-  console.log('  Supports Plane/Trello/Markdown, GitLab/GitHub, Claude (via ACP), Matrix.');
+  console.log('  Supports Markdown PM backend, GitLab/GitHub, Claude (via ACP), Matrix.');
   console.log('  https://www.npmjs.com/package/@coralai/sps-cli');
   console.log('');
 
@@ -141,20 +141,8 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     const gitlabSshHost = await prompt.ask('GITLAB_SSH_HOST', defaultSshHost);
     const gitlabSshPort = await prompt.ask('GITLAB_SSH_PORT', existing.GITLAB_SSH_PORT || '22');
 
-    // PM Backend
-    console.log('\n  ── PM Backend (Plane) ──');
-    const planeUrl = await prompt.ask('PLANE_URL', existing.PLANE_URL || '');
-    const planeApiKey = planeUrl ? await prompt.ask('PLANE_API_KEY', mask(existing.PLANE_API_KEY) ? `${mask(existing.PLANE_API_KEY)} — Enter to keep` : '') : '';
-    const finalPlaneApiKey = (planeApiKey.includes('****') || planeApiKey.includes('— Enter to keep') || planeApiKey === '') && existing.PLANE_API_KEY
-      ? existing.PLANE_API_KEY : planeApiKey;
-    const planeWorkspace = planeUrl ? await prompt.ask('PLANE_WORKSPACE_SLUG', existing.PLANE_WORKSPACE_SLUG || '') : '';
-
-    // Trello
-    console.log('\n  ── PM Backend (Trello) ──');
-    const trelloApiKey = await prompt.ask('TRELLO_API_KEY', existing.TRELLO_API_KEY || '');
-    const trelloToken = trelloApiKey ? await prompt.ask('TRELLO_TOKEN', mask(existing.TRELLO_TOKEN) ? `${mask(existing.TRELLO_TOKEN)} — Enter to keep` : '') : '';
-    const finalTrelloToken = (trelloToken.includes('****') || trelloToken.includes('— Enter to keep') || trelloToken === '') && existing.TRELLO_TOKEN
-      ? existing.TRELLO_TOKEN : trelloToken;
+    // v0.42.0: PM backend is markdown only (Plane/Trello removed).
+    // No PM-related env prompts needed — cards live in ~/.coral/projects/<name>/cards/.
 
     // Matrix notifications
     console.log('\n  ── Notifications (Matrix) ──');
@@ -177,21 +165,6 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
       if (finalGitlabToken) lines.push(`export GITLAB_TOKEN="${finalGitlabToken}"`);
       if (gitlabSshHost) lines.push(`export GITLAB_SSH_HOST="${gitlabSshHost}"`);
       if (gitlabSshPort && gitlabSshPort !== '22') lines.push(`export GITLAB_SSH_PORT="${gitlabSshPort}"`);
-      lines.push('');
-    }
-
-    if (planeUrl) {
-      lines.push('# ── Plane ───────────────────────────────────────────');
-      lines.push(`export PLANE_URL="${planeUrl}"`);
-      if (finalPlaneApiKey) lines.push(`export PLANE_API_KEY="${finalPlaneApiKey}"`);
-      if (planeWorkspace) lines.push(`export PLANE_WORKSPACE_SLUG="${planeWorkspace}"`);
-      lines.push('');
-    }
-
-    if (trelloApiKey) {
-      lines.push('# ── Trello ──────────────────────────────────────────');
-      lines.push(`export TRELLO_API_KEY="${trelloApiKey}"`);
-      if (finalTrelloToken) lines.push(`export TRELLO_TOKEN="${finalTrelloToken}"`);
       lines.push('');
     }
 

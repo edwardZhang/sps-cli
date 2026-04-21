@@ -407,7 +407,7 @@ async function runOneTick(
         const cards = await runner.taskBackend.listByState(cardState as any);
         for (const card of cards) {
           if (card.labels.includes('NEEDS-FIX')) {
-            needsFixCards.push(`seq:${card.seq} (${card.name})`);
+            needsFixCards.push(`seq:${card.seq} (${card.title})`);
           }
         }
       } catch { /* ignore */ }

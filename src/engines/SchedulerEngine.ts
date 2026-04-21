@@ -150,7 +150,7 @@ export class SchedulerEngine {
             removeFromQueue(this.ctx.paths.pipelineOrderFile, seq);
             this.log.ok(`Moved seq ${seq} ${this.pipelineAdapter.states.planning} → ${this.pipelineAdapter.states.backlog}`);
             if (this.notifier) {
-              await this.notifier.send(`↔️ [${this.ctx.projectName}] seq:${seq} "${card.name}" scheduled (${this.pipelineAdapter.states.planning} → ${this.pipelineAdapter.states.backlog})`).catch(() => {});
+              await this.notifier.send(`↔️ [${this.ctx.projectName}] seq:${seq} "${card.title}" scheduled (${this.pipelineAdapter.states.planning} → ${this.pipelineAdapter.states.backlog})`).catch(() => {});
             }
             this.log.event({
               component: 'scheduler',

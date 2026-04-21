@@ -329,7 +329,7 @@ export class StageEngine {
       project: this.ctx.projectName,
       phase: this.stage.name as 'development',
       stageName: this.stage.name,
-      cardTitle: card.name,
+      cardTitle: card.title,
       prompt,
       cwd: worktree,
       branch: taskId,
@@ -660,7 +660,7 @@ export class StageEngine {
       project: this.ctx.projectName,
       phase: 'development',
       stageName: this.stage.name,
-      cardTitle: card.name,
+      cardTitle: card.title,
       prompt,
       cwd: worktreePath,
       branch: taskId,
@@ -838,7 +838,7 @@ export class StageEngine {
 
     const promptCtx = {
       taskSeq: card.seq,
-      taskTitle: card.name,
+      taskTitle: card.title,
       taskDescription: card.desc || '(no description)',
       cardId: card.id,
       worktreePath,

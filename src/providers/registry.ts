@@ -23,16 +23,16 @@ import { ACPWorkerRuntime } from './ACPWorkerRuntime.js';
 import { GitLabRepoBackend } from './GitLabRepoBackend.js';
 import { MarkdownTaskBackend } from './MarkdownTaskBackend.js';
 import { MatrixNotifier } from './MatrixNotifier.js';
-import { PlaneTaskBackend } from './PlaneTaskBackend.js';
-import { TrelloTaskBackend } from './TrelloTaskBackend.js';
 
 export function createTaskBackend(config: ProjectConfig, customStates?: string[]): TaskBackend {
-  switch (config.PM_TOOL) {
-    case 'plane': return new PlaneTaskBackend(config);
-    case 'trello': return new TrelloTaskBackend(config);
-    case 'markdown': return new MarkdownTaskBackend(config, customStates);
-    default: throw new Error(`Unknown PM_TOOL: ${config.PM_TOOL}`);
+  // v0.42.0: markdown is the only supported backend. Plane/Trello removed.
+  if (config.PM_TOOL && config.PM_TOOL !== 'markdown') {
+    throw new Error(
+      `PM_TOOL="${config.PM_TOOL}" is no longer supported as of v0.42.0. ` +
+      `Only 'markdown' is available. Update your conf to PM_TOOL="markdown".`,
+    );
   }
+  return new MarkdownTaskBackend(config, customStates);
 }
 
 export function createRepoBackend(config: ProjectConfig): RepoBackend {

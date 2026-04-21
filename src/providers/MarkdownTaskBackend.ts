@@ -18,6 +18,7 @@ import {
   renameSync, writeFileSync,
 } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import { parseChecklist } from '../core/checklist.js';
 import type { ProjectConfig } from '../core/config.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { Card, CardState } from '../models/types.js';
@@ -149,6 +150,15 @@ export class MarkdownTaskBackend implements TaskBackend {
     }
   }
 
+  // ─── Skills (v0.42.0+) ────────────────────────────────────────
+
+  async setSkills(seq: string, skills: string[]): Promise<void> {
+    const { filePath } = this.findCardFile(seq);
+    const { frontmatter, body } = this.parseFile(filePath);
+    frontmatter.skills = [...new Set(skills.filter(Boolean))];  // dedupe, drop empty
+    this.writeFile(filePath, frontmatter, body);
+  }
+
   // ─── Claim ────────────────────────────────────────────────────
 
   async claim(seq: string, workerSlot: string): Promise<void> {
@@ -208,9 +218,9 @@ export class MarkdownTaskBackend implements TaskBackend {
 
   // ─── Create ───────────────────────────────────────────────────
 
-  async create(name: string, desc: string, state: CardState): Promise<Card> {
+  async create(title: string, desc: string, state: CardState): Promise<Card> {
     const seq = this.nextSeq();
-    const slug = name
+    const slug = title
       .toLowerCase()
       .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
       .replace(/^-|-$/g, '')
@@ -220,10 +230,12 @@ export class MarkdownTaskBackend implements TaskBackend {
     const dir = resolve(this.cardsDir, dirName);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
+    // v0.42.0: use `title` (renamed from `name`), no longer write `skill:*` labels
     const frontmatter: Record<string, unknown> = {
       seq,
-      name,
+      title,
       labels: [],
+      skills: [],
       created: new Date().toISOString(),
       claimed_by: null,
       claimed_at: null,
@@ -237,10 +249,11 @@ export class MarkdownTaskBackend implements TaskBackend {
     return {
       id: `md-${seq}`,
       seq: String(seq),
-      name,
+      title,
       desc: desc || '',
       state,
       labels: [],
+      skills: [],
       meta: {},
     };
   }
@@ -335,13 +348,27 @@ export class MarkdownTaskBackend implements TaskBackend {
   private readCard(filePath: string, state: CardState): Card {
     const { frontmatter, body } = this.parseFile(filePath);
     const desc = this.extractSection(body, '描述');
+
+    // v0.42.0: new format uses `title` and `skills` fields. Old v0.41.x cards
+    // used `name` and `skill:*` labels — per design decision they are not
+    // runtime-compatible (hard break). We still fall back to `name` if
+    // `title` is missing to avoid crashes on freshly-upgraded systems, but
+    // skill:* labels are no longer parsed.
+    const title = String(frontmatter.title || frontmatter.name || '');
+    const skills = Array.isArray(frontmatter.skills)
+      ? (frontmatter.skills as unknown[]).map(String).filter(Boolean)
+      : undefined;
+    const checklist = parseChecklist(body);
+
     return {
       id: `md-${frontmatter.seq}`,
       seq: String(frontmatter.seq),
-      name: String(frontmatter.name || ''),
+      title,
       desc,
       state,
       labels: (frontmatter.labels as string[]) || [],
+      ...(skills ? { skills } : {}),
+      ...(checklist ? { checklist } : {}),
       meta: (frontmatter.meta as Record<string, unknown>) || {},
       retryCount: typeof frontmatter.retry_count === 'number' ? frontmatter.retry_count : 0,
     };
