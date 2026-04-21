@@ -19,7 +19,7 @@
  * @workflow      1. 创建目录结构 → 2. 交互式收集配置 → 3. 写入 env 文件 → 4. 安装技能文件
  */
 import { execSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -250,7 +250,14 @@ export function syncSkills(log?: Logger): number {
   if (!existsSync(SKILLS_SRC_DIR)) return 0;
 
   const skillDirs = readdirSync(SKILLS_SRC_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory() && existsSync(resolve(SKILLS_SRC_DIR, d.name, 'SKILL.md')))
+    .filter(d => {
+      // 普通目录或指向目录的 symlink（外部 skill 包常用 symlink 接入）
+      const name = d.name;
+      const isDir = d.isDirectory() || (d.isSymbolicLink() && (() => {
+        try { return statSync(resolve(SKILLS_SRC_DIR, name)).isDirectory(); } catch { return false; }
+      })());
+      return isDir && existsSync(resolve(SKILLS_SRC_DIR, name, 'SKILL.md'));
+    })
     .map(d => d.name);
 
   if (skillDirs.length === 0) return 0;

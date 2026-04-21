@@ -22,6 +22,7 @@ import {
   readFileSync,
   readlinkSync,
   rmSync,
+  statSync,
   symlinkSync,
 } from 'node:fs';
 import { resolve } from 'node:path';
@@ -49,7 +50,17 @@ export function userSkillsRoot(): string {
 export function listUserSkills(): SkillInfo[] {
   if (!existsSync(USER_SKILLS_DIR)) return [];
   return readdirSync(USER_SKILLS_DIR, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
+    .filter((e) => {
+      // 普通目录或指向目录的 symlink 都算（外部 skill 包经常用 symlink 接入）
+      if (e.isDirectory()) return true;
+      if (!e.isSymbolicLink()) return false;
+      try {
+        // statSync 跟随 symlink，解析到目标
+        return statSync(resolve(USER_SKILLS_DIR, e.name)).isDirectory();
+      } catch {
+        return false;
+      }
+    })
     .map((e) => ({
       name: e.name,
       userPath: resolve(USER_SKILLS_DIR, e.name),

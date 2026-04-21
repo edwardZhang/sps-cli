@@ -221,6 +221,21 @@ describe('skillStore', () => {
       .toBe('# user customized\n');
   });
 
+  it('listUserSkills 包括 symlink 指向目录的 skill（外部包 vendor 接入模式）', async () => {
+    makeUserSkill(fakeHome, 'python');
+    // 模拟外部 skill 包：在别处建 skill 目录，再 symlink 进 ~/.coral/skills/
+    const externalRoot = resolve(root, 'external-pack');
+    mkdirSync(externalRoot, { recursive: true });
+    writeFileSync(resolve(externalRoot, 'SKILL.md'), '---\nname: external\n---\n# external\n');
+    const skillsDir = resolve(fakeHome, '.coral', 'skills');
+    const { symlinkSync } = await import('node:fs');
+    symlinkSync(externalRoot, resolve(skillsDir, 'external'), 'dir');
+
+    const store = await loadStoreWithFakeHome(fakeHome);
+    const names = store.listUserSkills().map((s) => s.name).sort();
+    expect(names).toEqual(['external', 'python']);
+  });
+
   it('ensureSkillsGitignore 幂等追加 .claude/skills/', async () => {
     const proj = makeProject(root);
     const store = await loadStoreWithFakeHome(fakeHome);
