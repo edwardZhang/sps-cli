@@ -11,11 +11,13 @@ import {
   type ChatMessage,
   type ChatSessionDetail,
 } from '../../shared/api/chat';
+import { useDialog } from '../../shared/components/DialogProvider';
 
 export function ChatPage() {
   const { sessionId } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
+  const { confirm, alert } = useDialog();
 
   const sessionsQ = useQuery({ queryKey: ['chat-sessions'], queryFn: listSessions });
   const currentQ = useQuery({
@@ -239,18 +241,27 @@ export function ChatPage() {
       setSending(false);
       // eslint-disable-next-line no-console
       console.error('sendMessage failed', err);
-      window.alert(`发送失败: ${err instanceof Error ? err.message : String(err)}`);
+      void alert({
+        title: '发送失败',
+        body: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, [draft, sending, sessionId, qc, nav]);
+  }, [draft, sending, sessionId, qc, nav, alert]);
 
   const handleDelete = useCallback(
     async (id: string): Promise<void> => {
-      if (!window.confirm('删除这个对话？')) return;
+      const ok = await confirm({
+        title: '删除对话',
+        body: '对话记录会永久删除，不可恢复。',
+        confirm: '删除',
+        danger: true,
+      });
+      if (!ok) return;
       await deleteSession(id);
       qc.invalidateQueries({ queryKey: ['chat-sessions'] });
       if (sessionId === id) nav('/chat');
     },
-    [qc, sessionId, nav],
+    [qc, sessionId, nav, confirm],
   );
 
   return (

@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { X, Play, RotateCcw, GitBranch } from 'lucide-react';
 import { getCard, launchCard, resetCard } from '../../shared/api/cards';
 import { SkillBadge, LabelBadge } from '../../shared/components/Badges';
+import { useDialog } from '../../shared/components/DialogProvider';
 
 export function CardDetailModal({
   project,
@@ -15,6 +16,7 @@ export function CardDetailModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { confirm } = useDialog();
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['card', project, seq],
     queryFn: () => getCard(project, seq),
@@ -143,7 +145,13 @@ export function CardDetailModal({
                 className="nb-btn nb-btn-yellow"
                 type="button"
                 onClick={async () => {
-                  if (!window.confirm(`重置卡片 #${seq}？`)) return;
+                  const ok = await confirm({
+                    title: `重置卡片 #${seq}`,
+                    body: '卡片状态会回到初始，已做的 checklist 会清空。',
+                    confirm: '重置',
+                    danger: true,
+                  });
+                  if (!ok) return;
                   await resetCard(project, seq);
                   onChanged();
                   onClose();

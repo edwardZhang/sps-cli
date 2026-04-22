@@ -15,7 +15,7 @@ import { useProjectStream } from '../../shared/hooks/useProjectStream';
 import { KanbanColumn } from './KanbanColumn';
 import { CardDetailModal } from './CardDetailModal';
 import { ProjectPicker } from '../../shared/components/ProjectPicker';
-import { ConfirmDialog } from '../../shared/components/ConfirmDialog';
+import { useDialog } from '../../shared/components/DialogProvider';
 
 const COLUMNS: Array<{ state: string; label: string; bg: string }> = [
   { state: 'Backlog',     label: 'Backlog',     bg: 'var(--color-accent-purple)' },
@@ -28,8 +28,8 @@ export function BoardPage() {
   const [params, setParams] = useSearchParams();
   const project = params.get('project');
   const [detailSeq, setDetailSeq] = useState<number | null>(null);
-  const [resetOpen, setResetOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
+  const { confirm, prompt } = useDialog();
 
   useProjectStream(project);
 
@@ -120,15 +120,37 @@ export function BoardPage() {
               <Play size={14} strokeWidth={3} /> 启动 pipeline
             </button>
           )}
-          <button className="nb-btn nb-btn-yellow" onClick={() => setResetOpen(true)} type="button">
+          <button
+            className="nb-btn nb-btn-yellow"
+            type="button"
+            onClick={async () => {
+              const ok = await confirm({
+                title: '重置整个流水线',
+                body: '这会清空所有卡片的运行状态、worker marker、分支。不可撤销。',
+                confirm: '重置全部',
+                danger: true,
+              });
+              if (!ok) return;
+              await resetPipeline(project, { all: true });
+              refetchAll();
+            }}
+          >
             <RotateCcw size={14} strokeWidth={2.5} /> 重置
           </button>
-          <button className="nb-btn nb-btn-mint" onClick={async () => {
-            const title = window.prompt('卡片标题（markdown 会用作 title）');
-            if (!title) return;
-            await createCard(project, title);
-            refetchAll();
-          }} type="button">
+          <button
+            className="nb-btn nb-btn-mint"
+            type="button"
+            onClick={async () => {
+              const title = await prompt({
+                title: '新建卡片',
+                body: '输入卡片标题，会作为 markdown 文件的 title。',
+                placeholder: '例如：接入 GitHub OAuth',
+              });
+              if (!title) return;
+              await createCard(project, title);
+              refetchAll();
+            }}
+          >
             <Plus size={14} strokeWidth={3} /> 新卡片
           </button>
         </div>
@@ -183,19 +205,6 @@ export function BoardPage() {
         />
       )}
 
-      {resetOpen && (
-        <ConfirmDialog
-          title="重置整个流水线"
-          body="这会清空所有卡片的运行状态、worker marker、分支。不可撤销。"
-          confirm="重置全部"
-          onConfirm={async () => {
-            await resetPipeline(project, { all: true });
-            setResetOpen(false);
-            refetchAll();
-          }}
-          onCancel={() => setResetOpen(false)}
-        />
-      )}
     </div>
   );
 }

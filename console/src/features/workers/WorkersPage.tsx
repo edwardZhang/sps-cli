@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RotateCcw, Terminal, Zap } from 'lucide-react';
 import { listWorkers, killWorker, type Worker } from '../../shared/api/workers';
 import { ProjectPicker } from '../../shared/components/ProjectPicker';
+import { useDialog } from '../../shared/components/DialogProvider';
 import { useProjectStream } from '../../shared/hooks/useProjectStream';
 
 export function WorkersPage() {
@@ -122,6 +123,7 @@ function WorkerRow({
   worker: Worker;
   onChange: () => void;
 }) {
+  const { confirm } = useDialog();
   const idle = worker.state === 'idle';
   return (
     <tr className="border-b border-dashed border-[var(--color-border-light)] last:border-0 hover:bg-[var(--color-accent-yellow)] transition-colors">
@@ -164,7 +166,13 @@ function WorkerRow({
               className="nb-btn nb-btn-danger"
               style={{ padding: '4px 10px', fontSize: 11 }}
               onClick={async () => {
-                if (!window.confirm(`终止 worker-${worker.slot}？`)) return;
+                const ok = await confirm({
+                  title: `终止 worker-${worker.slot}`,
+                  body: '当前任务会被强制中断，未保存的工作可能丢失。',
+                  confirm: '终止',
+                  danger: true,
+                });
+                if (!ok) return;
                 await killWorker(project, worker.slot);
                 onChange();
               }}

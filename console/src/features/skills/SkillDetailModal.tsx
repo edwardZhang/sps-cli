@@ -8,6 +8,7 @@ import {
   freezeSkill,
   unfreezeSkill,
 } from '../../shared/api/skills';
+import { useDialog } from '../../shared/components/DialogProvider';
 
 export function SkillDetailModal({
   name,
@@ -20,6 +21,7 @@ export function SkillDetailModal({
   onClose: () => void;
   onChange: () => void;
 }) {
+  const { confirm } = useDialog();
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['skill', name],
     queryFn: () => getSkill(name),
@@ -39,7 +41,13 @@ export function SkillDetailModal({
     onChange();
   };
   const handleUnlink = async (project: string): Promise<void> => {
-    if (!window.confirm(`从 ${project} 移除 ${name}？`)) return;
+    const ok = await confirm({
+      title: `从 ${project} 移除 ${name}`,
+      body: 'skill 链接会被解除，项目后续运行时将无法使用该 skill。',
+      confirm: '移除',
+      danger: true,
+    });
+    if (!ok) return;
     await unlinkSkill(name, project);
     refetch();
     onChange();
@@ -50,7 +58,13 @@ export function SkillDetailModal({
     onChange();
   };
   const handleUnfreeze = async (project: string): Promise<void> => {
-    if (!window.confirm(`${project} 里 ${name} 的本地改动会丢失，确定 unfreeze？`)) return;
+    const ok = await confirm({
+      title: `解冻 ${name} @ ${project}`,
+      body: '本地对这个 skill 的改动会被覆盖，回到最新共享版本。',
+      confirm: '解冻',
+      danger: true,
+    });
+    if (!ok) return;
     await unfreezeSkill(name, project);
     refetch();
     onChange();
