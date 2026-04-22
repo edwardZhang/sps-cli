@@ -37,15 +37,24 @@ function publishMarker(event: string, path: string): void {
 }
 
 export function startMarkerWatcher(coralRoot: string): FSWatcher {
-  const pattern = `${coralRoot}/projects/*/runtime/worker-*-current.json`;
-  const watcher = chokidar.watch(pattern, {
+  // v0.49.8：chokidar v4+ 没 glob，改 watch 根目录 + 事件过滤（同 cardWatcher）
+  const root = `${coralRoot}/projects`;
+  const watcher = chokidar.watch(root, {
     persistent: true,
     ignoreInitial: true,
     awaitWriteFinish: { stabilityThreshold: 80, pollInterval: 40 },
+    depth: 3, // projects/<name>/runtime/worker-N-current.json
+    ignored: (path: string) => /\/(node_modules|\.git|\.DS_Store)(\/|$)/.test(path),
   });
+
+  const handle = (event: string, path: string): void => {
+    if (!/worker-\d+-current\.json$/.test(path)) return;
+    publishMarker(event, path);
+  };
+
   watcher
-    .on('add', (path) => publishMarker('worker.added', path))
-    .on('change', (path) => publishMarker('worker.updated', path))
-    .on('unlink', (path) => publishMarker('worker.deleted', path));
+    .on('add', (path) => handle('worker.added', path))
+    .on('change', (path) => handle('worker.updated', path))
+    .on('unlink', (path) => handle('worker.deleted', path));
   return watcher;
 }

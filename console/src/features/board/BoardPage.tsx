@@ -19,10 +19,13 @@ import { CardDetailModal } from './CardDetailModal';
 import { ProjectPicker } from '../../shared/components/ProjectPicker';
 import { useDialog } from '../../shared/components/DialogProvider';
 
+// v0.49.8：展开全部 canonical states，每列单独显示。Canceled 折叠进 Done（少见状态）
 const COLUMNS: Array<{ state: string; label: string; bg: string }> = [
-  { state: 'Backlog',     label: 'Backlog',     bg: 'var(--color-accent-purple)' },
-  { state: 'Inprogress',  label: 'Inprogress',  bg: 'var(--color-accent-yellow)' },
-  { state: 'Review',      label: 'Review',      bg: 'var(--color-accent-pink)' },
+  { state: 'Planning',    label: 'Planning',    bg: 'var(--color-accent-purple)' },
+  { state: 'Backlog',     label: 'Backlog',     bg: 'var(--color-bg-cream)' },
+  { state: 'Todo',        label: 'Todo',        bg: 'var(--color-accent-yellow)' },
+  { state: 'Inprogress',  label: 'Inprogress',  bg: 'var(--color-secondary)' },
+  { state: 'QA',          label: 'QA / Review', bg: 'var(--color-accent-pink)' },
   { state: 'Done',        label: 'Done',        bg: 'var(--color-accent-mint)' },
 ];
 
@@ -369,7 +372,7 @@ export function BoardPage() {
       )}
 
       {!cardsQ.isError && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
           {COLUMNS.map((col) => (
             <KanbanColumn
               key={col.state}
@@ -405,13 +408,11 @@ export function BoardPage() {
   );
 }
 
-// v0.49.5 修复：Board 只有 4 列但 pipeline 有 7+ 种 state，要全部 cover
-// 否则 Todo / QA 等状态的卡片会消失
+// v0.49.8：每列 1:1 对应一个 state。
+//   QA 列也接受 Review（不同项目用不同命名）；Done 列也接受 Canceled（罕见状态折叠）
 function columnFilter(state: string) {
   return (c: CardT): boolean => {
-    if (state === 'Backlog') return c.state === 'Backlog' || c.state === 'Planning' || c.state === 'Todo';
-    if (state === 'Inprogress') return c.state === 'Inprogress';
-    if (state === 'Review') return c.state === 'Review' || c.state === 'QA';
+    if (state === 'QA') return c.state === 'QA' || c.state === 'Review';
     if (state === 'Done') return c.state === 'Done' || c.state === 'Canceled';
     return c.state === state;
   };
