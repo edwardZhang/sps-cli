@@ -455,6 +455,17 @@ stages:
 #       halt: true
 `);
     log.ok(`Created pipelines/ with sample template`);
+
+    // v0.49.2: 默认 project.yaml（精简版，无注释），让 init 完立即可跑
+    // 不覆盖已存在的（用户可能手动改过）
+    const projectYamlPath = resolve(pipelinesDir, 'project.yaml');
+    if (!existsSync(projectYamlPath)) {
+      writeFileSync(
+        projectYamlPath,
+        `mode: project\n\nstages:\n  - name: develop\n    on_complete: "move_card Done"\n    on_fail:\n      action: "label NEEDS-FIX"\n      halt: true\n`,
+      );
+      log.ok('Created default project.yaml (1 stage, ready to tick)');
+    }
   }
 
   // Initialize state.json
@@ -510,16 +521,15 @@ stages:
 
   log.ok(`Project ${project} initialized at ${instanceDir}`);
   console.log('\n  Next steps:\n');
-  console.log(`  1. Create pipeline config:`);
-  console.log(`     cp ${resolve(instanceDir, 'pipelines', 'sample.yaml.example')} ${resolve(instanceDir, 'pipelines', 'project.yaml')}`);
-  console.log(`     vim ${resolve(instanceDir, 'pipelines', 'project.yaml')}`);
-  console.log(`     Or use: sps agent --chat → "帮我创建 pipeline"`);
-  console.log('');
-  console.log(`  2. Add task cards:`);
+  console.log(`  1. Add task cards:`);
   console.log(`     sps card add ${project} "task title" "description"`);
   console.log('');
-  console.log(`  3. Start pipeline:`);
+  console.log(`  2. Start pipeline:`);
   console.log(`     sps tick ${project}`);
+  console.log('');
+  console.log(`  Pipeline config: ${resolve(instanceDir, 'pipelines', 'project.yaml')}`);
+  console.log(`     (default: 1 stage "develop → Done". Edit to customize.)`);
+  console.log(`     Full reference: pipelines/sample.yaml.example`);
   console.log('');
   console.log(`  Optional: sps doctor ${project} --fix  (generate CLAUDE.md in repo)`);
   console.log('');

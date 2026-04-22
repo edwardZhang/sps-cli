@@ -8,8 +8,9 @@
  */
 import { Hono } from 'hono';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import YAML from 'yaml';
 import { executeProjectInit, type ProjectInitOpts } from '../../commands/projectInit.js';
 
 const HOME = process.env.HOME || '/home/coral';
@@ -461,6 +462,185 @@ export function createProjectsRoute(): Hono {
       );
     }
     return c.json({ activePipeline: body.pipeline });
+  });
+
+  // ── v0.49.2 Pipeline 文件 CRUD（Console Pipelines tab 编辑用）──────────
+
+  /**
+   * GET /api/projects/:name/pipelines/:file
+   *   返回 { content, etag, parsed, parseError }。
+   *   parsed 是 YAML 解析后的结构化对象（供前端结构化表单使用）；
+   *   parse 失败时 parsed=null + parseError 描述，前端退回纯 YAML 编辑。
+   */
+  app.get('/:name/pipelines/:file', (c) => {
+    const name = c.req.param('name');
+    const file = c.req.param('file');
+    if (!/^[a-zA-Z0-9_.-]+\.yaml$/.test(file)) {
+      return c.json({ type: 'validation', title: 'invalid filename', status: 422 }, 422);
+    }
+    const filePath = resolve(PROJECTS_DIR, name, 'pipelines', file);
+    if (!existsSync(filePath)) {
+      return c.json({ type: 'not-found', title: 'pipeline not found', status: 404 }, 404);
+    }
+    const content = readFileSync(filePath, 'utf-8');
+    const etag = createHash('sha256').update(content).digest('hex').slice(0, 16);
+    let parsed: unknown = null;
+    let parseError: string | null = null;
+    try {
+      parsed = YAML.parse(content);
+    } catch (err) {
+      parseError = err instanceof Error ? err.message : String(err);
+    }
+    return c.json({ content, etag, parsed, parseError, isActive: file === 'project.yaml' });
+  });
+
+  /**
+   * PATCH /api/projects/:name/pipelines/:file
+   *   写 YAML，etag 乐观锁。保存前用 yaml.parse 做语法校验（422 如果非法）。
+   *   structural schema 校验不做（让 `sps tick` 层的 loadPipelineConfig 去报更精确的错）。
+   */
+  app.patch('/:name/pipelines/:file', async (c) => {
+    const name = c.req.param('name');
+    const file = c.req.param('file');
+    if (!/^[a-zA-Z0-9_.-]+\.yaml$/.test(file)) {
+      return c.json({ type: 'validation', title: 'invalid filename', status: 422 }, 422);
+    }
+    const filePath = resolve(PROJECTS_DIR, name, 'pipelines', file);
+    if (!existsSync(filePath)) {
+      return c.json({ type: 'not-found', title: 'pipeline not found', status: 404 }, 404);
+    }
+    const body = (await c.req.json().catch(() => null)) as
+      | { content?: string; etag?: string }
+      | null;
+    if (!body || typeof body.content !== 'string') {
+      return c.json({ type: 'validation', title: 'content required', status: 422 }, 422);
+    }
+    const ifMatch = body.etag ?? c.req.header('If-Match');
+    if (!ifMatch) {
+      return c.json({ type: 'validation', title: 'etag required', status: 422 }, 422);
+    }
+    const current = readFileSync(filePath, 'utf-8');
+    const currentEtag = createHash('sha256').update(current).digest('hex').slice(0, 16);
+    if (ifMatch !== currentEtag) {
+      return c.json(
+        { type: 'conflict', title: 'etag mismatch', status: 409, currentEtag },
+        409,
+      );
+    }
+    // 语法校验
+    try {
+      YAML.parse(body.content);
+    } catch (err) {
+      return c.json(
+        {
+          type: 'validation',
+          title: 'yaml parse error',
+          status: 422,
+          detail: err instanceof Error ? err.message : String(err),
+        },
+        422,
+      );
+    }
+    writeFileSync(filePath, body.content);
+    const newEtag = createHash('sha256').update(body.content).digest('hex').slice(0, 16);
+    return c.json({ etag: newEtag });
+  });
+
+  /**
+   * POST /api/projects/:name/pipelines
+   *   新建 pipeline 文件。body: { name: "<file>.yaml", template?: "blank" | "sample" | "active" }
+   *   template: blank=最小化 stage / sample=copy sample.yaml.example / active=copy project.yaml
+   */
+  app.post('/:name/pipelines', async (c) => {
+    const name = c.req.param('name');
+    const body = (await c.req.json().catch(() => null)) as
+      | { name?: string; template?: 'blank' | 'sample' | 'active' }
+      | null;
+    if (!body?.name || !/^[a-zA-Z0-9_.-]+\.yaml$/.test(body.name)) {
+      return c.json({ type: 'validation', title: 'invalid filename', status: 422 }, 422);
+    }
+    const pipelinesDir = resolve(PROJECTS_DIR, name, 'pipelines');
+    if (!existsSync(pipelinesDir)) {
+      return c.json({ type: 'not-found', title: 'project has no pipelines dir', status: 404 }, 404);
+    }
+    const destPath = resolve(pipelinesDir, body.name);
+    if (existsSync(destPath)) {
+      return c.json({ type: 'conflict', title: 'pipeline already exists', status: 409 }, 409);
+    }
+    const template = body.template ?? 'blank';
+    let content: string;
+    if (template === 'sample') {
+      const src = resolve(pipelinesDir, 'sample.yaml.example');
+      if (!existsSync(src)) {
+        return c.json({ type: 'not-found', title: 'sample not found', status: 404 }, 404);
+      }
+      content = readFileSync(src, 'utf-8');
+    } else if (template === 'active') {
+      const src = resolve(pipelinesDir, 'project.yaml');
+      if (!existsSync(src)) {
+        return c.json({ type: 'not-found', title: 'active pipeline not found', status: 404 }, 404);
+      }
+      content = readFileSync(src, 'utf-8');
+    } else {
+      // blank: minimal 1-stage project-mode pipeline
+      content = `mode: project\n\nstages:\n  - name: develop\n    on_complete: "move_card Done"\n    on_fail:\n      action: "label NEEDS-FIX"\n      halt: true\n`;
+    }
+    writeFileSync(destPath, content);
+    const etag = createHash('sha256').update(content).digest('hex').slice(0, 16);
+    return c.json({ name: body.name, content, etag }, 201);
+  });
+
+  /**
+   * DELETE /api/projects/:name/pipelines/:file
+   *   删 pipeline 文件。拒绝 project.yaml（是活动 pipeline，切换 active 再删）。
+   *   sample.yaml.example 也拒绝（教学模板，重装前别删）。
+   */
+  app.delete('/:name/pipelines/:file', (c) => {
+    const name = c.req.param('name');
+    const file = c.req.param('file');
+    if (!/^[a-zA-Z0-9_.-]+\.yaml(\.example)?$/.test(file)) {
+      return c.json({ type: 'validation', title: 'invalid filename', status: 422 }, 422);
+    }
+    if (file === 'project.yaml') {
+      return c.json(
+        {
+          type: 'conflict',
+          title: 'cannot delete active pipeline',
+          status: 409,
+          detail: '先切到别的 pipeline 再来删',
+        },
+        409,
+      );
+    }
+    if (file === 'sample.yaml.example') {
+      return c.json(
+        {
+          type: 'conflict',
+          title: 'cannot delete sample',
+          status: 409,
+          detail: '这是教学模板，不要删',
+        },
+        409,
+      );
+    }
+    const filePath = resolve(PROJECTS_DIR, name, 'pipelines', file);
+    if (!existsSync(filePath)) {
+      return c.json({ type: 'not-found', title: 'pipeline not found', status: 404 }, 404);
+    }
+    try {
+      unlinkSync(filePath);
+    } catch (err) {
+      return c.json(
+        {
+          type: 'internal',
+          title: 'delete failed',
+          status: 500,
+          detail: err instanceof Error ? err.message : String(err),
+        },
+        500,
+      );
+    }
+    return c.body(null, 204);
   });
 
   return app;

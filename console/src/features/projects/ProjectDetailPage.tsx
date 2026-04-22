@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { ArrowLeft, FolderGit2, Settings, Workflow, Trash2, Save, RefreshCw, Loader2, Check } from 'lucide-react';
+import { ArrowLeft, FolderGit2, Settings, Workflow, Trash2, Save, RefreshCw, Loader2, Check, Edit3, Plus } from 'lucide-react';
 import {
+  createPipelineFile,
+  deletePipelineFile,
   deleteProject,
   getProject,
   getProjectConf,
@@ -11,6 +13,7 @@ import {
   updateProjectConf,
 } from '../../shared/api/projects';
 import { useDialog } from '../../shared/components/DialogProvider';
+import { PipelineEditor } from './PipelineEditor';
 
 type Tab = 'overview' | 'config' | 'pipelines' | 'danger';
 
@@ -260,11 +263,13 @@ function ConfigTab({ name }: { name: string }) {
 
 function PipelinesTab({ name }: { name: string }) {
   const qc = useQueryClient();
-  const { confirm, alert } = useDialog();
+  const { confirm, alert, prompt } = useDialog();
   const { data, isLoading } = useQuery({
     queryKey: ['project-pipelines', name],
     queryFn: () => listPipelines(name),
   });
+  const [editingFile, setEditingFile] = useState<string | null>(null);
+
   const switchMutation = useMutation({
     mutationFn: (pipeline: string) => switchPipeline(name, pipeline),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project-pipelines', name] }),
@@ -276,65 +281,167 @@ function PipelinesTab({ name }: { name: string }) {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (file: string) => deletePipelineFile(name, file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project-pipelines', name] }),
+    onError: (err) => {
+      void alert({
+        title: '删除失败',
+        body: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (args: { name: string; template: 'blank' | 'sample' | 'active' }) =>
+      createPipelineFile(name, args.name, args.template),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['project-pipelines', name] });
+      setEditingFile(res.name); // 新建后直接打开编辑器
+    },
+    onError: (err) => {
+      void alert({
+        title: '创建失败',
+        body: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
+
+  const handleCreate = async (): Promise<void> => {
+    const fname = await prompt({
+      title: '新建 pipeline',
+      body: '文件名（以 .yaml 结尾），如 ci.yaml',
+      placeholder: 'ci.yaml',
+    });
+    if (!fname) return;
+    const withExt = fname.endsWith('.yaml') ? fname : `${fname}.yaml`;
+    // 简化：默认用 blank template；后续可以加模板下拉
+    createMutation.mutate({ name: withExt, template: 'blank' });
+  };
+
   if (isLoading) {
     return <div className="nb-card"><p className="text-[var(--color-text-muted)]">加载中…</p></div>;
   }
-  if (!data || data.available.length === 0) {
-    return (
-      <div className="nb-card bg-[var(--color-accent-yellow)]">
-        <p className="text-sm">
-          还没有 pipeline 文件。去{' '}
-          <code className="font-[family-name:var(--font-mono)] bg-[var(--color-bg)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded">
-            ~/.coral/projects/{name}/pipelines/
-          </code>{' '}
-          里放一个 .yaml 再来切。
-        </p>
-      </div>
-    );
+
+  // 合并 active + available 成一个统一列表显示
+  const allRows: Array<{ name: string; isActive: boolean }> = [];
+  if (data?.active) {
+    allRows.push({ name: data.active, isActive: true });
   }
+  for (const p of data?.available ?? []) {
+    allRows.push({ name: p.name, isActive: false });
+  }
+
   return (
-    <div className="nb-card">
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold mb-3">
-        可用 Pipelines
-      </h2>
-      <ul className="flex flex-col gap-2">
-        {data.available.map((p) => (
-          <li
-            key={p.name}
-            className="flex items-center gap-3 p-3 bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg"
+    <>
+      <div className="nb-card">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold">
+            Pipelines
+          </h2>
+          <button
+            type="button"
+            className="nb-btn nb-btn-mint"
+            style={{ padding: '6px 12px', fontSize: 12 }}
+            onClick={handleCreate}
+            disabled={createMutation.isPending}
+            aria-label="新建 pipeline"
           >
-            <Workflow size={16} strokeWidth={2.5} />
-            <span className="font-[family-name:var(--font-mono)] font-bold flex-1">
-              {p.name}
-            </span>
-            {p.isActive ? (
-              <span className="nb-status" style={{ background: 'var(--color-running-bg)', color: 'var(--color-running)' }}>
-                active
-              </span>
-            ) : (
-              <button
-                type="button"
-                className="nb-btn nb-btn-primary"
-                style={{ padding: '4px 12px', fontSize: 12 }}
-                onClick={async () => {
-                  const ok = await confirm({
-                    title: `切换到 ${p.name}`,
-                    body: `当前 project.yaml 会被 ${p.name} 的内容覆盖。继续？`,
-                    confirm: '切换',
-                  });
-                  if (!ok) return;
-                  switchMutation.mutate(p.name);
-                }}
-                disabled={switchMutation.isPending}
-                aria-label={`切换到 ${p.name}`}
+            <Plus size={12} strokeWidth={3} />
+            新建 pipeline
+          </button>
+        </div>
+
+        {allRows.length === 0 ? (
+          <p className="text-sm text-[var(--color-text-muted)] italic p-4 border-2 border-dashed border-[var(--color-text)] rounded-lg text-center">
+            还没有 pipeline 文件。点"新建 pipeline"开始。
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {allRows.map((p) => (
+              <li
+                key={p.name}
+                className="flex items-center gap-3 p-3 bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg"
               >
-                切换
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
+                <Workflow size={16} strokeWidth={2.5} />
+                <span className="font-[family-name:var(--font-mono)] font-bold flex-1">
+                  {p.name}
+                </span>
+                {p.isActive && (
+                  <span className="nb-status" style={{ background: 'var(--color-running-bg)', color: 'var(--color-running)' }}>
+                    active
+                  </span>
+                )}
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    className="nb-btn"
+                    style={{ padding: '4px 10px', fontSize: 11 }}
+                    onClick={() => setEditingFile(p.name)}
+                    aria-label={`编辑 ${p.name}`}
+                  >
+                    <Edit3 size={11} strokeWidth={2.5} />
+                    编辑
+                  </button>
+                  {!p.isActive && (
+                    <>
+                      <button
+                        type="button"
+                        className="nb-btn nb-btn-primary"
+                        style={{ padding: '4px 10px', fontSize: 11 }}
+                        onClick={async () => {
+                          const ok = await confirm({
+                            title: `切换到 ${p.name}`,
+                            body: `当前 project.yaml 会被 ${p.name} 的内容覆盖。继续？`,
+                            confirm: '切换',
+                          });
+                          if (!ok) return;
+                          switchMutation.mutate(p.name);
+                        }}
+                        disabled={switchMutation.isPending}
+                        aria-label={`切换到 ${p.name}`}
+                      >
+                        切换
+                      </button>
+                      <button
+                        type="button"
+                        className="nb-btn nb-btn-danger"
+                        style={{ padding: '4px 10px', fontSize: 11 }}
+                        onClick={async () => {
+                          const ok = await confirm({
+                            title: `删除 ${p.name}`,
+                            body: '这个 pipeline 文件会被永久删除。',
+                            confirm: '删除',
+                            danger: true,
+                          });
+                          if (!ok) return;
+                          deleteMutation.mutate(p.name);
+                        }}
+                        disabled={deleteMutation.isPending}
+                        aria-label={`删除 ${p.name}`}
+                      >
+                        <Trash2 size={11} strokeWidth={2.5} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {editingFile && (
+        <PipelineEditor
+          projectName={name}
+          file={editingFile}
+          onClose={() => setEditingFile(null)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ['project-pipelines', name] });
+          }}
+        />
+      )}
+    </>
   );
 }
 

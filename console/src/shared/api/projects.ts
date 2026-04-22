@@ -107,3 +107,98 @@ export async function switchPipeline(name: string, pipeline: string): Promise<{ 
   }
   return res.json();
 }
+
+// ── v0.49.2 Pipeline 文件 CRUD ────────────────────────────────
+
+/**
+ * Parsed pipeline YAML（供结构化表单使用）。Backend 已经 YAML.parse 过。
+ * 字段只覆盖常见的 project-mode 场景；冷门字段走原始 YAML 模式。
+ */
+export interface PipelineOnFail {
+  action?: string;
+  comment?: string;
+  halt?: boolean;
+}
+
+export interface PipelineStage {
+  name?: string;
+  profile?: string;
+  trigger?: string;
+  card_state?: string;
+  on_complete?: string;
+  on_fail?: PipelineOnFail;
+  timeout?: string;
+  [key: string]: unknown; // 允许未知字段 passthrough
+}
+
+export interface ParsedPipeline {
+  mode?: 'project' | 'steps';
+  stages?: PipelineStage[];
+  pm?: { card_states?: Record<string, string> };
+  [key: string]: unknown;
+}
+
+export interface PipelineFileResponse {
+  content: string;
+  etag: string;
+  parsed: ParsedPipeline | null;
+  parseError: string | null;
+  isActive: boolean;
+}
+
+export function getPipelineFile(projectName: string, file: string) {
+  return apiGet<PipelineFileResponse>(
+    `/api/projects/${encodeURIComponent(projectName)}/pipelines/${encodeURIComponent(file)}`,
+  );
+}
+
+export async function updatePipelineFile(
+  projectName: string,
+  file: string,
+  content: string,
+  etag: string,
+): Promise<{ etag: string }> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectName)}/pipelines/${encodeURIComponent(file)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, etag }),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`${res.status}: ${text}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+export async function createPipelineFile(
+  projectName: string,
+  name: string,
+  template: 'blank' | 'sample' | 'active' = 'blank',
+): Promise<{ name: string; content: string; etag: string }> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectName)}/pipelines`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, template }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function deletePipelineFile(projectName: string, file: string): Promise<void> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectName)}/pipelines/${encodeURIComponent(file)}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+}
