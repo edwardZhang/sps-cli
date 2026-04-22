@@ -6,14 +6,17 @@ import { Hono } from 'hono';
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
+import { readCard } from '../lib/cardReader.js';
 import { spawnCliSync } from '../lib/spawnCli.js';
 
 const HOME = process.env.HOME || '/home/coral';
 
+export type WorkerState = 'idle' | 'starting' | 'running' | 'stuck' | 'crashed';
+
 interface Worker {
   slot: number;
   pid: number | null;
-  state: 'idle' | 'running' | 'stuck' | 'crashed';
+  state: WorkerState;
   card: { seq: number; title: string } | null;
   stage: string | null;
   startedAt: string | null;
@@ -21,7 +24,8 @@ interface Worker {
   markerUpdatedAt: string | null;
 }
 
-const STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 5 min 无 marker 更新 = stuck
+const STUCK_THRESHOLD_MS = 5 * 60 * 1000;   // 5 min 无 marker 更新 = stuck
+const ACK_TIMEOUT_MS = 60 * 1000;            // 60s dispatch 但无 STARTED-* 标签 = 仍在 starting
 
 function projectRuntimeDir(project: string): string {
   return resolve(HOME, '.coral', 'projects', project, 'runtime');
@@ -81,13 +85,37 @@ function workerFromMarker(project: string, slot: number, markerPath: string): Wo
 
   const alive = isPidAlive(pid);
   const fresh = markerUpdatedAt ? now - new Date(markerUpdatedAt).getTime() < STUCK_THRESHOLD_MS : false;
-  const state: Worker['state'] = alive
-    ? fresh
-      ? 'running'
-      : 'stuck'
-    : (card !== null)
-      ? 'crashed'
-      : 'idle';
+  const ageMs = markerUpdatedAt ? now - new Date(markerUpdatedAt).getTime() : null;
+
+  // v0.49.9: 5 态模型
+  //   crashed: PID 死但有卡片 → 掉线
+  //   idle:    无卡片
+  //   starting: 进程活 + marker 刚写 < 60s + 卡片无 STARTED-<stage> 标签（ACK 未到）
+  //   stuck:   进程活 + marker 停滞 > 5min
+  //   running: 其它健康情况
+  let state: WorkerState;
+  if (!alive) {
+    state = card !== null ? 'crashed' : 'idle';
+  } else if (card === null) {
+    state = 'idle';
+  } else {
+    // 检查是否 starting：marker 很新 + 卡片没 STARTED-<stage> 标签
+    const isStarting = (() => {
+      if (ageMs === null || ageMs > ACK_TIMEOUT_MS) return false;
+      if (!stage) return false;
+      try {
+        const cardDetail = readCard(resolve(HOME, '.coral', 'projects', project), card.seq);
+        if (!cardDetail) return false;
+        return !cardDetail.labels.includes(`STARTED-${stage}`);
+      } catch {
+        return false;
+      }
+    })();
+
+    if (isStarting) state = 'starting';
+    else if (!fresh) state = 'stuck';
+    else state = 'running';
+  }
 
   const runtimeMs = startedAt ? now - new Date(startedAt).getTime() : null;
 
@@ -224,4 +252,123 @@ export function createWorkersRoute(): Hono {
   });
 
   return app;
+}
+
+// ─── v0.49.9 跨项目聚合视图 ────────────────────────────────────────
+
+interface AggregateWorker extends Worker {
+  project: string;
+  lastLogLine: { ts: string | null; msg: string } | null;
+}
+
+interface ProjectCapacity {
+  project: string;
+  total: number;
+  running: number;
+  starting: number;
+  stuck: number;
+  crashed: number;
+  idle: number;
+}
+
+/**
+ * GET /api/workers/all
+ *   扫描 ~/.coral/projects/* 的 runtime/worker-N-current.json，聚合所有 worker。
+ *   返回 {alerts: Worker[], active: Worker[], capacity: ProjectCapacity[]}。
+ *   - alerts: state === 'stuck' 或 'crashed'
+ *   - active: state === 'running' 或 'starting'
+ *   - capacity: 按项目统计各状态数量
+ *   Active 的每个 worker 带 lastLogLine（尾 pipeline log 最近一行带 worker-N 的）。
+ */
+export function createWorkersAggregateRoute(): Hono {
+  const app = new Hono();
+
+  app.get('/all', async (c) => {
+    const projectsDir = resolve(HOME, '.coral', 'projects');
+    if (!existsSync(projectsDir)) {
+      return c.json({ alerts: [], active: [], capacity: [] });
+    }
+    const projectNames = readdirSync(projectsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
+
+    const alerts: AggregateWorker[] = [];
+    const active: AggregateWorker[] = [];
+    const capacity: ProjectCapacity[] = [];
+
+    for (const project of projectNames) {
+      const markers = listWorkerMarkerPaths(project);
+      const stat: ProjectCapacity = {
+        project,
+        total: markers.length,
+        running: 0,
+        starting: 0,
+        stuck: 0,
+        crashed: 0,
+        idle: 0,
+      };
+      for (const m of markers) {
+        const w = workerFromMarker(project, m.slot, m.path);
+        stat[w.state]++;
+
+        if (w.state === 'stuck' || w.state === 'crashed') {
+          alerts.push({ ...w, project, lastLogLine: await readLatestLogLine(project, m.slot) });
+        } else if (w.state === 'running' || w.state === 'starting') {
+          active.push({ ...w, project, lastLogLine: await readLatestLogLine(project, m.slot) });
+        }
+      }
+      capacity.push(stat);
+    }
+
+    // 按 state 严重度 + runtime 倒序（stuck 比 crashed 更需看；old runtime 先看）
+    alerts.sort((a, b) => {
+      if (a.state !== b.state) return a.state === 'stuck' ? -1 : 1;
+      return (b.runtimeMs ?? 0) - (a.runtimeMs ?? 0);
+    });
+    active.sort((a, b) => (b.runtimeMs ?? 0) - (a.runtimeMs ?? 0));
+
+    return c.json({ alerts, active, capacity });
+  });
+
+  return app;
+}
+
+/** Read only the latest log line tagged with worker-<slot>. Same file selection as readWorkerLogTail. */
+async function readLatestLogLine(
+  project: string,
+  slot: number,
+): Promise<{ ts: string | null; msg: string } | null> {
+  const logsDir = resolve(HOME, '.coral', 'projects', project, 'logs');
+  if (!existsSync(logsDir)) return null;
+  const candidates = readdirSync(logsDir)
+    .filter((f) => f.endsWith('.log'))
+    .map((f) => ({ f, full: resolve(logsDir, f), mtime: statSync(resolve(logsDir, f)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  const pipeline = candidates.find((c) => c.f.startsWith('pipeline-'));
+  const file = pipeline?.full ?? candidates[0]?.full;
+  if (!file) return null;
+
+  const MAX_BYTES = 512 * 1024; // 只扫尾 512KB — 聚合视图优先速度
+  const stat = statSync(file);
+  const start = Math.max(0, stat.size - MAX_BYTES);
+  const slotTag = `worker-${slot}`;
+  let latest: { ts: string | null; msg: string } | null = null;
+
+  await new Promise<void>((done) => {
+    const stream = createReadStream(file, { start, encoding: 'utf-8' });
+    const rl = createInterface({ input: stream });
+    rl.on('line', (raw) => {
+      if (!raw.includes(slotTag)) return;
+      const cleaned = raw.replace(/\[[0-9;]*m/g, '');
+      const m = cleaned.match(/(\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?)\s*(?:\[[^\]]+\]\s*)?(.*)$/);
+      latest = {
+        ts: m?.[1] ?? null,
+        msg: (m?.[2] ?? cleaned).slice(0, 200),
+      };
+    });
+    rl.on('close', () => done());
+    rl.on('error', () => done());
+  });
+  return latest;
 }

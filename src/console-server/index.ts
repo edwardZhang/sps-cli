@@ -28,7 +28,7 @@ import { createPipelineRoute } from './routes/pipeline.js';
 import { createProjectsRoute } from './routes/projects.js';
 import { createSkillsRoute } from './routes/skills.js';
 import { createSystemRoute } from './routes/system.js';
-import { createWorkersRoute } from './routes/workers.js';
+import { createWorkersRoute, createWorkersAggregateRoute } from './routes/workers.js';
 import { eventBus } from './sse/eventBus.js';
 import { createProjectStreamRoute } from './sse/projectStream.js';
 import { startCardWatcher } from './watchers/cardWatcher.js';
@@ -98,6 +98,7 @@ export async function startConsoleServer(
   app.route('/api/projects', createCardsRoute());
   app.route('/api/projects', createPipelineRoute(log));
   app.route('/api/projects', createWorkersRoute());
+  app.route('/api/workers', createWorkersAggregateRoute());
   app.route('/api/logs', createLogsRoute(log));
   app.route('/api/skills', createSkillsRoute());
   app.route('/api/system', createSystemRoute(version, startedAt));

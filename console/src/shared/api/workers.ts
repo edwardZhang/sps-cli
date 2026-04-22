@@ -1,14 +1,41 @@
 import { apiGet } from './client';
 
+export type WorkerState = 'idle' | 'starting' | 'running' | 'stuck' | 'crashed';
+
 export interface Worker {
   slot: number;
   pid: number | null;
-  state: 'idle' | 'running' | 'stuck' | 'crashed';
+  state: WorkerState;
   card: { seq: number; title: string } | null;
   stage: string | null;
   startedAt: string | null;
   runtimeMs: number | null;
   markerUpdatedAt: string | null;
+}
+
+export interface AggregateWorker extends Worker {
+  project: string;
+  lastLogLine: { ts: string | null; msg: string } | null;
+}
+
+export interface ProjectCapacity {
+  project: string;
+  total: number;
+  running: number;
+  starting: number;
+  stuck: number;
+  crashed: number;
+  idle: number;
+}
+
+export interface WorkersAggregate {
+  alerts: AggregateWorker[];
+  active: AggregateWorker[];
+  capacity: ProjectCapacity[];
+}
+
+export function getWorkersAggregate() {
+  return apiGet<WorkersAggregate>('/api/workers/all');
 }
 
 export interface WorkerLogLine {

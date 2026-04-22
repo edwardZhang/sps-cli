@@ -434,6 +434,7 @@ function formatRelative(ts: string): string {
 function StatusPill({ state }: { state: Worker['state'] }) {
   const config: Record<Worker['state'], { bg: string; color: string }> = {
     running:  { bg: 'var(--color-running-bg)', color: 'var(--color-running)' },
+    starting: { bg: 'var(--color-secondary)',  color: 'var(--color-text)' },
     stuck:    { bg: 'var(--color-stuck-bg)',   color: 'var(--color-stuck)' },
     crashed:  { bg: 'var(--color-crashed-bg)', color: 'var(--color-crashed)' },
     idle:     { bg: 'var(--color-idle-bg)',    color: 'var(--color-idle)' },
