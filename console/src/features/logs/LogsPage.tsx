@@ -1,7 +1,7 @@
 import { useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Pause, Play, Search, Download } from 'lucide-react';
+import { Pause, Play, Search, Download, History, Radio } from 'lucide-react';
 import { fetchLogs, logStreamUrl, type LogLine } from '../../shared/api/logs';
 import { ProjectPicker } from '../../shared/components/ProjectPicker';
 
@@ -20,13 +20,25 @@ export function LogsPage() {
     () => new Set(DEFAULT_ENABLED),
   );
   const [keyword, setKeyword] = useState('');
+  const [mode, setMode] = useState<'live' | 'history'>('live');
+  // v0.48.0 历史查询 since 时间，默认 1 小时前（datetime-local 需要 yyyy-MM-ddTHH:mm 格式）
+  const [since, setSince] = useState<string>(() => {
+    const d = new Date(Date.now() - 60 * 60 * 1000);
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
   const streamRef = useRef<HTMLDivElement>(null);
 
-  // 初始历史
-  const { data: initial } = useQuery({
-    queryKey: ['logs', project, worker],
+  // 初始历史：live 模式拉 tail，history 模式按 since 过滤
+  const { data: initial, refetch: refetchHistory } = useQuery({
+    queryKey: ['logs', project, worker, mode, mode === 'history' ? since : 'live'],
     queryFn: () =>
-      fetchLogs({ project: project ?? '', worker: worker || undefined, limit: 500 }),
+      fetchLogs({
+        project: project ?? '',
+        worker: worker || undefined,
+        limit: mode === 'history' ? 2000 : 500,
+        since: mode === 'history' ? new Date(since).toISOString() : undefined,
+      }),
     enabled: !!project,
   });
 
@@ -34,9 +46,9 @@ export function LogsPage() {
     if (initial?.data) setLines(initial.data);
   }, [initial]);
 
-  // SSE tail
+  // SSE tail 仅 live 模式下激活
   useEffect(() => {
-    if (!project) return;
+    if (!project || mode !== 'live') return;
     const url = logStreamUrl({ project, worker: worker || undefined });
     const es = new EventSource(url);
     es.addEventListener('log.line', (ev) => {
@@ -53,7 +65,7 @@ export function LogsPage() {
       }
     });
     return () => es.close();
-  }, [project, worker, paused]);
+  }, [project, worker, paused, mode]);
 
   // Auto scroll
   useEffect(() => {
@@ -100,6 +112,58 @@ export function LogsPage() {
       </header>
 
       <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex gap-1 p-1 bg-[var(--color-bg)] border-[2px] border-[var(--color-text)] rounded-full shadow-[2px_2px_0_var(--color-text)]">
+          <button
+            type="button"
+            onClick={() => setMode('live')}
+            aria-pressed={mode === 'live'}
+            className={[
+              'px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5',
+              mode === 'live'
+                ? 'bg-[var(--color-primary)] text-[var(--color-text)] shadow-[1px_1px_0_var(--color-text)]'
+                : 'text-[var(--color-text-muted)]',
+            ].join(' ')}
+          >
+            <Radio size={11} strokeWidth={2.5} />
+            实时
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('history')}
+            aria-pressed={mode === 'history'}
+            className={[
+              'px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5',
+              mode === 'history'
+                ? 'bg-[var(--color-primary)] text-[var(--color-text)] shadow-[1px_1px_0_var(--color-text)]'
+                : 'text-[var(--color-text-muted)]',
+            ].join(' ')}
+          >
+            <History size={11} strokeWidth={2.5} />
+            历史
+          </button>
+        </div>
+        {mode === 'history' && (
+          <>
+            <input
+              type="datetime-local"
+              className="nb-input"
+              style={{ padding: '4px 8px', fontSize: 12 }}
+              value={since}
+              onChange={(e) => setSince(e.target.value)}
+              aria-label="查询起始时间"
+            />
+            <button
+              className="nb-btn nb-btn-primary"
+              style={{ padding: '6px 12px', fontSize: 12 }}
+              onClick={() => refetchHistory()}
+              type="button"
+              aria-label="查询"
+            >
+              <Search size={11} strokeWidth={3} />
+              查询
+            </button>
+          </>
+        )}
         <div className="relative flex-1 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)]" />
           <input
@@ -128,22 +192,26 @@ export function LogsPage() {
           ))}
         </div>
         <div className="ml-auto flex gap-2">
-          <button
-            className="nb-btn"
-            style={{ padding: '6px 12px', fontSize: 12 }}
-            onClick={() => setAutoScroll((v) => !v)}
-            type="button"
-          >
-            {autoScroll ? '✓ Auto-scroll' : 'Auto-scroll'}
-          </button>
-          <button
-            className="nb-btn"
-            style={{ padding: '6px 12px', fontSize: 12 }}
-            onClick={() => setPaused((v) => !v)}
-            type="button"
-          >
-            {paused ? <><Play size={12} strokeWidth={3} /> Resume</> : <><Pause size={12} strokeWidth={3} /> Pause</>}
-          </button>
+          {mode === 'live' && (
+            <>
+              <button
+                className="nb-btn"
+                style={{ padding: '6px 12px', fontSize: 12 }}
+                onClick={() => setAutoScroll((v) => !v)}
+                type="button"
+              >
+                {autoScroll ? '✓ Auto-scroll' : 'Auto-scroll'}
+              </button>
+              <button
+                className="nb-btn"
+                style={{ padding: '6px 12px', fontSize: 12 }}
+                onClick={() => setPaused((v) => !v)}
+                type="button"
+              >
+                {paused ? <><Play size={12} strokeWidth={3} /> Resume</> : <><Pause size={12} strokeWidth={3} /> Pause</>}
+              </button>
+            </>
+          )}
           <button
             className="nb-btn"
             style={{ padding: '6px 12px', fontSize: 12 }}
@@ -168,9 +236,15 @@ export function LogsPage() {
           <span className="text-[var(--color-text-muted)]">
             {initial?.file ?? '~/.coral/projects/.../logs/*.log'}
           </span>
-          <span className="nb-status" style={{ background: 'var(--color-running-bg)', color: 'var(--color-running)' }}>
-            live
-          </span>
+          {mode === 'live' ? (
+            <span className="nb-status" style={{ background: 'var(--color-running-bg)', color: 'var(--color-running)' }}>
+              live
+            </span>
+          ) : (
+            <span className="nb-status" style={{ background: 'var(--color-accent-purple)', color: 'var(--color-text)' }}>
+              history
+            </span>
+          )}
         </div>
         <div
           ref={streamRef}

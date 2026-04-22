@@ -106,12 +106,23 @@ export function createLogsRoute(log: Logger): Hono {
     }
     const worker = c.req.query('worker') || undefined;
     const limit = Math.min(Number.parseInt(c.req.query('limit') ?? '500', 10) || 500, 2000);
+    const since = c.req.query('since'); // ISO timestamp; filter ts >= since
     const files = findLogFiles(project, worker);
     if (files.length === 0) return c.json({ data: [], files: [] });
 
     const file = files[0]!;
     try {
-      const lines = await readTailLines(file, limit);
+      let lines = await readTailLines(file, limit);
+      if (since) {
+        const sinceParsed = Date.parse(since);
+        if (!Number.isNaN(sinceParsed)) {
+          lines = lines.filter((l) => {
+            if (!l.ts) return true; // keep unparseable lines (conservative)
+            const lt = Date.parse(l.ts);
+            return Number.isNaN(lt) || lt >= sinceParsed;
+          });
+        }
+      }
       return c.json({
         data: lines,
         file: file.replace(HOME, '~'),

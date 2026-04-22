@@ -8,10 +8,16 @@ export interface LogLine {
   raw: string;
 }
 
-export function fetchLogs(opts: { project: string; worker?: string; limit?: number }) {
+export function fetchLogs(opts: {
+  project: string;
+  worker?: string;
+  limit?: number;
+  since?: string;
+}) {
   const params = new URLSearchParams({ project: opts.project });
   if (opts.worker) params.set('worker', opts.worker);
   if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.since) params.set('since', opts.since);
   return apiGet<{ data: LogLine[]; file?: string; files?: string[] }>(`/api/logs?${params}`);
 }
 

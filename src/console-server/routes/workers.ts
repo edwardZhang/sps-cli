@@ -3,7 +3,8 @@
  * @description   Worker slot 列表 + kill/launch
  */
 import { Hono } from 'hono';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import { spawnCliSync } from '../lib/spawnCli.js';
 
@@ -93,6 +94,53 @@ function workerFromMarker(project: string, slot: number, markerPath: string): Wo
   return { slot, pid, state, card, stage, startedAt, runtimeMs, markerUpdatedAt };
 }
 
+/**
+ * Tail the most recent pipeline log, filter for lines tagged with worker-<slot>.
+ * Used by the worker detail popover. Capped at 4MB scan + `limit` lines out.
+ */
+async function readWorkerLogTail(
+  project: string,
+  slot: number,
+  limit: number,
+): Promise<Array<{ ts: string | null; level: string; msg: string }>> {
+  const logsDir = resolve(HOME, '.coral', 'projects', project, 'logs');
+  if (!existsSync(logsDir)) return [];
+  // Prefer pipeline-*.log (current pipeline run); fall back to any .log sorted by mtime
+  const candidates = readdirSync(logsDir)
+    .filter((f) => f.endsWith('.log'))
+    .map((f) => ({ f, full: resolve(logsDir, f), mtime: statSync(resolve(logsDir, f)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  const pipeline = candidates.find((c) => c.f.startsWith('pipeline-'));
+  const file = pipeline?.full ?? candidates[0]?.full;
+  if (!file) return [];
+
+  const MAX_BYTES = 4 * 1024 * 1024;
+  const stat = statSync(file);
+  const start = Math.max(0, stat.size - MAX_BYTES);
+  const matches: Array<{ ts: string | null; level: string; msg: string }> = [];
+  const slotTag = `worker-${slot}`;
+  await new Promise<void>((done) => {
+    const stream = createReadStream(file, { start, encoding: 'utf-8' });
+    const rl = createInterface({ input: stream });
+    rl.on('line', (raw) => {
+      if (!raw.includes(slotTag)) return;
+      const cleaned = raw.replace(/\[[0-9;]*m/g, '');
+      const m = cleaned.match(
+        /(\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?)\s*(?:\[)?(DEBUG|INFO|WARN|WARNING|ERROR|TRACE)\]?\s*(.*)$/i,
+      );
+      matches.push({
+        ts: m?.[1] ?? null,
+        level: (m?.[2] ?? 'info').toLowerCase().replace('warning', 'warn'),
+        msg: m?.[3] ?? cleaned,
+      });
+      if (matches.length > limit * 3) matches.splice(0, matches.length - limit * 3);
+    });
+    rl.on('close', () => done());
+    rl.on('error', () => done());
+  });
+  return matches.slice(-limit);
+}
+
 function listWorkerMarkerPaths(project: string): { slot: number; path: string }[] {
   const dir = projectRuntimeDir(project);
   if (!existsSync(dir)) return [];
@@ -117,6 +165,33 @@ export function createWorkersRoute(): Hono {
     const markers = listWorkerMarkerPaths(project);
     const workers = markers.map((m) => workerFromMarker(project, m.slot, m.path));
     return c.json({ data: workers });
+  });
+
+  /**
+   * GET /api/projects/:project/workers/:slot
+   *   Returns worker detail + last N log lines filtered for this worker.
+   *   Used by the Console worker detail popover (v0.48).
+   */
+  app.get('/:project/workers/:slot', async (c) => {
+    const project = c.req.param('project');
+    const slot = Number.parseInt(c.req.param('slot'), 10);
+    if (!Number.isFinite(slot) || slot < 1) {
+      return c.json({ type: 'validation', title: 'invalid slot', status: 422 }, 422);
+    }
+    const runtimeDir = projectRuntimeDir(project);
+    const markerPath = resolve(runtimeDir, `worker-${slot}-current.json`);
+    if (!existsSync(markerPath)) {
+      return c.json({ type: 'not-found', title: 'worker marker not found', status: 404 }, 404);
+    }
+    const worker = workerFromMarker(project, slot, markerPath);
+    const markerData = parseMarker(markerPath)?.data ?? null;
+    const recentLogs = await readWorkerLogTail(project, slot, 20);
+    return c.json({
+      ...worker,
+      markerPath: markerPath.replace(HOME, '~'),
+      markerData,
+      recentLogs,
+    });
   });
 
   app.post('/:project/workers/:slot/kill', async (c) => {

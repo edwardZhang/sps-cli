@@ -11,9 +11,27 @@ export interface Worker {
   markerUpdatedAt: string | null;
 }
 
+export interface WorkerLogLine {
+  ts: string | null;
+  level: string;
+  msg: string;
+}
+
+export interface WorkerDetail extends Worker {
+  markerPath: string;
+  markerData: Record<string, unknown> | null;
+  recentLogs: WorkerLogLine[];
+}
+
 export function listWorkers(project: string) {
   return apiGet<{ data: Worker[] }>(
     `/api/projects/${encodeURIComponent(project)}/workers`,
+  );
+}
+
+export function getWorkerDetail(project: string, slot: number) {
+  return apiGet<WorkerDetail>(
+    `/api/projects/${encodeURIComponent(project)}/workers/${slot}`,
   );
 }
 
