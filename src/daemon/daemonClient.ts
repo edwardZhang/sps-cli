@@ -15,10 +15,20 @@
  */
 
 import { existsSync } from 'node:fs';
-import { createConnection, type Socket } from 'node:net';
+import { createConnection } from 'node:net';
 import { resolve } from 'node:path';
+import type { McpServerConfig } from '../interfaces/ACPClient.js';
 import type { ACPSessionRecord, ACPState, ACPTool } from '../models/acp.js';
-import type { DaemonRequest, DaemonResponse } from './sessionDaemon.js';
+import type { DaemonEvent, DaemonRequest, DaemonResponse } from './sessionDaemon.js';
+
+export interface EnsureSessionOpts {
+  mcpServers?: McpServerConfig[];
+  extraEnv?: Record<string, string>;
+}
+
+export interface StartRunOpts {
+  extraEnv?: Record<string, string>;
+}
 
 const DEFAULT_SOCKET = process.env.SPS_DAEMON_SOCKET || resolve(process.env.HOME || '/home/coral', '.coral', 'sessions', 'daemon.sock');
 
@@ -36,12 +46,23 @@ export class DaemonClient {
     }
   }
 
-  async ensureSession(slot: string, tool?: ACPTool, cwd?: string): Promise<ACPSessionRecord> {
-    return this.request('ensureSession', { slot, tool, cwd });
+  async ensureSession(
+    slot: string,
+    tool?: ACPTool,
+    cwd?: string,
+    opts?: EnsureSessionOpts,
+  ): Promise<ACPSessionRecord> {
+    return this.request('ensureSession', { slot, tool, cwd, opts });
   }
 
-  async startRun(slot: string, prompt: string, tool?: ACPTool, cwd?: string): Promise<ACPSessionRecord> {
-    return this.request('startRun', { slot, prompt, tool, cwd });
+  async startRun(
+    slot: string,
+    prompt: string,
+    tool?: ACPTool,
+    cwd?: string,
+    opts?: StartRunOpts,
+  ): Promise<ACPSessionRecord> {
+    return this.request('startRun', { slot, prompt, tool, cwd, opts });
   }
 
   async inspect(slot?: string): Promise<ACPState> {
@@ -58,6 +79,95 @@ export class DaemonClient {
 
   async shutdown(): Promise<void> {
     try { await this.request('shutdown', {}); } catch { /* daemon exits */ }
+  }
+
+  /**
+   * Long-lived subscription: opens socket, sends subscribeRun, yields DaemonEvent
+   * frames as async iterator. Terminates when daemon closes socket (run complete)
+   * or when caller breaks out of loop (cancels via iterator.return).
+   *
+   * Usage:
+   *   for await (const evt of client.subscribeRun(slot)) {
+   *     if (evt.event === 'text') ...
+   *     if (evt.event === 'complete') break;
+   *   }
+   */
+  subscribeRun(slot: string): AsyncIterable<DaemonEvent> & { cancel: () => void } {
+    const socket = createConnection(this.socketPath);
+    const queue: DaemonEvent[] = [];
+    const waiters: Array<(v: IteratorResult<DaemonEvent>) => void> = [];
+    let done = false;
+    let errored: Error | null = null;
+    let buffer = '';
+
+    const close = (): void => {
+      if (done) return;
+      done = true;
+      try { socket.destroy(); } catch { /* noop */ }
+      // drain waiters
+      while (waiters.length > 0) {
+        waiters.shift()!({ value: undefined as unknown as DaemonEvent, done: true });
+      }
+    };
+
+    socket.on('connect', () => {
+      const req: DaemonRequest = { method: 'subscribeRun', params: { slot } };
+      socket.write(JSON.stringify(req) + '\n');
+    });
+
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('utf-8');
+      let idx;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 1);
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line);
+          // Skip the initial ack frame (which is a DaemonResponse, has `ok`, no `event` key)
+          if ('ok' in parsed && !('event' in parsed)) {
+            if (!parsed.ok) {
+              errored = new Error(parsed.error ?? 'subscribe failed');
+              close();
+            }
+            continue;
+          }
+          const evt = parsed as DaemonEvent;
+          if (waiters.length > 0) {
+            waiters.shift()!({ value: evt, done: false });
+          } else {
+            queue.push(evt);
+          }
+        } catch {
+          /* malformed line */
+        }
+      }
+    });
+
+    socket.on('error', (err) => {
+      errored = err;
+      close();
+    });
+    socket.on('close', () => close());
+
+    const iterator: AsyncIterator<DaemonEvent> = {
+      next: () =>
+        new Promise((resolve, reject) => {
+          if (errored) return reject(errored);
+          if (queue.length > 0) return resolve({ value: queue.shift()!, done: false });
+          if (done) return resolve({ value: undefined as unknown as DaemonEvent, done: true });
+          waiters.push(resolve);
+        }),
+      return: () => {
+        close();
+        return Promise.resolve({ value: undefined as unknown as DaemonEvent, done: true });
+      },
+    };
+
+    return {
+      [Symbol.asyncIterator]: () => iterator,
+      cancel: close,
+    };
   }
 
   /** Send a single NDJSON request, wait for response. */

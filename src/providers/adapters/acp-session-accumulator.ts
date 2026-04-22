@@ -21,10 +21,24 @@ interface SessionUpdate {
   [key: string]: unknown;
 }
 
+/**
+ * Structured event emitted from accumulator as ACP session updates arrive.
+ * Consumed by daemon subscribeRun to stream to remote clients (Console chat).
+ */
+export type AccumulatorEvent =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; title: string; kind: string; status: string }
+  | { type: 'tool_update'; id: string; status: string }
+  | { type: 'usage'; used: number; size: number }
+  | { type: 'complete'; stopReason: string };
+
+export type AccumulatorListener = (event: AccumulatorEvent) => void;
+
 export class SessionUpdateAccumulator {
   private textChunks: string[] = [];
   private toolCalls = new Map<string, { title: string; kind: string; status: string }>();
   private logFile: string | null = null;
+  private listeners = new Set<AccumulatorListener>();
 
   stopReason: string | null = null;
   hasPendingPermission = false;
@@ -44,6 +58,30 @@ export class SessionUpdateAccumulator {
     this.lastUpdateAt = null;
   }
 
+  addListener(fn: AccumulatorListener): void {
+    this.listeners.add(fn);
+  }
+
+  /** Mark the run as complete and emit a complete event. Called by adapter after run settles. */
+  markComplete(stopReason: string): void {
+    this.stopReason = stopReason;
+    this.emit({ type: 'complete', stopReason });
+  }
+
+  removeListener(fn: AccumulatorListener): void {
+    this.listeners.delete(fn);
+  }
+
+  private emit(event: AccumulatorEvent): void {
+    for (const fn of this.listeners) {
+      try {
+        fn(event);
+      } catch {
+        /* listener error should not break accumulator */
+      }
+    }
+  }
+
   handleUpdate(update: SessionUpdate): void {
     this.lastUpdateAt = new Date().toISOString();
     const ts = this.lastUpdateAt.slice(11, 23);  // HH:mm:ss.SSS
@@ -54,6 +92,7 @@ export class SessionUpdateAccumulator {
         if (content?.type === 'text' && content.text) {
           this.textChunks.push(content.text);
           this.appendLog(`${ts} [assistant] ${content.text}`);
+          this.emit({ type: 'text', text: content.text });
         }
         break;
       }
@@ -64,6 +103,7 @@ export class SessionUpdateAccumulator {
         const status = (update.status as string) ?? 'pending';
         this.toolCalls.set(id, { title, kind, status });
         this.appendLog(`${ts} [tool:${kind}] ${title} (${status})`);
+        this.emit({ type: 'tool_use', id, title, kind, status });
         break;
       }
       case 'tool_call_update': {
@@ -74,6 +114,7 @@ export class SessionUpdateAccumulator {
           existing.status = status;
         }
         this.appendLog(`${ts} [tool_update] ${id} → ${status}`);
+        this.emit({ type: 'tool_update', id, status });
         break;
       }
       case 'usage_update': {
@@ -81,6 +122,7 @@ export class SessionUpdateAccumulator {
         const size = update.size as number | undefined;
         if (used != null && size != null) {
           this.appendLog(`${ts} [usage] ${used}/${size} tokens`);
+          this.emit({ type: 'usage', used, size });
         }
         break;
       }

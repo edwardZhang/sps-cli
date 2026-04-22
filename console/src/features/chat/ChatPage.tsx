@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, MessageCircle, Trash2, Send, Loader2 } from 'lucide-react';
+import { Plus, MessageCircle, Trash2, Send, Loader2, ChevronRight, Wrench, CheckCircle2, XCircle } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github.css';
 import {
   createSession,
   deleteSession,
@@ -9,6 +13,7 @@ import {
   listSessions,
   postMessage,
   type ChatMessage,
+  type ChatMessageBlock,
   type ChatSessionDetail,
 } from '../../shared/api/chat';
 import { useDialog } from '../../shared/components/DialogProvider';
@@ -26,12 +31,14 @@ export function ChatPage() {
     enabled: !!sessionId,
   });
 
-  // 流式 pending：SSE 把服务端累积的 target 塞进来，drain loop 按节奏把 displayed 推向 target
+  // v0.46 流式 pending：按块累积，text 块按字符 drain，tool 块即时出现
   // 服务端 complete 时只更新 finalMessage + done 标记，实际 commit 等 drain 追齐再触发
+  type PendingBlock =
+    | { type: 'text'; target: string; displayed: string }
+    | { type: 'tool_use'; id: string; title: string; kind: string; status: string };
   type PendingState = {
     id: string;
-    target: string;
-    displayed: string;
+    blocks: PendingBlock[];
     done: boolean;
     finalMessage: ChatMessage | null;
   };
@@ -86,8 +93,7 @@ export function ChatPage() {
         };
         setPending({
           id: data.assistantId,
-          target: '',
-          displayed: '',
+          blocks: [],
           done: false,
           finalMessage: null,
         });
@@ -96,19 +102,74 @@ export function ChatPage() {
       }
     });
 
-    // 3. assistant chunk → 只更新 target，drain loop 负责推进 displayed
-    es.addEventListener('chat.message.chunk', (ev) => {
+    // 3a. text chunk → 追加到最后一个 text 块的 target（drain loop 推进 displayed）
+    es.addEventListener('chat.message.chunk.text', (ev) => {
       try {
         const data = JSON.parse((ev as MessageEvent).data) as {
           sessionId: string;
           assistantId: string;
-          accumulated: string;
+          text: string;
         };
-        setPending((prev) =>
-          prev && prev.id === data.assistantId
-            ? { ...prev, target: data.accumulated }
-            : prev,
-        );
+        setPending((prev) => {
+          if (!prev || prev.id !== data.assistantId) return prev;
+          const blocks = [...prev.blocks];
+          const last = blocks[blocks.length - 1];
+          if (last && last.type === 'text') {
+            blocks[blocks.length - 1] = { ...last, target: last.target + data.text };
+          } else {
+            blocks.push({ type: 'text', target: data.text, displayed: '' });
+          }
+          return { ...prev, blocks };
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // 3b. tool_use chunk → 即时插入新 tool 块
+    es.addEventListener('chat.message.chunk.tool_use', (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          sessionId: string;
+          assistantId: string;
+          id: string;
+          title: string;
+          kind: string;
+          status: string;
+        };
+        setPending((prev) => {
+          if (!prev || prev.id !== data.assistantId) return prev;
+          return {
+            ...prev,
+            blocks: [
+              ...prev.blocks,
+              { type: 'tool_use', id: data.id, title: data.title, kind: data.kind, status: data.status },
+            ],
+          };
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // 3c. tool_update → 更新对应 tool_use 块的 status
+    es.addEventListener('chat.message.chunk.tool_update', (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          sessionId: string;
+          assistantId: string;
+          id: string;
+          status: string;
+        };
+        setPending((prev) => {
+          if (!prev || prev.id !== data.assistantId) return prev;
+          return {
+            ...prev,
+            blocks: prev.blocks.map((b) =>
+              b.type === 'tool_use' && b.id === data.id ? { ...b, status: data.status } : b,
+            ),
+          };
+        });
       } catch {
         /* ignore */
       }
@@ -124,12 +185,7 @@ export function ChatPage() {
         };
         setPending((prev) =>
           prev && prev.id === data.assistantId
-            ? {
-                ...prev,
-                target: data.message.content || prev.target,
-                done: true,
-                finalMessage: data.message,
-              }
+            ? { ...prev, done: true, finalMessage: data.message }
             : prev,
         );
       } catch {
@@ -140,13 +196,17 @@ export function ChatPage() {
     return () => es.close();
   }, [sessionId, qc]);
 
-  // drain loop: 25ms 一 tick，自适应步长把 displayed 推向 target
-  //   diff=600 → step=15 → ~1s 追齐
-  //   diff=20  → step=1  → ~500ms 追齐
-  //   追齐且服务端已 done → commit finalMessage + 清 pending
+  // drain loop: 25ms 一 tick，推进所有 text 块的 displayed 向 target
+  //   总 gap = sum(target.length - displayed.length) across text blocks
+  //   每 tick 步长 = max(1, ceil(gap/40))，按块顺序分配
+  //   全部追齐 && 服务端已 done → commit finalMessage + 清 pending
   useEffect(() => {
     if (!pending) return;
-    if (pending.displayed.length >= pending.target.length) {
+    const totalGap = pending.blocks.reduce(
+      (sum, b) => (b.type === 'text' ? sum + (b.target.length - b.displayed.length) : sum),
+      0,
+    );
+    if (totalGap <= 0) {
       if (pending.done && pending.finalMessage) {
         const final = pending.finalMessage;
         qc.setQueryData<ChatSessionDetail | undefined>(
@@ -171,10 +231,16 @@ export function ChatPage() {
     const timer = setTimeout(() => {
       setPending((prev) => {
         if (!prev) return prev;
-        const diff = prev.target.length - prev.displayed.length;
-        if (diff <= 0) return prev;
-        const step = Math.max(1, Math.ceil(diff / 40));
-        return { ...prev, displayed: prev.target.slice(0, prev.displayed.length + step) };
+        let remaining = Math.max(1, Math.ceil(totalGap / 40));
+        const blocks = prev.blocks.map((b) => {
+          if (b.type !== 'text' || remaining <= 0) return b;
+          const gap = b.target.length - b.displayed.length;
+          if (gap <= 0) return b;
+          const step = Math.min(gap, remaining);
+          remaining -= step;
+          return { ...b, displayed: b.target.slice(0, b.displayed.length + step) };
+        });
+        return { ...prev, blocks };
       });
     }, 25);
     return () => clearTimeout(timer);
@@ -339,16 +405,7 @@ export function ChatPage() {
                 <MessageBubble key={m.id} msg={m} />
               ))}
               {pending && (
-                <MessageBubble
-                  msg={{
-                    id: pending.id,
-                    role: 'assistant',
-                    content: pending.displayed,
-                    ts: new Date().toISOString(),
-                    status: 'streaming',
-                  }}
-                  streaming
-                />
+                <StreamingBubble pending={pending} />
               )}
               {!currentQ.isLoading && (currentQ.data?.messages ?? []).length === 0 && !pending && !sending && (
                 <p className="text-center text-[var(--color-text-subtle)] italic mt-12">
@@ -412,9 +469,13 @@ export function ChatPage() {
   );
 }
 
-function MessageBubble({ msg, streaming }: { msg: ChatMessage; streaming?: boolean }) {
+function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === 'user';
   const isError = msg.role === 'error';
+  const blocks: ChatMessageBlock[] =
+    msg.blocks && msg.blocks.length > 0
+      ? msg.blocks
+      : [{ type: 'text', text: msg.content }];
   return (
     <div className={isUser ? 'self-end max-w-3xl' : 'self-start max-w-3xl'}>
       <div
@@ -427,22 +488,130 @@ function MessageBubble({ msg, streaming }: { msg: ChatMessage; streaming?: boole
               : 'bg-[var(--color-bg)]',
         ].join(' ')}
       >
-        <p className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1 flex items-center gap-2">
+        <p className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
           {isUser ? '你' : isError ? '错误' : 'assistant'}
           <span className="font-normal">·</span>
           <span className="font-normal">{formatTimeAgo(msg.ts)}</span>
-          {streaming && (
-            <span className="flex items-center gap-1 font-normal text-[var(--color-running)]">
-              <Loader2 size={10} strokeWidth={3} className="animate-spin" />
-              streaming
-            </span>
-          )}
         </p>
-        <pre className="text-sm font-[family-name:var(--font-body)] whitespace-pre-wrap break-words">
-          {msg.content || (streaming ? '…' : '')}
-          {streaming && <span className="inline-block w-2 h-4 ml-1 bg-[var(--color-text)] animate-pulse align-middle" />}
-        </pre>
+        <div className="flex flex-col gap-2">
+          {blocks.map((b, i) => (
+            <BlockRenderer key={i} block={b} />
+          ))}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function StreamingBubble({
+  pending,
+}: {
+  pending: {
+    id: string;
+    blocks: Array<
+      | { type: 'text'; target: string; displayed: string }
+      | { type: 'tool_use'; id: string; title: string; kind: string; status: string }
+    >;
+  };
+}) {
+  const lastTextIdx = (() => {
+    for (let i = pending.blocks.length - 1; i >= 0; i--) {
+      if (pending.blocks[i]!.type === 'text') return i;
+    }
+    return -1;
+  })();
+  return (
+    <div className="self-start max-w-3xl">
+      <div className="nb-card bg-[var(--color-bg)]">
+        <p className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
+          assistant
+          <span className="font-normal">·</span>
+          <span className="flex items-center gap-1 font-normal text-[var(--color-running)]">
+            <Loader2 size={10} strokeWidth={3} className="animate-spin" />
+            streaming
+          </span>
+        </p>
+        <div className="flex flex-col gap-2">
+          {pending.blocks.length === 0 && (
+            <p className="text-sm text-[var(--color-text-muted)] italic">…</p>
+          )}
+          {pending.blocks.map((b, i) => {
+            if (b.type === 'text') {
+              const isLast = i === lastTextIdx;
+              return (
+                <div key={i} className="relative">
+                  <TextBlock text={b.displayed} />
+                  {isLast && (
+                    <span className="inline-block w-2 h-4 ml-1 bg-[var(--color-text)] animate-pulse align-middle" />
+                  )}
+                </div>
+              );
+            }
+            return <ToolBlock key={i} tool={b} />;
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BlockRenderer({ block }: { block: ChatMessageBlock }) {
+  if (block.type === 'text') return <TextBlock text={block.text} />;
+  return <ToolBlock tool={block} />;
+}
+
+function TextBlock({ text }: { text: string }) {
+  if (!text) return null;
+  return (
+    <div className="text-sm font-[family-name:var(--font-body)] break-words prose-chat">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function ToolBlock({
+  tool,
+}: {
+  tool: { id: string; title: string; kind: string; status: string };
+}) {
+  const [open, setOpen] = useState(false);
+  const done = tool.status === 'completed';
+  const failed = tool.status === 'failed';
+  const active = !done && !failed;
+  return (
+    <div className="border-2 border-[var(--color-text)] rounded-lg overflow-hidden bg-[var(--color-bg-cream)]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-[family-name:var(--font-mono)] hover:bg-[var(--color-accent-yellow)] transition-colors"
+      >
+        <ChevronRight
+          size={12}
+          strokeWidth={3}
+          className={['transition-transform', open ? 'rotate-90' : ''].join(' ')}
+        />
+        <Wrench size={12} strokeWidth={2.5} />
+        <span className="font-bold">{tool.kind}</span>
+        <span className="flex-1 text-left text-[var(--color-text-muted)] truncate">
+          {tool.title}
+        </span>
+        {active && (
+          <Loader2 size={12} strokeWidth={3} className="animate-spin text-[var(--color-running)]" />
+        )}
+        {done && <CheckCircle2 size={12} strokeWidth={2.5} className="text-[var(--color-running)]" />}
+        {failed && <XCircle size={12} strokeWidth={2.5} className="text-[var(--color-crashed)]" />}
+      </button>
+      {open && (
+        <div className="px-3 py-2 text-xs font-[family-name:var(--font-mono)] text-[var(--color-text-muted)] border-t-2 border-[var(--color-text)]">
+          <div>id: <span className="text-[var(--color-text)]">{tool.id}</span></div>
+          <div>status: <span className="text-[var(--color-text)]">{tool.status}</span></div>
+        </div>
+      )}
     </div>
   );
 }

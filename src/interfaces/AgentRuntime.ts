@@ -15,7 +15,7 @@
  */
 
 import type { ACPSessionRecord, ACPState, ACPTool } from '../models/acp.js';
-import type { McpServerConfig } from './ACPClient.js';
+import type { AccumulatorListener, McpServerConfig } from './ACPClient.js';
 
 export interface AgentRuntime {
   ensureSession(slot: string, tool?: ACPTool, cwd?: string, opts?: { mcpServers?: McpServerConfig[]; extraEnv?: Record<string, string> }): Promise<ACPSessionRecord>;
@@ -23,4 +23,9 @@ export interface AgentRuntime {
   resumeRun(slot: string, prompt: string): Promise<ACPSessionRecord>;
   inspect(slot?: string): Promise<ACPState>;
   stopSession(slot: string): Promise<void>;
+  /**
+   * Attach a listener to the current session for real-time accumulator events.
+   * Returns an unsubscribe function. Session must already exist (call ensureSession first).
+   */
+  subscribe(slot: string, listener: AccumulatorListener): () => void;
 }

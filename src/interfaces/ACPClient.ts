@@ -14,7 +14,10 @@
  * @boundedContext agent-control-protocol
  */
 
+import type { AccumulatorEvent, AccumulatorListener } from '../providers/adapters/acp-session-accumulator.js';
 import type { ACPRunStatus, ACPSessionStatus, ACPTool } from '../models/acp.js';
+
+export type { AccumulatorEvent, AccumulatorListener };
 
 export interface McpServerConfig {
   name: string;
@@ -99,4 +102,10 @@ export interface ACPClient {
   inspectSession(input: InspectSessionInput): Promise<InspectSessionResult>;
   inspectRun(input: InspectRunInput): Promise<InspectRunResult>;
   stopSession(input: StopSessionInput): Promise<void>;
+  /**
+   * Attach a listener to an existing session's accumulator to receive structured
+   * events (text/tool_use/tool_update/usage) as the run progresses. Returns an
+   * unsubscribe function. No-op (returns () => {}) if session does not exist.
+   */
+  subscribe(sessionName: string, listener: AccumulatorListener): () => void;
 }

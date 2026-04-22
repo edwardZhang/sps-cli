@@ -24,7 +24,14 @@ import { createSessionRuntime } from '../providers/registry.js';
 
 export interface DaemonRequest {
   id?: number;
-  method: 'ensureSession' | 'startRun' | 'inspect' | 'stopSession' | 'clearRun' | 'shutdown';
+  method:
+    | 'ensureSession'
+    | 'startRun'
+    | 'inspect'
+    | 'stopSession'
+    | 'clearRun'
+    | 'shutdown'
+    | 'subscribeRun';
   params: Record<string, unknown>;
 }
 
@@ -35,10 +42,17 @@ export interface DaemonResponse {
   error?: string;
 }
 
-export interface DaemonEvent {
-  event: 'output' | 'tool_call' | 'done' | 'status';
-  [key: string]: unknown;
-}
+/**
+ * Event frame sent on a subscribeRun socket. NDJSON stream until the run
+ * settles (complete/error) then daemon closes the socket.
+ */
+export type DaemonEvent =
+  | { event: 'text'; text: string }
+  | { event: 'tool_use'; id: string; title: string; kind: string; status: string }
+  | { event: 'tool_update'; id: string; status: string }
+  | { event: 'usage'; used: number; size: number }
+  | { event: 'complete'; stopReason: string }
+  | { event: 'error'; error: string };
 
 const DEFAULT_SOCKET = resolve(process.env.HOME || '/home/coral', '.coral', 'sessions', 'daemon.sock');
 const DEFAULT_PID = resolve(process.env.HOME || '/home/coral', '.coral', 'sessions', 'daemon.pid');
@@ -131,6 +145,12 @@ export class SessionDaemon {
       return;
     }
 
+    // subscribeRun keeps socket open for NDJSON event streaming — handled specially
+    if (req.method === 'subscribeRun') {
+      this.handleSubscribeRun(socket, req);
+      return;
+    }
+
     try {
       const res = await this.dispatch(req);
       this.send(socket, { id: req.id, ...res });
@@ -143,25 +163,68 @@ export class SessionDaemon {
     }
   }
 
+  /**
+   * Long-lived subscription: hooks listener on the session's accumulator, pipes
+   * structured events as NDJSON. Socket stays open until 'complete' fires or
+   * client disconnects.
+   */
+  private handleSubscribeRun(socket: Socket, req: DaemonRequest): void {
+    const slot = req.params.slot as string | undefined;
+    if (!slot) {
+      this.send(socket, { id: req.id, ok: false, error: 'slot required' });
+      socket.end();
+      return;
+    }
+
+    const unsubscribe = this.runtime.subscribe(slot, (evt) => {
+      // Translate AccumulatorEvent → DaemonEvent (1:1 mapping, just rename type→event)
+      const { type, ...rest } = evt;
+      this.send(socket, { event: type, ...rest } as DaemonEvent);
+      if (evt.type === 'complete') {
+        socket.end();
+      }
+    });
+
+    // ack with subscription confirmation so client knows listener is hooked
+    this.send(socket, { id: req.id, ok: true, data: { subscribed: true } });
+
+    socket.on('close', unsubscribe);
+    socket.on('error', unsubscribe);
+  }
+
   private async dispatch(req: DaemonRequest): Promise<DaemonResponse> {
     const p = req.params;
 
     switch (req.method) {
       case 'ensureSession': {
+        const opts = p.opts as
+          | {
+              mcpServers?: Array<{
+                name: string;
+                command: string;
+                args?: string[];
+                env?: Array<{ name: string; value: string }>;
+              }>;
+              extraEnv?: Record<string, string>;
+            }
+          | undefined;
         const session = await this.runtime.ensureSession(
           p.slot as string,
           p.tool as ACPTool | undefined,
           p.cwd as string | undefined,
+          opts,
         );
         return { ok: true, data: session };
       }
 
       case 'startRun': {
+        const opts = p.opts as { extraEnv?: Record<string, string> } | undefined;
         const session = await this.runtime.startRun(
           p.slot as string,
           p.prompt as string,
           p.tool as ACPTool | undefined,
           p.cwd as string | undefined,
+          opts,
         );
         return { ok: true, data: session };
       }

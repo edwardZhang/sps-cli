@@ -14,6 +14,7 @@
  * @boundedContext acp
  */
 import type {
+  AccumulatorListener,
   ACPClient,
   EnsureSessionInput,
   EnsureSessionResult,
@@ -48,5 +49,9 @@ export class LocalACPClient implements ACPClient {
 
   async stopSession(input: StopSessionInput): Promise<void> {
     return this.adapter.stopSession(input);
+  }
+
+  subscribe(sessionName: string, listener: AccumulatorListener): () => void {
+    return this.adapter.subscribe(sessionName, listener);
   }
 }

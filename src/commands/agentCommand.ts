@@ -314,26 +314,45 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
     return agentNamedOneShot(args);
   }
 
+  // v0.46: Anonymous one-shot also routes through daemon — unified code path.
+  //   Ephemeral slot is torn down (stopSession) on exit, so from the user's
+  //   perspective behavior is identical to the old direct-spawn flow.
   const ctx = createSessionContext({ cwd: args.cwd });
-  const runtime = createSessionRuntime(ctx);
-  const slot = `session-oneshot-${Date.now()}`;
+  const { DaemonClient } = await import('../daemon/daemonClient.js');
+  const { ensureDaemon } = await import('./agentDaemon.js');
+  const client = new DaemonClient();
+  const isRemote = !!process.env.SPS_DAEMON_SOCKET;
+
+  if (!(await client.isRunning())) {
+    if (isRemote) {
+      process.stderr.write(`${RED}Cannot connect to remote daemon at ${process.env.SPS_DAEMON_SOCKET}${RESET}\n`);
+      process.exit(1);
+    }
+    await ensureDaemon();
+  }
+
+  const slot = `session-oneshot-${Date.now()}-${process.pid}`;
+  // Remote mode: don't leak local cwd — let daemon use its own
+  const remoteCwd = isRemote ? undefined : args.cwd;
+  // waitAndStream needs an object with `.inspect(slot)` method; DaemonClient matches
+  const runtimeProxy = { inspect: (s?: string) => client.inspect(s) } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   try {
     const mcpConfigs = resolveMcpServers(args.mcp);
-    await runtime.ensureSession(slot, args.tool, args.cwd, mcpConfigs.length ? { mcpServers: mcpConfigs } : undefined);
+    await client.ensureSession(slot, args.tool, remoteCwd, mcpConfigs.length ? { mcpServers: mcpConfigs } : undefined);
     const prompt = buildPrompt(args.prompt, args.context, args.system, args.profile);
-    await runtime.startRun(slot, prompt, args.tool, args.cwd);
+    await client.startRun(slot, prompt, args.tool, remoteCwd);
 
-    let result = await waitAndStream(runtime, slot, {
-      stateFile: ctx.paths.stateFile,
+    let result = await waitAndStream(runtimeProxy, slot, {
+      stateFile: isRemote ? undefined : ctx.paths.stateFile,
       verbose: args.verbose,
-      logsDir: ctx.paths.logsDir,
+      logsDir: isRemote ? undefined : ctx.paths.logsDir,
       quiet: args.json,
     });
 
     if (!args.json) process.stdout.write('\n');
 
-    // Hook feedback loop
+    // Hook feedback loop (same slot → same daemon session, multi-turn context preserved)
     if (args.hooks.length > 0 && result.status === 'completed') {
       for (let attempt = 1; attempt <= MAX_HOOK_RETRIES; attempt++) {
         process.stderr.write(`${DIM}Running hooks (attempt ${attempt}/${MAX_HOOK_RETRIES})...${RESET}\n`);
@@ -347,14 +366,15 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
           process.exitCode = 1;
           break;
         }
-        // Feed failure back to agent
         process.stderr.write(`${YELLOW}Feeding hook failure back to agent...${RESET}\n`);
         const fixPrompt = `The following check failed after your changes. Please fix the issue and try again:\n\n${hookResult.output}`;
-        await runtime.startRun(slot, fixPrompt, args.tool, args.cwd);
-        result = await waitAndStream(runtime, slot, {
-          stateFile: ctx.paths.stateFile,
+        // clearRun lets the next startRun reuse the slot cleanly
+        try { await client.clearRun(slot); } catch { /* noop */ }
+        await client.startRun(slot, fixPrompt, args.tool, remoteCwd);
+        result = await waitAndStream(runtimeProxy, slot, {
+          stateFile: isRemote ? undefined : ctx.paths.stateFile,
           verbose: args.verbose,
-          logsDir: ctx.paths.logsDir,
+          logsDir: isRemote ? undefined : ctx.paths.logsDir,
           quiet: args.json,
         });
         if (!args.json) process.stdout.write('\n');
@@ -381,29 +401,9 @@ async function agentOneShot(args: ReturnType<typeof parseAgentArgs>): Promise<vo
       process.exitCode = 1;
     }
   } finally {
-    // Get PID before cleaning state
-    let sessionPid: number | null = null;
-    try {
-      const state = readState(ctx.paths.stateFile, 0);
-      sessionPid = state.sessions?.[slot]?.pid ?? null;
-      if (state.sessions?.[slot]) {
-        delete state.sessions[slot];
-        writeState(ctx.paths.stateFile, state, 'agent-oneshot-cleanup');
-      }
-    } catch { /* best effort */ }
-    // Kill process tree by PID, then exit
-    if (sessionPid) {
-      try {
-        const { execFileSync } = await import('node:child_process');
-        // Kill all descendants first
-        try {
-          const children = execFileSync('pgrep', ['-P', String(sessionPid)], { encoding: 'utf-8', timeout: 2000 })
-            .trim().split('\n').filter(Boolean).map(Number);
-          for (const p of children) { try { process.kill(p, 'SIGKILL'); } catch { /* noop */ } }
-        } catch { /* no children */ }
-        try { process.kill(sessionPid, 'SIGKILL'); } catch { /* already dead */ }
-      } catch { /* noop */ }
-    }
+    // Daemon owns the session lifecycle — just ask it to tear down the ephemeral slot.
+    // Daemon's destroySession handles process tree cleanup (SIGTERM + SIGKILL + descendants).
+    try { await client.stopSession(slot); } catch { /* best effort */ }
     process.exit(process.exitCode ?? 0);
   }
 }

@@ -1,9 +1,15 @@
 import { apiGet } from './client';
 
+export type ChatMessageBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; title: string; kind: string; status: string };
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'error';
   content: string;
+  /** Structured blocks for tool rendering. Absent on old messages (pre-v0.46). */
+  blocks?: ChatMessageBlock[];
   ts: string;
   status?: 'streaming' | 'complete' | 'error';
 }

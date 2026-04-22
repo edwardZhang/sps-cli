@@ -231,6 +231,12 @@ export class ACPWorkerRuntime implements AgentRuntime {
     return 'claude';
   }
 
+  subscribe(slot: string, listener: import('../interfaces/ACPClient.js').AccumulatorListener): () => void {
+    const normalizedSlot = this.normalizeSlot(slot);
+    const sessionName = this.buildSessionName(normalizedSlot);
+    return this.client.subscribe(sessionName, listener);
+  }
+
   private buildSessionName(slot: string): string {
     if (slot.startsWith('session-')) return `sps-${slot}`;
     return `sps-acp-${this.ctx.projectName}-${slot}`;

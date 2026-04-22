@@ -1,18 +1,15 @@
 /**
  * @module        console-server/routes/chat
- * @description   Chat sessions with real-time streaming
+ * @description   Chat sessions via daemon — structured streaming with tool events
  *
- * 流式策略：
- *   - POST /sessions/:id/messages：立刻持久化 user msg，返回 user msg + pending assistantId
- *   - 异步 spawn sps agent，stdout chunk 逐份推 chat.message.chunk（带 assistantId）
- *   - 完成时推 chat.message.complete
- *   - 失败推 chat.message.complete（role=error）
- *
- * 前端按 assistantId 累积 chunk，组装完整消息。
+ * v0.46 重写：
+ *   - 放弃 spawn sps agent + stdout 纯文本解析
+ *   - 改用 DaemonClient.ensureSession + startRun + subscribeRun 拿结构化 AccumulatorEvent
+ *   - 每个 chat session 映射到 daemon slot `session-chat-<sessionId>`，多轮对话有上下文
+ *   - SSE 事件按 block 类型分开推（text / tool_use / tool_update / complete）
  */
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -22,16 +19,24 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { resolve } from 'node:path';
+import { DaemonClient } from '../../daemon/daemonClient.js';
+import { ensureDaemon } from '../../commands/agentDaemon.js';
 import { Logger } from '../../core/logger.js';
 import { eventBus } from '../sse/eventBus.js';
 
 const HOME = process.env.HOME || '/home/coral';
 const SESSIONS_DIR = resolve(HOME, '.coral', 'chat-sessions');
 
+export type ChatMessageBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; title: string; kind: string; status: string };
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'error';
   content: string;
+  /** Structured blocks for tool rendering (assistant only). If omitted, content is plain text. */
+  blocks?: ChatMessageBlock[];
   ts: string;
   status?: 'streaming' | 'complete' | 'error';
 }
@@ -99,188 +104,149 @@ function formatTitle(firstMessage: string): string {
   return clean.length > 60 ? `${clean.slice(0, 57)}...` : clean;
 }
 
-/**
- * 清理终端 ANSI escape + 回车 + spinner 字符，保留纯文本。
- */
-const SPINNER_CHARS = new Set(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']);
-function cleanAnsi(raw: string): string {
-  let s = raw.replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, '');
-  s = s.replace(/\r(?!\n)/g, '');
-  s = Array.from(s).filter((ch) => !SPINNER_CHARS.has(ch)).join('');
-  return s;
+function chatSlot(sessionId: string): string {
+  return `session-chat-${sessionId}`;
 }
 
-/**
- * Logger 输出的系统行（[agent] / [setup] 等），不给用户看。
- */
-function isSystemLine(line: string): boolean {
-  const cleaned = line.trim();
-  if (!cleaned) return true;
-  if (/^\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?\s+\[(agent|setup|ACP|console|skill|worker-\d+)\]/i.test(cleaned)) return true;
-  if (cleaned.startsWith('(node:') || cleaned.startsWith('Warning:')) return true;
-  return false;
-}
-
-function cliEntry(): { node: string; entry: string } {
-  return { node: process.argv[0] ?? 'node', entry: process.argv[1] ?? 'sps' };
-}
-
-function streamAssistantResponse(
+async function streamAssistantResponse(
   sessionId: string,
   assistantId: string,
   userContent: string,
   log: Logger,
-): void {
-  const { node, entry } = cliEntry();
-  log.info(`chat[${sessionId}]: spawning sps agent for ${assistantId}`);
-
-  const child = spawn(node, [entry, 'agent', userContent], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      NODE_NO_WARNINGS: '1',
-      FORCE_COLOR: '0',
-      NO_COLOR: '1',
-    },
-  });
-
-  let accumulated = '';
-  let stderr = '';
-
-  // 字符级流式状态机：
-  //   lineBuffer 保存当前尚未结束的行；一旦判定为 content 行，未 emit 的尾部立即推出
-  //   判定规则：首个非空字符若是 '1' / '2' / '(' / 'W'，候选 system，等 newline 或足够 peek
-  //   其它字符直接定性为 content，立即开始逐字节推
-  let lineBuffer = '';
-  let decided = false;
-  let lineIsSystem = false;
-  let emittedLen = 0;
-
-  const emitChunk = (chunk: string): void => {
-    if (!chunk) return;
-    accumulated += chunk;
-    eventBus.publish('chat.message.chunk', {
-      sessionId,
-      assistantId,
-      chunk,
-      accumulated,
-    });
-  };
-
-  const classifyPartial = (buf: string): 'system' | 'content' | 'wait' => {
-    const t = buf.trimStart();
-    if (t.length === 0) return 'wait';
-    const c = t[0];
-    if (c !== '1' && c !== '2' && c !== '(' && c !== 'W') return 'content';
-    if (t.startsWith('(node:')) return 'system';
-    if (t.startsWith('Warning:')) return 'system';
-    if (t.length < 25) return 'wait';
-    return /^\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?\s+\[(agent|setup|ACP|console|skill|worker-\d+)\]/i.test(t)
-      ? 'system'
-      : 'content';
-  };
-
-  const drainBuffer = (): void => {
-    while (true) {
-      const nl = lineBuffer.indexOf('\n');
-      if (!decided) {
-        if (nl !== -1) {
-          lineIsSystem = isSystemLine(lineBuffer.slice(0, nl));
-          decided = true;
-        } else {
-          const verdict = classifyPartial(lineBuffer);
-          if (verdict === 'wait') return;
-          lineIsSystem = verdict === 'system';
-          decided = true;
-        }
-      }
-      if (nl !== -1) {
-        if (!lineIsSystem) emitChunk(lineBuffer.slice(emittedLen, nl + 1));
-        lineBuffer = lineBuffer.slice(nl + 1);
-        emittedLen = 0;
-        decided = false;
-        lineIsSystem = false;
-      } else {
-        if (!lineIsSystem && lineBuffer.length > emittedLen) {
-          emitChunk(lineBuffer.slice(emittedLen));
-          emittedLen = lineBuffer.length;
-        }
-        return;
-      }
-    }
-  };
-
-  child.stdout?.on('data', (d: Buffer) => {
-    const raw = d.toString('utf-8');
-    const cleaned = cleanAnsi(raw);
-    if (!cleaned) return;
-    lineBuffer += cleaned;
-    drainBuffer();
-  });
-
-  child.stderr?.on('data', (d: Buffer) => {
-    stderr += d.toString('utf-8');
-  });
-
-  child.on('close', (code) => {
-    if (lineBuffer) {
-      if (!decided) {
-        lineIsSystem = isSystemLine(lineBuffer);
-        decided = true;
-      }
-      if (!lineIsSystem && lineBuffer.length > emittedLen) {
-        emitChunk(lineBuffer.slice(emittedLen));
-      }
-    }
-
-    const session = readSession(sessionId);
-    if (!session) return;
-
-    const finalContent = accumulated.trim() || (code === 0 ? '(no output)' : '');
-    const ts = new Date().toISOString();
-    const msg: ChatMessage =
-      code === 0
-        ? { id: assistantId, role: 'assistant', content: finalContent, ts, status: 'complete' }
-        : {
-            id: assistantId,
-            role: 'error',
-            content: stderr.trim() || `sps agent exit ${code}`,
-            ts,
-            status: 'error',
-          };
-    session.messages.push(msg);
-    session.lastMessageAt = ts;
-    session.messageCount = session.messages.length;
-    writeSession(session);
-    eventBus.publish('chat.message.complete', {
-      sessionId,
-      assistantId,
-      message: msg,
-    });
-    if (code === 0) log.ok(`chat[${sessionId}]: assistant complete (${accumulated.length} chars)`);
-    else log.warn(`chat[${sessionId}]: assistant error (exit ${code})`);
-  });
-
-  child.on('error', (err) => {
-    const session = readSession(sessionId);
-    if (!session) return;
+): Promise<void> {
+  // 1. Ensure daemon is running
+  if (!(await ensureDaemon())) {
     const errMsg: ChatMessage = {
       id: assistantId,
       role: 'error',
-      content: err.message,
+      content: 'Failed to start agent daemon',
       ts: new Date().toISOString(),
       status: 'error',
     };
-    session.messages.push(errMsg);
-    session.messageCount = session.messages.length;
-    writeSession(session);
-    eventBus.publish('chat.message.complete', {
-      sessionId,
-      assistantId,
-      message: errMsg,
-    });
-    log.warn(`chat[${sessionId}]: spawn error ${err.message}`);
+    persistAndEmitComplete(sessionId, errMsg, log);
+    return;
+  }
+
+  const client = new DaemonClient();
+  const slot = chatSlot(sessionId);
+
+  // 2. Ensure session exists (reuses if present → multi-turn context)
+  try {
+    await client.ensureSession(slot, 'claude');
+  } catch (err) {
+    const errMsg: ChatMessage = {
+      id: assistantId,
+      role: 'error',
+      content: `ensureSession failed: ${err instanceof Error ? err.message : String(err)}`,
+      ts: new Date().toISOString(),
+      status: 'error',
+    };
+    persistAndEmitComplete(sessionId, errMsg, log);
+    return;
+  }
+
+  // 3. Subscribe FIRST (before startRun) so we don't miss early events.
+  //    Run the subscription loop in background.
+  const subscription = client.subscribeRun(slot);
+  const blocks: ChatMessageBlock[] = [];
+  let accumulatedText = '';
+
+  const consume = (async (): Promise<void> => {
+    for await (const evt of subscription) {
+      if (evt.event === 'text') {
+        accumulatedText += evt.text;
+        // Append to last text block or create one
+        const last = blocks[blocks.length - 1];
+        if (last?.type === 'text') last.text += evt.text;
+        else blocks.push({ type: 'text', text: evt.text });
+        eventBus.publish('chat.message.chunk.text', {
+          sessionId,
+          assistantId,
+          text: evt.text,
+        });
+      } else if (evt.event === 'tool_use') {
+        blocks.push({
+          type: 'tool_use',
+          id: evt.id,
+          title: evt.title,
+          kind: evt.kind,
+          status: evt.status,
+        });
+        eventBus.publish('chat.message.chunk.tool_use', {
+          sessionId,
+          assistantId,
+          id: evt.id,
+          title: evt.title,
+          kind: evt.kind,
+          status: evt.status,
+        });
+      } else if (evt.event === 'tool_update') {
+        const tool = blocks.find((b) => b.type === 'tool_use' && b.id === evt.id);
+        if (tool && tool.type === 'tool_use') tool.status = evt.status;
+        eventBus.publish('chat.message.chunk.tool_update', {
+          sessionId,
+          assistantId,
+          id: evt.id,
+          status: evt.status,
+        });
+      } else if (evt.event === 'complete') {
+        const ts = new Date().toISOString();
+        const isError = evt.stopReason === 'failed';
+        const msg: ChatMessage = {
+          id: assistantId,
+          role: isError ? 'error' : 'assistant',
+          content: accumulatedText.trim() || (isError ? `stopped: ${evt.stopReason}` : ''),
+          blocks: blocks.length > 0 ? blocks : undefined,
+          ts,
+          status: isError ? 'error' : 'complete',
+        };
+        persistAndEmitComplete(sessionId, msg, log);
+        break;
+      }
+    }
+  })();
+
+  // 4. Start the run (fire and forget — events flow through subscription)
+  try {
+    await client.startRun(slot, userContent, 'claude');
+  } catch (err) {
+    subscription.cancel();
+    const errMsg: ChatMessage = {
+      id: assistantId,
+      role: 'error',
+      content: `startRun failed: ${err instanceof Error ? err.message : String(err)}`,
+      ts: new Date().toISOString(),
+      status: 'error',
+    };
+    persistAndEmitComplete(sessionId, errMsg, log);
+    return;
+  }
+
+  // Await subscription loop (background — but chat POST already returned 202)
+  await consume;
+
+  // 5. Clear run so slot is reusable for next turn
+  try {
+    await client.clearRun(slot);
+  } catch {
+    /* best effort */
+  }
+}
+
+function persistAndEmitComplete(sessionId: string, msg: ChatMessage, log: Logger): void {
+  const session = readSession(sessionId);
+  if (!session) return;
+  session.messages.push(msg);
+  session.lastMessageAt = msg.ts;
+  session.messageCount = session.messages.length;
+  writeSession(session);
+  eventBus.publish('chat.message.complete', {
+    sessionId,
+    assistantId: msg.id,
+    message: msg,
   });
+  if (msg.role === 'error') log.warn(`chat[${sessionId}]: ${msg.content}`);
+  else log.ok(`chat[${sessionId}]: assistant complete (${msg.content.length} chars, ${msg.blocks?.length ?? 0} blocks)`);
 }
 
 export function createChatRoute(log: Logger): Hono {
@@ -313,10 +279,17 @@ export function createChatRoute(log: Logger): Hono {
     return c.json(s);
   });
 
-  app.delete('/sessions/:id', (c) => {
+  app.delete('/sessions/:id', async (c) => {
     const id = c.req.param('id');
     const p = sessionPath(id);
     if (existsSync(p)) rmSync(p);
+    // Also stop the daemon session so ACP child process is freed
+    try {
+      const client = new DaemonClient();
+      if (await client.isRunning()) {
+        await client.stopSession(chatSlot(id)).catch(() => { /* session may not exist */ });
+      }
+    } catch { /* best effort */ }
     eventBus.publish('chat.session.deleted', { sessionId: id });
     return c.body(null, 204);
   });
@@ -324,7 +297,7 @@ export function createChatRoute(log: Logger): Hono {
   /**
    * POST messages: 非阻塞
    *   1. 持久化 user msg → 立即返回 user + assistantId (202)
-   *   2. 后台 spawn sps agent，SSE 推 chunk + complete
+   *   2. 后台走 daemon，SSE 推 chunk.text / chunk.tool_use / chunk.tool_update / complete
    */
   app.post('/sessions/:id/messages', async (c) => {
     const id = c.req.param('id');
@@ -356,7 +329,10 @@ export function createChatRoute(log: Logger): Hono {
       ts: new Date().toISOString(),
     });
 
-    streamAssistantResponse(id, assistantId, body.content, log);
+    // Fire and forget — events stream via SSE
+    streamAssistantResponse(id, assistantId, body.content, log).catch((err) => {
+      log.error(`chat[${id}] stream error: ${err instanceof Error ? err.message : String(err)}`);
+    });
 
     return c.json({ user: userMsg, assistantId }, 202);
   });
@@ -385,7 +361,9 @@ export function createChatStreamRoute(): Hono {
         const eventTypes = [
           'chat.message',
           'chat.message.pending',
-          'chat.message.chunk',
+          'chat.message.chunk.text',
+          'chat.message.chunk.tool_use',
+          'chat.message.chunk.tool_update',
           'chat.message.complete',
         ];
         const handlers: Array<{ event: string; fn: (data: unknown) => void }> = [];

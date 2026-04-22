@@ -292,13 +292,13 @@ export class AcpSdkAdapter implements ACPClient {
 
     session.activePromise
       .then((result) => {
-        session.accumulator.stopReason = result.stopReason ?? 'end_turn';
+        session.accumulator.markComplete(result.stopReason ?? 'end_turn');
         session.activePromise = null;
       })
       .catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(`[acp] Prompt failed for ${input.sessionName}: ${msg}\n`);
-        session.accumulator.stopReason = 'failed';
+        session.accumulator.markComplete('failed');
         session.activePromise = null;
       });
 
@@ -367,7 +367,7 @@ export class AcpSdkAdapter implements ACPClient {
       // resolve the prompt() call even after the agent finishes.
       const idleMs = Date.now() - new Date(acc.lastUpdateAt).getTime();
       if (idleMs > 60_000) {
-        acc.stopReason = 'end_turn';
+        acc.markComplete('end_turn');
         session.activePromise = null;
         runState = 'completed';
       } else {
@@ -382,6 +382,13 @@ export class AcpSdkAdapter implements ACPClient {
       paneText: acc.getRecentText(),
       lastSeenAt: new Date().toISOString(),
     };
+  }
+
+  subscribe(sessionName: string, listener: import('./acp-session-accumulator.js').AccumulatorListener): () => void {
+    const session = this.sessions.get(sessionName);
+    if (!session) return () => { /* noop */ };
+    session.accumulator.addListener(listener);
+    return () => session.accumulator.removeListener(listener);
   }
 
   async stopSession(input: StopSessionInput): Promise<void> {
