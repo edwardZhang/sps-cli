@@ -146,7 +146,15 @@ function streamAssistantResponse(
 
   let accumulated = '';
   let stderr = '';
+
+  // 字符级流式状态机：
+  //   lineBuffer 保存当前尚未结束的行；一旦判定为 content 行，未 emit 的尾部立即推出
+  //   判定规则：首个非空字符若是 '1' / '2' / '(' / 'W'，候选 system，等 newline 或足够 peek
+  //   其它字符直接定性为 content，立即开始逐字节推
   let lineBuffer = '';
+  let decided = false;
+  let lineIsSystem = false;
+  let emittedLen = 0;
 
   const emitChunk = (chunk: string): void => {
     if (!chunk) return;
@@ -159,14 +167,55 @@ function streamAssistantResponse(
     });
   };
 
+  const classifyPartial = (buf: string): 'system' | 'content' | 'wait' => {
+    const t = buf.trimStart();
+    if (t.length === 0) return 'wait';
+    const c = t[0];
+    if (c !== '1' && c !== '2' && c !== '(' && c !== 'W') return 'content';
+    if (t.startsWith('(node:')) return 'system';
+    if (t.startsWith('Warning:')) return 'system';
+    if (t.length < 25) return 'wait';
+    return /^\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?\s+\[(agent|setup|ACP|console|skill|worker-\d+)\]/i.test(t)
+      ? 'system'
+      : 'content';
+  };
+
+  const drainBuffer = (): void => {
+    while (true) {
+      const nl = lineBuffer.indexOf('\n');
+      if (!decided) {
+        if (nl !== -1) {
+          lineIsSystem = isSystemLine(lineBuffer.slice(0, nl));
+          decided = true;
+        } else {
+          const verdict = classifyPartial(lineBuffer);
+          if (verdict === 'wait') return;
+          lineIsSystem = verdict === 'system';
+          decided = true;
+        }
+      }
+      if (nl !== -1) {
+        if (!lineIsSystem) emitChunk(lineBuffer.slice(emittedLen, nl + 1));
+        lineBuffer = lineBuffer.slice(nl + 1);
+        emittedLen = 0;
+        decided = false;
+        lineIsSystem = false;
+      } else {
+        if (!lineIsSystem && lineBuffer.length > emittedLen) {
+          emitChunk(lineBuffer.slice(emittedLen));
+          emittedLen = lineBuffer.length;
+        }
+        return;
+      }
+    }
+  };
+
   child.stdout?.on('data', (d: Buffer) => {
     const raw = d.toString('utf-8');
     const cleaned = cleanAnsi(raw);
+    if (!cleaned) return;
     lineBuffer += cleaned;
-    const lines = lineBuffer.split('\n');
-    lineBuffer = lines.pop() ?? '';
-    const keep = lines.filter((line) => !isSystemLine(line));
-    if (keep.length > 0) emitChunk(keep.join('\n') + '\n');
+    drainBuffer();
   });
 
   child.stderr?.on('data', (d: Buffer) => {
@@ -174,7 +223,15 @@ function streamAssistantResponse(
   });
 
   child.on('close', (code) => {
-    if (lineBuffer && !isSystemLine(lineBuffer)) emitChunk(lineBuffer);
+    if (lineBuffer) {
+      if (!decided) {
+        lineIsSystem = isSystemLine(lineBuffer);
+        decided = true;
+      }
+      if (!lineIsSystem && lineBuffer.length > emittedLen) {
+        emitChunk(lineBuffer.slice(emittedLen));
+      }
+    }
 
     const session = readSession(sessionId);
     if (!session) return;
