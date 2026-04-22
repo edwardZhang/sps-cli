@@ -24,8 +24,16 @@ export function ChatPage() {
     enabled: !!sessionId,
   });
 
-  // 流式 pending 消息：当 chat.message.pending 到达后存在这里，chunk 累积，complete 后并入 messages
-  const [pending, setPending] = useState<{ id: string; content: string } | null>(null);
+  // 流式 pending：SSE 把服务端累积的 target 塞进来，drain loop 按节奏把 displayed 推向 target
+  // 服务端 complete 时只更新 finalMessage + done 标记，实际 commit 等 drain 追齐再触发
+  type PendingState = {
+    id: string;
+    target: string;
+    displayed: string;
+    done: boolean;
+    finalMessage: ChatMessage | null;
+  };
+  const [pending, setPending] = useState<PendingState | null>(null);
 
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -74,13 +82,19 @@ export function ChatPage() {
           sessionId: string;
           assistantId: string;
         };
-        setPending({ id: data.assistantId, content: '' });
+        setPending({
+          id: data.assistantId,
+          target: '',
+          displayed: '',
+          done: false,
+          finalMessage: null,
+        });
       } catch {
         /* ignore */
       }
     });
 
-    // 3. assistant chunk（累积）
+    // 3. assistant chunk → 只更新 target，drain loop 负责推进 displayed
     es.addEventListener('chat.message.chunk', (ev) => {
       try {
         const data = JSON.parse((ev as MessageEvent).data) as {
@@ -90,7 +104,7 @@ export function ChatPage() {
         };
         setPending((prev) =>
           prev && prev.id === data.assistantId
-            ? { id: prev.id, content: data.accumulated }
+            ? { ...prev, target: data.accumulated }
             : prev,
         );
       } catch {
@@ -98,7 +112,7 @@ export function ChatPage() {
       }
     });
 
-    // 4. assistant complete → 清 pending + 把 message 并入 cache
+    // 4. assistant complete → 标记 done + 存 finalMessage，实际 commit 等 drain 追齐
     es.addEventListener('chat.message.complete', (ev) => {
       try {
         const data = JSON.parse((ev as MessageEvent).data) as {
@@ -106,23 +120,16 @@ export function ChatPage() {
           assistantId: string;
           message: ChatMessage;
         };
-        setPending((prev) => (prev && prev.id === data.assistantId ? null : prev));
-        qc.setQueryData<ChatSessionDetail | undefined>(
-          ['chat-session', sessionId],
-          (old) => {
-            if (!old) return old;
-            const exists = old.messages.some((m) => m.id === data.message.id);
-            if (exists) return old;
-            return {
-              ...old,
-              messages: [...old.messages, data.message],
-              lastMessageAt: data.message.ts,
-              messageCount: old.messageCount + 1,
-            };
-          },
+        setPending((prev) =>
+          prev && prev.id === data.assistantId
+            ? {
+                ...prev,
+                target: data.message.content || prev.target,
+                done: true,
+                finalMessage: data.message,
+              }
+            : prev,
         );
-        qc.invalidateQueries({ queryKey: ['chat-sessions'] });
-        setSending(false);
       } catch {
         /* ignore */
       }
@@ -130,6 +137,46 @@ export function ChatPage() {
 
     return () => es.close();
   }, [sessionId, qc]);
+
+  // drain loop: 25ms 一 tick，自适应步长把 displayed 推向 target
+  //   diff=600 → step=15 → ~1s 追齐
+  //   diff=20  → step=1  → ~500ms 追齐
+  //   追齐且服务端已 done → commit finalMessage + 清 pending
+  useEffect(() => {
+    if (!pending) return;
+    if (pending.displayed.length >= pending.target.length) {
+      if (pending.done && pending.finalMessage) {
+        const final = pending.finalMessage;
+        qc.setQueryData<ChatSessionDetail | undefined>(
+          ['chat-session', sessionId],
+          (old) => {
+            if (!old) return old;
+            if (old.messages.some((m) => m.id === final.id)) return old;
+            return {
+              ...old,
+              messages: [...old.messages, final],
+              lastMessageAt: final.ts,
+              messageCount: old.messageCount + 1,
+            };
+          },
+        );
+        qc.invalidateQueries({ queryKey: ['chat-sessions'] });
+        setPending(null);
+        setSending(false);
+      }
+      return;
+    }
+    const timer = setTimeout(() => {
+      setPending((prev) => {
+        if (!prev) return prev;
+        const diff = prev.target.length - prev.displayed.length;
+        if (diff <= 0) return prev;
+        const step = Math.max(1, Math.ceil(diff / 40));
+        return { ...prev, displayed: prev.target.slice(0, prev.displayed.length + step) };
+      });
+    }, 25);
+    return () => clearTimeout(timer);
+  }, [pending, qc, sessionId]);
 
   // 自动滚底
   useEffect(() => {
@@ -285,7 +332,7 @@ export function ChatPage() {
                   msg={{
                     id: pending.id,
                     role: 'assistant',
-                    content: pending.content,
+                    content: pending.displayed,
                     ts: new Date().toISOString(),
                     status: 'streaming',
                   }}
