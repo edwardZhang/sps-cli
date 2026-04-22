@@ -29,6 +29,12 @@ export interface TaskBackend {
   create(title: string, desc: string, state: CardState): Promise<Card>;
   /** v0.42.0+: set the `skills` frontmatter field on a card (replaces any existing value). */
   setSkills(seq: string, skills: string[]): Promise<void>;
+  /** v0.49.7+: update title + rename file. */
+  setTitle(seq: string, title: string): Promise<void>;
+  /** v0.49.7+: replace body's "## 描述" section. */
+  setDescription(seq: string, desc: string): Promise<void>;
+  /** v0.49.7+: replace entire labels array (dedupe + drop empty). */
+  setLabels(seq: string, labels: string[]): Promise<void>;
   checklistCreate(seq: string, items: string[]): Promise<void>;
   checklistList(seq: string): Promise<{ id: string; text: string; checked: boolean }[]>;
   checklistCheck(seq: string, itemId: string): Promise<void>;

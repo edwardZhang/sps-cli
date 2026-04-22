@@ -75,6 +75,28 @@ export async function moveCard(project: string, seq: number, state: string): Pro
   }
 }
 
+export interface CardPatch {
+  title?: string;
+  description?: string;
+  skills?: string[];
+  labels?: string[];
+  state?: string;
+}
+
+/** v0.49.7 — generic PATCH for card edit; sends only provided fields. */
+export async function updateCard(project: string, seq: number, patch: CardPatch): Promise<{ ok: boolean; noop?: boolean }> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(project)}/cards/${seq}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
 export function startPipeline(project: string) {
   return postJson(`/api/projects/${encodeURIComponent(project)}/pipeline/start`);
 }

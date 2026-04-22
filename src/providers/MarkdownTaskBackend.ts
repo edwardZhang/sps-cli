@@ -159,6 +159,56 @@ export class MarkdownTaskBackend implements TaskBackend {
     this.writeFile(filePath, frontmatter, body);
   }
 
+  // ─── Title / Description / Labels (v0.49.7 edit support) ─────
+
+  /**
+   * 更新 title：frontmatter + 文件名 slug 同步。文件名规则跟 create 一致。
+   */
+  async setTitle(seq: string, title: string): Promise<void> {
+    const trimmed = title.trim();
+    if (!trimmed) throw new Error('title cannot be empty');
+    const { filePath, currentState } = this.findCardFile(seq);
+    const { frontmatter, body } = this.parseFile(filePath);
+    frontmatter.title = trimmed;
+    this.writeFile(filePath, frontmatter, body);
+
+    // Rename file to match new slug
+    const slug = trimmed
+      .toLowerCase()
+      .replace(/[^a-z0-9一-鿿]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40);
+    const newFilename = `${seq}-${slug || 'task'}.md`;
+    const newPath = resolve(resolve(filePath, '..'), newFilename);
+    if (newPath !== filePath) {
+      renameSync(filePath, newPath);
+    }
+    void currentState;
+  }
+
+  /**
+   * 更新 description —— 替换 body 里 "## 描述" 段的内容。
+   * 如果找不到描述段就整体替换 body（罕见情况，保护性处理）。
+   * 保留其它 section（检查清单、日志）不动。
+   */
+  async setDescription(seq: string, desc: string): Promise<void> {
+    const { filePath } = this.findCardFile(seq);
+    const { frontmatter, body } = this.parseFile(filePath);
+    const newBody = replaceDescriptionSection(body, desc);
+    this.writeFile(filePath, frontmatter, newBody);
+  }
+
+  /**
+   * 全量替换 labels。调用方负责构造最终数组（不要再叠加 AI-PIPELINE 等，
+   * 这是用户自定义层；工作流标签由 stage engine 管理）。
+   */
+  async setLabels(seq: string, labels: string[]): Promise<void> {
+    const { filePath } = this.findCardFile(seq);
+    const { frontmatter, body } = this.parseFile(filePath);
+    frontmatter.labels = [...new Set(labels.map((l) => l.trim()).filter(Boolean))];
+    this.writeFile(filePath, frontmatter, body);
+  }
+
   // ─── Claim ────────────────────────────────────────────────────
 
   async claim(seq: string, workerSlot: string): Promise<void> {
@@ -544,4 +594,34 @@ export class MarkdownTaskBackend implements TaskBackend {
     writeFileSync(this.seqFile, `${next}\n`);
     return next;
   }
+}
+
+/**
+ * v0.49.7：在 body 里定位 "## 描述" section 并替换其内容。保留前后 section。
+ * 如果没找到 "## 描述"，在头部插入一个。
+ */
+function replaceDescriptionSection(body: string, newDesc: string): string {
+  const trimmed = newDesc.trim() || '(无描述)';
+  const lines = body.split('\n');
+
+  // Find "## 描述" heading line
+  const descIdx = lines.findIndex((l) => /^##\s+描述\s*$/.test(l));
+  if (descIdx === -1) {
+    // Prepend
+    return `## 描述\n\n${trimmed}\n\n${body}`;
+  }
+
+  // Find next heading after 描述 (start from descIdx+1)
+  let nextIdx = lines.length;
+  for (let i = descIdx + 1; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i] ?? '')) {
+      nextIdx = i;
+      break;
+    }
+  }
+
+  // Rebuild: lines before+including "## 描述", blank line, new desc, blank line, rest
+  const before = lines.slice(0, descIdx + 1);
+  const after = lines.slice(nextIdx);
+  return [...before, '', trimmed, '', ...after].join('\n');
 }

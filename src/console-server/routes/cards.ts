@@ -91,39 +91,82 @@ export function createCardsRoute(): Hono {
 
   /**
    * PATCH /api/projects/:project/cards/:seq
-   *   Body: { state: "Backlog" | "Inprogress" | ... }
-   *   用于看板拖拽换列。调 MarkdownTaskBackend.move 搬 md 文件到新 state 目录。
+   *   Body: 任意字段组合（至少一个）
+   *     { state?: CardState }        — 拖拽换列（搬 md 到新目录）
+   *     { title?: string }           — 改标题 + 重命名文件
+   *     { description?: string }     — 替换 body 的 "## 描述" 段
+   *     { skills?: string[] }        — 全量替换 frontmatter.skills
+   *     { labels?: string[] }        — 全量替换 frontmatter.labels
+   *   按字段顺序依次应用；任何一步失败返回 500 + detail。
    */
   app.patch('/:project/cards/:seq', async (c) => {
     const project = c.req.param('project');
     const seq = c.req.param('seq');
-    const body = (await c.req.json().catch(() => null)) as { state?: string } | null;
-    if (!body?.state || typeof body.state !== 'string') {
-      return c.json({ type: 'validation', title: 'state required', status: 422 }, 422);
+    const body = (await c.req.json().catch(() => null)) as {
+      state?: string;
+      title?: string;
+      description?: string;
+      skills?: string[];
+      labels?: string[];
+    } | null;
+    if (!body || Object.keys(body).length === 0) {
+      return c.json({ type: 'validation', title: 'no fields to update', status: 422 }, 422);
     }
-    // Canonical states 白名单，防手贱 / 注入
-    const ALLOWED = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'Review', 'QA', 'Done', 'Canceled'];
-    if (!ALLOWED.includes(body.state)) {
+
+    const ALLOWED_STATES = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'Review', 'QA', 'Done', 'Canceled'];
+    if (body.state !== undefined && (typeof body.state !== 'string' || !ALLOWED_STATES.includes(body.state))) {
       return c.json(
-        { type: 'validation', title: 'invalid state', status: 422, detail: `allowed: ${ALLOWED.join(', ')}` },
+        { type: 'validation', title: 'invalid state', status: 422, detail: `allowed: ${ALLOWED_STATES.join(', ')}` },
         422,
       );
     }
+    if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
+      return c.json({ type: 'validation', title: 'title cannot be empty', status: 422 }, 422);
+    }
+    if (body.skills !== undefined && !Array.isArray(body.skills)) {
+      return c.json({ type: 'validation', title: 'skills must be array', status: 422 }, 422);
+    }
+    if (body.labels !== undefined && !Array.isArray(body.labels)) {
+      return c.json({ type: 'validation', title: 'labels must be array', status: 422 }, 422);
+    }
 
-    // 动态 import 避免顶层循环依赖
     try {
       const { ProjectContext } = await import('../../core/context.js');
       const { createTaskBackend } = await import('../../providers/registry.js');
       const ctx = ProjectContext.load(project);
       const backend = createTaskBackend(ctx.config);
       await backend.bootstrap();
-      await backend.move(seq, body.state as 'Planning' | 'Backlog' | 'Todo' | 'Inprogress' | 'Review' | 'QA' | 'Done' | 'Canceled');
-      return c.json({ ok: true, seq: Number(seq), state: body.state });
+
+      // Apply in this order:
+      //   1) title (renames file) — do early so subsequent reads find the new path
+      //   2) description
+      //   3) skills
+      //   4) labels
+      //   5) state (move, last so other edits write to the original location first)
+      if (body.title !== undefined) {
+        await backend.setTitle(seq, body.title);
+      }
+      if (body.description !== undefined) {
+        await backend.setDescription(seq, body.description);
+      }
+      if (body.skills !== undefined) {
+        await backend.setSkills(seq, body.skills.filter((s) => typeof s === 'string'));
+      }
+      if (body.labels !== undefined) {
+        await backend.setLabels(seq, body.labels.filter((l) => typeof l === 'string'));
+      }
+      if (body.state !== undefined) {
+        await backend.move(
+          seq,
+          body.state as 'Planning' | 'Backlog' | 'Todo' | 'Inprogress' | 'Review' | 'QA' | 'Done' | 'Canceled',
+        );
+      }
+      return c.json({ ok: true, seq: Number(seq) });
     } catch (err) {
       return c.json(
         {
           type: 'internal',
-          title: 'move failed',
+          title: 'patch failed',
           status: 500,
           detail: err instanceof Error ? err.message : String(err),
         },
