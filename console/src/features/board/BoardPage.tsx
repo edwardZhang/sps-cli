@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Play, Square, RotateCcw, Plus, Search, Filter, X, ChevronDown } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Play, Square, RotateCcw, Plus, Search, Filter, X, ChevronDown, Loader2 } from 'lucide-react';
 import { listProjects } from '../../shared/api/projects';
 import {
   listCards,
@@ -24,6 +24,18 @@ const COLUMNS: Array<{ state: string; label: string; bg: string }> = [
   { state: 'Done',        label: 'Done',        bg: 'var(--color-accent-mint)' },
 ];
 
+// v0.49.4：记住上次打开的看板项目
+const LAST_BOARD_KEY = 'sps-console:last-board-project';
+
+function loadLastProject(): string | null {
+  if (typeof window === 'undefined') return null;
+  try { return localStorage.getItem(LAST_BOARD_KEY); } catch { return null; }
+}
+function saveLastProject(name: string): void {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(LAST_BOARD_KEY, name); } catch { /* quota */ }
+}
+
 export function BoardPage() {
   const [params, setParams] = useSearchParams();
   const project = params.get('project');
@@ -31,7 +43,7 @@ export function BoardPage() {
   const [keyword, setKeyword] = useState('');
   const [skillFilter, setSkillFilter] = useState<Set<string>>(() => new Set());
   const [labelFilter, setLabelFilter] = useState<Set<string>>(() => new Set());
-  const { confirm, prompt } = useDialog();
+  const { confirm, prompt, alert } = useDialog();
 
   useProjectStream(project);
 
@@ -52,6 +64,65 @@ export function BoardPage() {
   const setProject = (name: string): void => {
     setParams({ project: name });
   };
+
+  // v0.49.4: 进 /board 没 ?project= 且上次有记录 → 自动恢复
+  useEffect(() => {
+    if (project) {
+      saveLastProject(project);
+      return;
+    }
+    const last = loadLastProject();
+    if (last && projectsQ.data?.data.some((p) => p.name === last)) {
+      setParams({ project: last }, { replace: true });
+    }
+  }, [project, projectsQ.data, setParams]);
+
+  // ── v0.49.4 Mutations with explicit error handling ──
+  const startMutation = useMutation({
+    mutationFn: () => startPipeline(project!),
+    onSuccess: () => {
+      refetchAll();
+    },
+    onError: (err) => {
+      void alert({
+        title: '启动 pipeline 失败',
+        body: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: () => stopPipeline(project!),
+    onSuccess: () => refetchAll(),
+    onError: (err) => {
+      void alert({
+        title: '停止 pipeline 失败',
+        body: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: () => resetPipeline(project!, { all: true }),
+    onSuccess: () => refetchAll(),
+    onError: (err) => {
+      void alert({
+        title: '重置失败',
+        body: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
+
+  const createCardMutation = useMutation({
+    mutationFn: (title: string) => createCard(project!, title),
+    onSuccess: () => refetchAll(),
+    onError: (err) => {
+      void alert({
+        title: '新建卡片失败',
+        body: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
 
   const cards = cardsQ.data?.data ?? [];
 
@@ -139,18 +210,34 @@ export function BoardPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <ProjectPicker current={project} onChange={setProject} />
           {running ? (
-            <button className="nb-btn nb-btn-danger" onClick={async () => {
-              await stopPipeline(project);
-              refetchAll();
-            }} type="button">
-              <Square size={14} strokeWidth={3} /> 停止
+            <button
+              className="nb-btn nb-btn-danger"
+              onClick={() => stopMutation.mutate()}
+              disabled={stopMutation.isPending}
+              type="button"
+              aria-label="停止 pipeline"
+            >
+              {stopMutation.isPending ? (
+                <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+              ) : (
+                <Square size={14} strokeWidth={3} />
+              )}
+              停止
             </button>
           ) : (
-            <button className="nb-btn nb-btn-primary" onClick={async () => {
-              await startPipeline(project);
-              refetchAll();
-            }} type="button">
-              <Play size={14} strokeWidth={3} /> 启动 pipeline
+            <button
+              className="nb-btn nb-btn-primary"
+              onClick={() => startMutation.mutate()}
+              disabled={startMutation.isPending}
+              type="button"
+              aria-label="启动 pipeline"
+            >
+              {startMutation.isPending ? (
+                <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+              ) : (
+                <Play size={14} strokeWidth={3} />
+              )}
+              启动 pipeline
             </button>
           )}
           <button
@@ -164,11 +251,16 @@ export function BoardPage() {
                 danger: true,
               });
               if (!ok) return;
-              await resetPipeline(project, { all: true });
-              refetchAll();
+              resetMutation.mutate();
             }}
+            disabled={resetMutation.isPending}
           >
-            <RotateCcw size={14} strokeWidth={2.5} /> 重置
+            {resetMutation.isPending ? (
+              <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+            ) : (
+              <RotateCcw size={14} strokeWidth={2.5} />
+            )}
+            重置
           </button>
           <button
             className="nb-btn nb-btn-mint"
@@ -180,11 +272,16 @@ export function BoardPage() {
                 placeholder: '例如：接入 GitHub OAuth',
               });
               if (!title) return;
-              await createCard(project, title);
-              refetchAll();
+              createCardMutation.mutate(title);
             }}
+            disabled={createCardMutation.isPending}
           >
-            <Plus size={14} strokeWidth={3} /> 新卡片
+            {createCardMutation.isPending ? (
+              <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+            ) : (
+              <Plus size={14} strokeWidth={3} />
+            )}
+            新卡片
           </button>
         </div>
       </header>
