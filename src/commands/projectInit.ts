@@ -149,13 +149,30 @@ function installProjectSkills(projectDir: string, log: Logger): void {
   }
 }
 
+/**
+ * Non-interactive init options. When provided to `executeProjectInit`, skips
+ * the readline prompts and uses these values directly. Used by the Console
+ * POST /api/projects endpoint so the whole CLI flow can run from a web form.
+ */
+export interface ProjectInitOpts {
+  projectDir: string;
+  mergeBranch: string;
+  maxWorkers: string;
+  gitlabProject?: string;
+  gitlabProjectId?: string;
+  matrixRoomId?: string;
+}
+
 export async function executeProjectInit(
   project: string,
   flags: Record<string, boolean>,
+  nonInteractive?: ProjectInitOpts,
 ): Promise<void> {
   const log = new Logger('project-init', project);
 
   if (!project) {
+    // CLI prints usage & exits; API never reaches here since it validates upfront
+    if (nonInteractive) throw new Error('project name required');
     log.error('Usage: sps project init <project>');
     process.exit(2);
   }
@@ -163,6 +180,7 @@ export async function executeProjectInit(
   const instanceDir = resolve(HOME, '.coral', 'projects', project);
 
   if (existsSync(instanceDir) && !flags.force) {
+    if (nonInteractive) throw new Error(`Project already exists: ${project}`);
     log.error(`Project directory already exists: ${instanceDir}`);
     log.info('Use --force to overwrite templates (conf will NOT be overwritten)');
     process.exit(1);
@@ -183,37 +201,53 @@ export async function executeProjectInit(
     }
   }
 
-  // Generate conf — interactive if new, skip if exists
+  // Generate conf — interactive if new (and no nonInteractive opts), skip if exists
   const confDst = resolve(instanceDir, 'conf');
   if (!existsSync(confDst) || flags.force) {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const ask = (question: string, defaultValue?: string): Promise<string> => {
-      const suffix = defaultValue ? ` [${defaultValue}]` : '';
-      return new Promise((res) => {
-        rl.question(`  ${question}${suffix}: `, (answer) => {
-          res(answer.trim() || defaultValue || '');
+    let projectDir: string;
+    let mergeBranch: string;
+    let maxWorkers: string;
+    let gitlabProject: string;
+    let gitlabProjectId: string;
+    let matrixRoomId: string;
+
+    if (nonInteractive) {
+      projectDir = nonInteractive.projectDir;
+      mergeBranch = nonInteractive.mergeBranch;
+      maxWorkers = nonInteractive.maxWorkers;
+      gitlabProject = nonInteractive.gitlabProject ?? '';
+      gitlabProjectId = nonInteractive.gitlabProjectId ?? '';
+      matrixRoomId = nonInteractive.matrixRoomId ?? '';
+    } else {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const ask = (question: string, defaultValue?: string): Promise<string> => {
+        const suffix = defaultValue ? ` [${defaultValue}]` : '';
+        return new Promise((res) => {
+          rl.question(`  ${question}${suffix}: `, (answer) => {
+            res(answer.trim() || defaultValue || '');
+          });
         });
-      });
-    };
+      };
 
-    console.log(`\n  Configure project: ${project}`);
-    console.log('  Press Enter to accept default value.\n');
+      console.log(`\n  Configure project: ${project}`);
+      console.log('  Press Enter to accept default value.\n');
 
-    // Required
-    const projectDir = await ask('Repository path', resolve(HOME, 'projects', project));
-    const mergeBranch = await ask('Merge target branch', 'main');
-    const maxWorkers = await ask('Max concurrent workers', '1');
+      // Required
+      projectDir = await ask('Repository path', resolve(HOME, 'projects', project));
+      mergeBranch = await ask('Merge target branch', 'main');
+      maxWorkers = await ask('Max concurrent workers', '1');
 
-    // Git remote (optional)
-    console.log('\n  ── Git Remote (optional, leave blank to skip) ──');
-    const gitlabProject = await ask('Git remote project path (e.g. user/repo)', '');
-    const gitlabProjectId = gitlabProject ? await ask('GitLab project ID (number, blank if GitHub)', '') : '';
+      // Git remote (optional)
+      console.log('\n  ── Git Remote (optional, leave blank to skip) ──');
+      gitlabProject = await ask('Git remote project path (e.g. user/repo)', '');
+      gitlabProjectId = gitlabProject ? await ask('GitLab project ID (number, blank if GitHub)', '') : '';
 
-    // Notification
-    console.log('\n  ── Notifications ──');
-    const matrixRoomId = await ask('Matrix room ID (blank to use global)', '');
+      // Notification
+      console.log('\n  ── Notifications ──');
+      matrixRoomId = await ask('Matrix room ID (blank to use global)', '');
 
-    rl.close();
+      rl.close();
+    }
 
     // Build conf — only the user's actual values (clean, minimal)
     const confLines: string[] = [

@@ -2,6 +2,8 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './shared/components/AppShell';
 import { ErrorBoundary } from './shared/components/ErrorBoundary';
 import { ProjectsPage } from './features/projects/ProjectsPage';
+import { NewProjectPage } from './features/projects/NewProjectPage';
+import { ProjectDetailPage } from './features/projects/ProjectDetailPage';
 import { BoardPage } from './features/board/BoardPage';
 import { WorkersPage } from './features/workers/WorkersPage';
 import { LogsPage } from './features/logs/LogsPage';
@@ -17,6 +19,8 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route index element={<Navigate to="/board" replace />} />
           <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/projects/new" element={<NewProjectPage />} />
+          <Route path="/projects/:name" element={<ProjectDetailPage />} />
           <Route path="/board" element={<BoardPage />} />
           <Route path="/workers" element={<WorkersPage />} />
           <Route path="/logs" element={<LogsPage />} />

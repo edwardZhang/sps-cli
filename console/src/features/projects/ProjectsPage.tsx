@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Activity, Plus, Users } from 'lucide-react';
 import { listProjects, type ProjectSummary } from '../../shared/api/projects';
 
 export function ProjectsPage() {
+  const nav = useNavigate();
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['projects'],
     queryFn: listProjects,
@@ -29,7 +30,12 @@ export function ProjectsPage() {
             <Activity size={16} strokeWidth={2.5} />
             刷新
           </button>
-          <button className="nb-btn nb-btn-primary" type="button">
+          <button
+            className="nb-btn nb-btn-primary"
+            type="button"
+            onClick={() => nav('/projects/new')}
+            aria-label="新建项目"
+          >
             <Plus size={16} strokeWidth={3} />
             新建项目
           </button>
@@ -74,7 +80,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 
   return (
     <Link
-      to={`/board?project=${encodeURIComponent(project.name)}`}
+      to={`/projects/${encodeURIComponent(project.name)}`}
       className="nb-card nb-card-interactive block no-underline text-[var(--color-text)]"
     >
       <div className="flex items-center justify-between mb-3">
