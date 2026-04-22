@@ -55,8 +55,24 @@ export function launchCard(project: string, seq: number) {
   return postJson(`/api/projects/${encodeURIComponent(project)}/cards/${seq}/launch`);
 }
 
-export function createCard(project: string, title: string) {
-  return postJson(`/api/projects/${encodeURIComponent(project)}/cards`, { title });
+export function createCard(
+  project: string,
+  input: { title: string; description?: string; skills?: string[] } | string,
+) {
+  const body = typeof input === 'string' ? { title: input } : input;
+  return postJson(`/api/projects/${encodeURIComponent(project)}/cards`, body);
+}
+
+export async function moveCard(project: string, seq: number, state: string): Promise<void> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(project)}/cards/${seq}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
 }
 
 export function startPipeline(project: string) {

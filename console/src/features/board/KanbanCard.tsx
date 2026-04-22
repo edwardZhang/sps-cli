@@ -5,10 +5,12 @@ export function KanbanCard({
   card,
   onClick,
   done,
+  draggable,
 }: {
   card: CardT;
   onClick: () => void;
   done?: boolean;
+  draggable?: boolean;
 }) {
   const running = card.labels.some((l) => l.startsWith('STARTED-')) && !done;
   return (
@@ -20,6 +22,11 @@ export function KanbanCard({
           onClick();
         }
       }}
+      draggable={draggable}
+      onDragStart={(e) => {
+        e.dataTransfer.setData('application/x-sps-card-seq', String(card.seq));
+        e.dataTransfer.effectAllowed = 'move';
+      }}
       tabIndex={0}
       role="button"
       aria-label={`Card #${card.seq}: ${card.title}`}
@@ -30,6 +37,7 @@ export function KanbanCard({
         'hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[5px_5px_0_var(--color-text)]',
         'focus:outline-none focus-visible:ring-[3px] focus-visible:ring-offset-2 focus-visible:ring-[var(--color-text)]',
         done ? 'opacity-60' : '',
+        draggable ? 'active:cursor-grabbing' : '',
       ].join(' ')}
     >
       <div className="flex items-center justify-between gap-2 mb-2">

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play, Square, RotateCcw, Plus, Search, Filter, X, ChevronDown, Loader2 } from 'lucide-react';
+import { NewCardDialog } from './NewCardDialog';
 import { listProjects } from '../../shared/api/projects';
 import {
   listCards,
@@ -9,6 +10,7 @@ import {
   stopPipeline,
   resetPipeline,
   createCard,
+  moveCard,
   type Card as CardT,
 } from '../../shared/api/cards';
 import { useProjectStream } from '../../shared/hooks/useProjectStream';
@@ -43,7 +45,7 @@ export function BoardPage() {
   const [keyword, setKeyword] = useState('');
   const [skillFilter, setSkillFilter] = useState<Set<string>>(() => new Set());
   const [labelFilter, setLabelFilter] = useState<Set<string>>(() => new Set());
-  const { confirm, prompt, alert } = useDialog();
+  const { confirm, alert } = useDialog();
 
   useProjectStream(project);
 
@@ -113,14 +115,48 @@ export function BoardPage() {
     },
   });
 
+  const [newCardOpen, setNewCardOpen] = useState(false);
+
   const createCardMutation = useMutation({
-    mutationFn: (title: string) => createCard(project!, title),
-    onSuccess: () => refetchAll(),
+    mutationFn: (input: { title: string; description: string; skills: string[] }) =>
+      createCard(project!, input),
+    onSuccess: () => {
+      refetchAll();
+      setNewCardOpen(false);
+    },
     onError: (err) => {
       void alert({
         title: '新建卡片失败',
         body: err instanceof Error ? err.message : String(err),
       });
+    },
+  });
+
+  const moveCardMutation = useMutation({
+    mutationFn: ({ seq, state }: { seq: number; state: string }) =>
+      moveCard(project!, seq, state),
+    onMutate: async ({ seq, state }) => {
+      // Optimistic: 立即在 cache 里改 card state
+      await qc.cancelQueries({ queryKey: ['cards', project] });
+      const prev = qc.getQueryData<{ data: CardT[] }>(['cards', project]);
+      if (prev) {
+        qc.setQueryData<{ data: CardT[] }>(['cards', project], {
+          ...prev,
+          data: prev.data.map((c) => (c.seq === seq ? { ...c, state } : c)),
+        });
+      }
+      return { prev };
+    },
+    onError: (err, _vars, ctx) => {
+      // 回滚
+      if (ctx?.prev) qc.setQueryData(['cards', project], ctx.prev);
+      void alert({
+        title: '移动卡片失败',
+        body: err instanceof Error ? err.message : String(err),
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['cards', project] });
     },
   });
 
@@ -209,37 +245,37 @@ export function BoardPage() {
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <ProjectPicker current={project} onChange={setProject} />
-          {running ? (
-            <button
-              className="nb-btn nb-btn-danger"
-              onClick={() => stopMutation.mutate()}
-              disabled={stopMutation.isPending}
-              type="button"
-              aria-label="停止 pipeline"
-            >
-              {stopMutation.isPending ? (
-                <Loader2 size={14} strokeWidth={3} className="animate-spin" />
-              ) : (
-                <Square size={14} strokeWidth={3} />
-              )}
-              停止
-            </button>
-          ) : (
-            <button
-              className="nb-btn nb-btn-primary"
-              onClick={() => startMutation.mutate()}
-              disabled={startMutation.isPending}
-              type="button"
-              aria-label="启动 pipeline"
-            >
-              {startMutation.isPending ? (
-                <Loader2 size={14} strokeWidth={3} className="animate-spin" />
-              ) : (
-                <Play size={14} strokeWidth={3} />
-              )}
-              启动 pipeline
-            </button>
-          )}
+          {/* v0.49.6: start 和 stop 始终并排显示，按当前状态互斥 disable */}
+          <button
+            className="nb-btn nb-btn-primary"
+            onClick={() => startMutation.mutate()}
+            disabled={running || startMutation.isPending}
+            type="button"
+            aria-label="启动 pipeline"
+            title={running ? 'pipeline 正在运行' : '启动 pipeline'}
+          >
+            {startMutation.isPending ? (
+              <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+            ) : (
+              <Play size={14} strokeWidth={3} />
+            )}
+            启动
+          </button>
+          <button
+            className="nb-btn nb-btn-danger"
+            onClick={() => stopMutation.mutate()}
+            disabled={!running || stopMutation.isPending}
+            type="button"
+            aria-label="停止 pipeline"
+            title={running ? '停止 pipeline' : 'pipeline 未在运行'}
+          >
+            {stopMutation.isPending ? (
+              <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+            ) : (
+              <Square size={14} strokeWidth={3} />
+            )}
+            停止
+          </button>
           <button
             className="nb-btn nb-btn-yellow"
             type="button"
@@ -265,15 +301,7 @@ export function BoardPage() {
           <button
             className="nb-btn nb-btn-mint"
             type="button"
-            onClick={async () => {
-              const title = await prompt({
-                title: '新建卡片',
-                body: '输入卡片标题，会作为 markdown 文件的 title。',
-                placeholder: '例如：接入 GitHub OAuth',
-              });
-              if (!title) return;
-              createCardMutation.mutate(title);
-            }}
+            onClick={() => setNewCardOpen(true)}
             disabled={createCardMutation.isPending}
           >
             {createCardMutation.isPending ? (
@@ -349,6 +377,7 @@ export function BoardPage() {
               bg={col.bg}
               cards={filtered.filter(columnFilter(col.state))}
               onCardClick={(card) => setDetailSeq(card.seq)}
+              onDropCard={(seq) => moveCardMutation.mutate({ seq, state: col.state })}
             />
           ))}
         </div>
@@ -360,6 +389,15 @@ export function BoardPage() {
           seq={detailSeq}
           onClose={() => setDetailSeq(null)}
           onChanged={refetchAll}
+        />
+      )}
+
+      {newCardOpen && (
+        <NewCardDialog
+          project={project}
+          isPending={createCardMutation.isPending}
+          onCancel={() => setNewCardOpen(false)}
+          onCreate={(input) => createCardMutation.mutate(input)}
         />
       )}
 
