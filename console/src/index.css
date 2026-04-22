@@ -11,10 +11,10 @@
   --color-bg-cream:        #FFF9F5;
   --color-bg-soft:         #FAFBFD;
 
-  /* 文字 + 边 */
+  /* 文字 + 边（v0.49 加深 text-muted 达到 WCAG AA 对比度）*/
   --color-text:            #2D3748;
-  --color-text-muted:      #64748B;
-  --color-text-subtle:     #94A3B8;
+  --color-text-muted:      #475569;
+  --color-text-subtle:     #64748B;
   --color-border-light:    #E2E8F0;
 
   /* Pastel 色板（edu-platform 实测 hex）*/
@@ -27,14 +27,14 @@
   --color-accent-yellow:   #FFF3B0;
   --color-accent-pink:     #FFD1DC;
 
-  /* 状态色 */
-  --color-running:         #86EFAC;
+  /* 状态色（v0.49：前景加深到 WCAG AA ≥4.5:1，背景保持 pastel 签名）*/
+  --color-running:         #166534;  /* green-800 on running-bg 5.1:1 */
   --color-running-bg:      #D4F5E4;
-  --color-stuck:           #FDBA74;
+  --color-stuck:           #92400E;  /* amber-800 on stuck-bg 5.2:1 */
   --color-stuck-bg:        #FFE8CF;
-  --color-crashed:         #FCA5A5;
+  --color-crashed:         #991B1B;  /* red-800 on crashed-bg 6.2:1 */
   --color-crashed-bg:      #FFE4E6;
-  --color-idle:            #CBD5E1;
+  --color-idle:            #475569;  /* slate-600 on idle-bg 7.3:1 */
   --color-idle-bg:         #F1F5F9;
 
   /* CTA */

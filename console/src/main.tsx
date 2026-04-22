@@ -4,7 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { DialogProvider } from './shared/components/DialogProvider';
+import { installGlobalErrorReporters } from './shared/components/ErrorBoundary';
 import './index.css';
+
+// v0.49 front-end error telemetry — hook window.error + unhandledrejection
+installGlobalErrorReporters();
 
 const queryClient = new QueryClient({
   defaultOptions: {

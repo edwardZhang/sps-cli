@@ -395,28 +395,31 @@ export function ChatPage() {
         </div>
         <div className="flex flex-col gap-1.5 mt-1">
           {(sessionsQ.data?.data ?? []).map((s) => (
+            // v0.49 a11y: row 用 div 容器而非 button 包 button（nested-interactive 违规）
+            // 主体 <button> 点击跳 session；删除 <button> 单独放，stopPropagation 隔离
             <div
               key={s.id}
               className={[
-                'group flex items-start gap-2 p-2 rounded-lg border-2 border-transparent cursor-pointer',
+                'group flex items-start gap-2 p-2 rounded-lg border-2 border-transparent',
                 sessionId === s.id
                   ? 'bg-[var(--color-accent-mint)] border-[var(--color-text)] shadow-[2px_2px_0_var(--color-text)]'
                   : 'hover:bg-[var(--color-bg-cream)] hover:border-[var(--color-text)]',
               ].join(' ')}
-              onClick={() => nav(`/chat/${s.id}`)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') nav(`/chat/${s.id}`);
-              }}
-              tabIndex={0}
-              role="button"
             >
-              <MessageCircle size={14} strokeWidth={2.5} className="mt-0.5 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold truncate">{s.title}</p>
-                <p className="text-[10px] text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] truncate">
-                  {s.messageCount} msg · {formatTimeAgo(s.lastMessageAt ?? s.createdAt)}
-                </p>
-              </div>
+              <button
+                type="button"
+                aria-label={`打开对话 ${s.title}`}
+                onClick={() => nav(`/chat/${s.id}`)}
+                className="flex items-start gap-2 flex-1 min-w-0 text-left"
+              >
+                <MessageCircle size={14} strokeWidth={2.5} className="mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">{s.title}</p>
+                  <p className="text-[10px] text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] truncate">
+                    {s.messageCount} msg · {formatTimeAgo(s.lastMessageAt ?? s.createdAt)}
+                  </p>
+                </div>
+              </button>
               <button
                 type="button"
                 aria-label="删除对话"

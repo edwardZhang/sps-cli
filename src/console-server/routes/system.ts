@@ -261,5 +261,35 @@ export function createSystemRoute(version: string, startedAt: Date): Hono {
     return c.json({ data: report });
   });
 
+  /**
+   * POST /api/client-errors — Front-end error telemetry sink.
+   *   Accepts { message, stack, url, ua, ts } and writes to server log.
+   *   No persistence, just log for now. Limits body to 8KB to prevent abuse.
+   */
+  app.post('/client-errors', async (c) => {
+    const raw = await c.req.text().catch(() => '');
+    if (raw.length > 8192) {
+      return c.json({ type: 'validation', title: 'payload too large', status: 413 }, 413);
+    }
+    let body: { message?: string; stack?: string; url?: string; ua?: string; ts?: string };
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      return c.json({ type: 'validation', title: 'invalid JSON', status: 422 }, 422);
+    }
+    // Log to stderr via simple structured line — server log collection reads stderr
+    const line = [
+      `[client-error]`,
+      body.ts ?? new Date().toISOString(),
+      body.url ?? '-',
+      body.message ?? '-',
+    ].join(' ');
+    process.stderr.write(line + '\n');
+    if (body.stack) {
+      process.stderr.write(body.stack.split('\n').map((l) => `  ${l}`).join('\n') + '\n');
+    }
+    return c.body(null, 204);
+  });
+
   return app;
 }

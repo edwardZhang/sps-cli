@@ -4,6 +4,48 @@ interface State {
   error: Error | null;
 }
 
+/**
+ * Fire-and-forget telemetry for client-side errors.
+ * POST /api/system/client-errors with a small JSON payload. Keep it tiny — the
+ * server enforces 8KB limit and truncates stack to ~4KB. Never throws.
+ */
+export function reportClientError(err: Error | string, context?: string): void {
+  try {
+    const payload = JSON.stringify({
+      message: (err instanceof Error ? err.message : String(err)).slice(0, 1000),
+      stack: (err instanceof Error ? err.stack ?? '' : '').slice(0, 4000),
+      url: typeof window !== 'undefined' ? window.location.href : '',
+      ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      ts: new Date().toISOString(),
+      context: context?.slice(0, 200),
+    });
+    // Use keepalive so reports aren't dropped on page unload
+    fetch('/api/system/client-errors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      keepalive: true,
+    }).catch(() => { /* never propagate */ });
+  } catch {
+    /* serialize error — drop */
+  }
+}
+
+/** Install global error + unhandledrejection hooks. Call once at app boot. */
+export function installGlobalErrorReporters(): void {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('error', (e) => {
+    reportClientError(e.error ?? e.message ?? 'unknown error', 'window.error');
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const reason = e.reason;
+    reportClientError(
+      reason instanceof Error ? reason : String(reason),
+      'unhandledrejection',
+    );
+  });
+}
+
 export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   override state: State = { error: null };
 
@@ -12,7 +54,9 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
-    // 仅在开发时打印，prod 留给 server log 收集（M6 加）
+    // v0.49: ship error to server log for post-hoc debugging
+    reportClientError(error, `ErrorBoundary: ${info.componentStack?.slice(0, 200) ?? ''}`);
+    // Dev console still helpful for live iteration
     // eslint-disable-next-line no-console
     console.error('[ErrorBoundary]', error, info);
   }
