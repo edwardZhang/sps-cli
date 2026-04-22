@@ -30,6 +30,7 @@ export interface DaemonRequest {
     | 'inspect'
     | 'stopSession'
     | 'clearRun'
+    | 'cancelRun'
     | 'shutdown'
     | 'subscribeRun';
   params: Record<string, unknown>;
@@ -236,6 +237,11 @@ export class SessionDaemon {
 
       case 'stopSession': {
         await this.runtime.stopSession(p.slot as string);
+        return { ok: true };
+      }
+
+      case 'cancelRun': {
+        await this.runtime.cancelRun(p.slot as string);
         return { ok: true };
       }
 

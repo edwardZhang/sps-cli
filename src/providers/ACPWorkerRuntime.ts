@@ -237,6 +237,12 @@ export class ACPWorkerRuntime implements AgentRuntime {
     return this.client.subscribe(sessionName, listener);
   }
 
+  async cancelRun(slot: string): Promise<void> {
+    const normalizedSlot = this.normalizeSlot(slot);
+    const sessionName = this.buildSessionName(normalizedSlot);
+    return this.client.cancelRun(sessionName);
+  }
+
   private buildSessionName(slot: string): string {
     if (slot.startsWith('session-')) return `sps-${slot}`;
     return `sps-acp-${this.ctx.projectName}-${slot}`;

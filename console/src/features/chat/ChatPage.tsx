@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, MessageCircle, Trash2, Send, Loader2, ChevronRight, Wrench, CheckCircle2, XCircle } from 'lucide-react';
+import { Plus, MessageCircle, Trash2, Send, Loader2, ChevronRight, Wrench, CheckCircle2, XCircle, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -9,7 +9,9 @@ import 'highlight.js/styles/github.css';
 import {
   createSession,
   deleteSession,
+  getMessagesSince,
   getSession,
+  interruptSession,
   listSessions,
   postMessage,
   type ChatMessage,
@@ -52,6 +54,40 @@ export function ChatPage() {
   useEffect(() => {
     if (!sessionId) return;
     const es = new EventSource(`/stream/chat/${encodeURIComponent(sessionId)}`);
+
+    // v0.47.1 断线重连补偿：EventSource 自动重连，首次 open 之后的 open 事件
+    // 触发 diff fetch 把错过的消息拉回来。避免重复：拉到 id 已在 cache 就跳过。
+    let firstOpen = true;
+    es.addEventListener('open', () => {
+      if (firstOpen) {
+        firstOpen = false;
+        return;
+      }
+      const cache = qc.getQueryData<ChatSessionDetail>(['chat-session', sessionId]);
+      const lastTs = cache?.messages.length
+        ? cache.messages[cache.messages.length - 1]!.ts
+        : undefined;
+      getMessagesSince(sessionId, lastTs)
+        .then((res) => {
+          if (res.data.length === 0) return;
+          qc.setQueryData<ChatSessionDetail | undefined>(
+            ['chat-session', sessionId],
+            (old) => {
+              if (!old) return old;
+              const existingIds = new Set(old.messages.map((m) => m.id));
+              const newOnes = res.data.filter((m) => !existingIds.has(m.id));
+              if (newOnes.length === 0) return old;
+              return {
+                ...old,
+                messages: [...old.messages, ...newOnes],
+                lastMessageAt: newOnes[newOnes.length - 1]!.ts,
+                messageCount: old.messageCount + newOnes.length,
+              };
+            },
+          );
+        })
+        .catch(() => { /* best effort */ });
+    });
 
     // 1. user 消息（本次 POST 的）—— 乐观 UI 已显示，这里只是补校验
     es.addEventListener('chat.message', (ev) => {
@@ -330,6 +366,19 @@ export function ChatPage() {
     [qc, sessionId, nav, confirm],
   );
 
+  const handleInterrupt = useCallback(async (): Promise<void> => {
+    if (!sessionId) return;
+    try {
+      await interruptSession(sessionId);
+      // SSE 'complete' event with stopReason='cancelled' will commit pending + clear it
+    } catch (err) {
+      void alert({
+        title: '中断失败',
+        body: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [sessionId, alert]);
+
   return (
     <div className="grid grid-cols-[260px_1fr] gap-4 h-[calc(100vh-140px)]">
       <aside className="nb-card p-3 overflow-auto flex flex-col gap-2">
@@ -429,20 +478,32 @@ export function ChatPage() {
                   }}
                   aria-label="消息输入"
                 />
-                <button
-                  className="nb-btn nb-btn-primary"
-                  onClick={handleSend}
-                  disabled={!draft.trim() || sending}
-                  type="button"
-                  aria-label="发送"
-                >
-                  {sending ? (
-                    <Loader2 size={14} strokeWidth={3} className="animate-spin" />
-                  ) : (
-                    <Send size={14} strokeWidth={3} />
-                  )}
-                  发送
-                </button>
+                {pending ? (
+                  <button
+                    className="nb-btn nb-btn-danger"
+                    onClick={handleInterrupt}
+                    type="button"
+                    aria-label="中断生成"
+                  >
+                    <Square size={14} strokeWidth={3} />
+                    中断
+                  </button>
+                ) : (
+                  <button
+                    className="nb-btn nb-btn-primary"
+                    onClick={handleSend}
+                    disabled={!draft.trim() || sending}
+                    type="button"
+                    aria-label="发送"
+                  >
+                    {sending ? (
+                      <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+                    ) : (
+                      <Send size={14} strokeWidth={3} />
+                    )}
+                    发送
+                  </button>
+                )}
               </div>
             </div>
           </>
@@ -498,6 +559,11 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             <BlockRenderer key={i} block={b} />
           ))}
         </div>
+        {msg.truncated && (
+          <p className="mt-3 px-3 py-2 bg-[var(--color-stuck-bg)] border-2 border-[var(--color-stuck)] rounded-lg text-xs text-[var(--color-stuck)] font-bold">
+            ⚠ 输出超过 10MB，已截断
+          </p>
+        )}
       </div>
     </div>
   );

@@ -391,6 +391,19 @@ export class AcpSdkAdapter implements ACPClient {
     return () => session.accumulator.removeListener(listener);
   }
 
+  async cancelRun(sessionName: string): Promise<void> {
+    const session = this.sessions.get(sessionName);
+    if (!session || !session.activePromise) return;
+    try {
+      await session.conn.cancel({ sessionId: session.sessionId });
+    } catch {
+      /* Agent may have already finished/crashed — safe to ignore */
+    }
+    // Mark accumulator complete so subscribers see cancellation and exit loop.
+    // activePromise will also settle naturally via the cancel response.
+    session.accumulator.markComplete('cancelled');
+  }
+
   async stopSession(input: StopSessionInput): Promise<void> {
     const session = this.sessions.get(input.sessionName);
     if (!session) return;

@@ -28,4 +28,9 @@ export interface AgentRuntime {
    * Returns an unsubscribe function. Session must already exist (call ensureSession first).
    */
   subscribe(slot: string, listener: AccumulatorListener): () => void;
+  /**
+   * Cancel the in-flight run (current prompt) without destroying the session.
+   * Session + ACP child process live on; next startRun reuses them.
+   */
+  cancelRun(slot: string): Promise<void>;
 }

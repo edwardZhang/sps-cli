@@ -54,4 +54,8 @@ export class LocalACPClient implements ACPClient {
   subscribe(sessionName: string, listener: AccumulatorListener): () => void {
     return this.adapter.subscribe(sessionName, listener);
   }
+
+  async cancelRun(sessionName: string): Promise<void> {
+    return this.adapter.cancelRun(sessionName);
+  }
 }

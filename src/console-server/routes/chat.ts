@@ -27,6 +27,11 @@ import { eventBus } from '../sse/eventBus.js';
 const HOME = process.env.HOME || '/home/coral';
 const SESSIONS_DIR = resolve(HOME, '.coral', 'chat-sessions');
 
+// v0.47.1 保护：并发上限 + 单消息大小上限
+const MAX_CONCURRENT_SESSIONS = 5;
+const MAX_ASSISTANT_CONTENT_BYTES = 10 * 1024 * 1024; // 10MB
+const activeSessions = new Set<string>(); // chatSlot strings currently streaming
+
 export type ChatMessageBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; title: string; kind: string; status: string };
@@ -37,6 +42,8 @@ export interface ChatMessage {
   content: string;
   /** Structured blocks for tool rendering (assistant only). If omitted, content is plain text. */
   blocks?: ChatMessageBlock[];
+  /** True if content/blocks were truncated at MAX_ASSISTANT_CONTENT_BYTES. */
+  truncated?: boolean;
   ts: string;
   status?: 'streaming' | 'complete' | 'error';
 }
@@ -129,11 +136,13 @@ async function streamAssistantResponse(
 
   const client = new DaemonClient();
   const slot = chatSlot(sessionId);
+  activeSessions.add(slot);
 
   // 2. Ensure session exists (reuses if present → multi-turn context)
   try {
     await client.ensureSession(slot, 'claude');
   } catch (err) {
+    activeSessions.delete(slot);
     const errMsg: ChatMessage = {
       id: assistantId,
       role: 'error',
@@ -151,19 +160,35 @@ async function streamAssistantResponse(
   const blocks: ChatMessageBlock[] = [];
   let accumulatedText = '';
 
+  let truncated = false;
+
   const consume = (async (): Promise<void> => {
     for await (const evt of subscription) {
       if (evt.event === 'text') {
-        accumulatedText += evt.text;
-        // Append to last text block or create one
+        if (truncated) continue; // drop further text after cap
+        const remainingBudget = MAX_ASSISTANT_CONTENT_BYTES - Buffer.byteLength(accumulatedText, 'utf-8');
+        if (remainingBudget <= 0) {
+          truncated = true;
+          log.warn(`chat[${sessionId}]: assistant output exceeded ${MAX_ASSISTANT_CONTENT_BYTES} bytes — truncating`);
+          continue;
+        }
+        const piece =
+          Buffer.byteLength(evt.text, 'utf-8') <= remainingBudget
+            ? evt.text
+            : Buffer.from(evt.text, 'utf-8').subarray(0, remainingBudget).toString('utf-8');
+        accumulatedText += piece;
         const last = blocks[blocks.length - 1];
-        if (last?.type === 'text') last.text += evt.text;
-        else blocks.push({ type: 'text', text: evt.text });
+        if (last?.type === 'text') last.text += piece;
+        else blocks.push({ type: 'text', text: piece });
         eventBus.publish('chat.message.chunk.text', {
           sessionId,
           assistantId,
-          text: evt.text,
+          text: piece,
         });
+        if (piece.length < evt.text.length) {
+          truncated = true;
+          log.warn(`chat[${sessionId}]: truncated mid-chunk at ${MAX_ASSISTANT_CONTENT_BYTES} bytes`);
+        }
       } else if (evt.event === 'tool_use') {
         blocks.push({
           type: 'tool_use',
@@ -192,11 +217,15 @@ async function streamAssistantResponse(
       } else if (evt.event === 'complete') {
         const ts = new Date().toISOString();
         const isError = evt.stopReason === 'failed';
+        const isCancelled = evt.stopReason === 'cancelled';
         const msg: ChatMessage = {
           id: assistantId,
           role: isError ? 'error' : 'assistant',
-          content: accumulatedText.trim() || (isError ? `stopped: ${evt.stopReason}` : ''),
+          content:
+            accumulatedText.trim() ||
+            (isError ? `stopped: ${evt.stopReason}` : isCancelled ? '(已中断)' : ''),
           blocks: blocks.length > 0 ? blocks : undefined,
+          truncated: truncated || undefined,
           ts,
           status: isError ? 'error' : 'complete',
         };
@@ -211,6 +240,7 @@ async function streamAssistantResponse(
     await client.startRun(slot, userContent, 'claude');
   } catch (err) {
     subscription.cancel();
+    activeSessions.delete(slot);
     const errMsg: ChatMessage = {
       id: assistantId,
       role: 'error',
@@ -222,14 +252,18 @@ async function streamAssistantResponse(
     return;
   }
 
-  // Await subscription loop (background — but chat POST already returned 202)
-  await consume;
-
-  // 5. Clear run so slot is reusable for next turn
   try {
-    await client.clearRun(slot);
-  } catch {
-    /* best effort */
+    // Await subscription loop (background — but chat POST already returned 202)
+    await consume;
+
+    // 5. Clear run so slot is reusable for next turn
+    try {
+      await client.clearRun(slot);
+    } catch {
+      /* best effort */
+    }
+  } finally {
+    activeSessions.delete(slot);
   }
 }
 
@@ -279,6 +313,22 @@ export function createChatRoute(log: Logger): Hono {
     return c.json(s);
   });
 
+  /**
+   * GET /sessions/:id/messages?since=<iso-ts> — Diff fetch for reconnect.
+   *   Returns only messages with ts > since. Frontend calls this after SSE
+   *   reconnect to catch up on anything persisted during the gap.
+   */
+  app.get('/sessions/:id/messages', (c) => {
+    const id = c.req.param('id');
+    const s = readSession(id);
+    if (!s) return c.json({ type: 'not-found', title: 'Session not found', status: 404 }, 404);
+    const since = c.req.query('since');
+    const messages = since
+      ? s.messages.filter((m) => m.ts > since)
+      : s.messages;
+    return c.json({ data: messages, total: s.messages.length });
+  });
+
   app.delete('/sessions/:id', async (c) => {
     const id = c.req.param('id');
     const p = sessionPath(id);
@@ -295,6 +345,33 @@ export function createChatRoute(log: Logger): Hono {
   });
 
   /**
+   * POST /sessions/:id/interrupt — Cancel the in-flight assistant turn.
+   *   Session stays alive so user can send another message with context preserved.
+   *   Accumulator emits 'complete' event with stopReason='cancelled' → subscription loop exits.
+   */
+  app.post('/sessions/:id/interrupt', async (c) => {
+    const id = c.req.param('id');
+    const client = new DaemonClient();
+    if (!(await client.isRunning())) {
+      return c.json({ type: 'not-found', title: 'daemon not running', status: 404 }, 404);
+    }
+    try {
+      await client.cancelRun(chatSlot(id));
+    } catch (err) {
+      return c.json(
+        {
+          type: 'internal',
+          title: 'cancel failed',
+          status: 500,
+          detail: err instanceof Error ? err.message : String(err),
+        },
+        500,
+      );
+    }
+    return c.body(null, 204);
+  });
+
+  /**
    * POST messages: 非阻塞
    *   1. 持久化 user msg → 立即返回 user + assistantId (202)
    *   2. 后台走 daemon，SSE 推 chunk.text / chunk.tool_use / chunk.tool_update / complete
@@ -306,6 +383,30 @@ export function createChatRoute(log: Logger): Hono {
     const body = (await c.req.json().catch(() => null)) as { content?: string } | null;
     if (!body?.content || typeof body.content !== 'string') {
       return c.json({ type: 'validation', title: 'content required', status: 422 }, 422);
+    }
+
+    // v0.47.1 并发上限：资源保护。当前 session 若已经在跑，也拒绝（避免重复 startRun）
+    if (activeSessions.has(chatSlot(id))) {
+      return c.json(
+        {
+          type: 'conflict',
+          title: 'session busy',
+          status: 409,
+          detail: '上一条消息还在生成中，先等完成或点中断',
+        },
+        409,
+      );
+    }
+    if (activeSessions.size >= MAX_CONCURRENT_SESSIONS) {
+      return c.json(
+        {
+          type: 'too-many-requests',
+          title: 'concurrency limit',
+          status: 429,
+          detail: `最多同时 ${MAX_CONCURRENT_SESSIONS} 个 chat 会话在生成。先等其它完成或中断。`,
+        },
+        429,
+      );
     }
 
     const userMsg: ChatMessage = {

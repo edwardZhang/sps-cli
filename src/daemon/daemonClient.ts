@@ -77,6 +77,11 @@ export class DaemonClient {
     await this.request('clearRun', { slot });
   }
 
+  /** Cancel the in-flight run (prompt). Session stays alive for reuse. */
+  async cancelRun(slot: string): Promise<void> {
+    await this.request('cancelRun', { slot });
+  }
+
   async shutdown(): Promise<void> {
     try { await this.request('shutdown', {}); } catch { /* daemon exits */ }
   }

@@ -10,6 +10,8 @@ export interface ChatMessage {
   content: string;
   /** Structured blocks for tool rendering. Absent on old messages (pre-v0.46). */
   blocks?: ChatMessageBlock[];
+  /** True if content was capped at the server-side byte limit. */
+  truncated?: boolean;
   ts: string;
   status?: 'streaming' | 'complete' | 'error';
 }
@@ -61,4 +63,22 @@ export async function postMessage(sessionId: string, content: string) {
   });
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return (await res.json()) as { user: ChatMessage; assistantId: string };
+}
+
+export async function interruptSession(sessionId: string): Promise<void> {
+  const res = await fetch(`/api/chat/sessions/${sessionId}/interrupt`, { method: 'POST' });
+  if (!res.ok && res.status !== 204) {
+    throw new Error(`${res.status}: ${await res.text()}`);
+  }
+}
+
+/** Diff-fetch messages with ts > since. Used by SSE reconnect compensation. */
+export function getMessagesSince(
+  sessionId: string,
+  since?: string,
+): Promise<{ data: ChatMessage[]; total: number }> {
+  const qs = since ? `?since=${encodeURIComponent(since)}` : '';
+  return apiGet<{ data: ChatMessage[]; total: number }>(
+    `/api/chat/sessions/${sessionId}/messages${qs}`,
+  );
 }

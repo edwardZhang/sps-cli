@@ -103,6 +103,11 @@ export interface ACPClient {
   inspectRun(input: InspectRunInput): Promise<InspectRunResult>;
   stopSession(input: StopSessionInput): Promise<void>;
   /**
+   * Cancel the in-flight prompt without destroying the session. Next startRun
+   * reuses the same session (context preserved). No-op if no active run.
+   */
+  cancelRun(sessionName: string): Promise<void>;
+  /**
    * Attach a listener to an existing session's accumulator to receive structured
    * events (text/tool_use/tool_update/usage) as the run progresses. Returns an
    * unsubscribe function. No-op (returns () => {}) if session does not exist.
