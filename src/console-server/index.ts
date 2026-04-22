@@ -191,10 +191,28 @@ export async function startConsoleServer(
 
   const close = async (): Promise<void> => {
     for (const stop of stopFns) stop();
-    await Promise.all(watchers.map((w) => w.close()));
-    await new Promise<void>((r) => {
-      server.close(() => r());
-    });
+    await Promise.all(watchers.map((w) => w.close().catch(() => { /* swallow */ })));
+
+    // 关键：SSE 是长连接，server.close() 会无限等它们。
+    // 必须主动断开所有现有连接（node 18.2+ Server API）
+    const s = server as unknown as {
+      closeAllConnections?: () => void;
+      closeIdleConnections?: () => void;
+    };
+    try {
+      s.closeIdleConnections?.();
+      s.closeAllConnections?.();
+    } catch {
+      /* ignore */
+    }
+
+    // 即便如此，加个保险超时避免永久卡住
+    await Promise.race([
+      new Promise<void>((r) => {
+        server.close(() => r());
+      }),
+      new Promise<void>((r) => setTimeout(r, 2000)),
+    ]);
     eventBus.clearHistory();
   };
 

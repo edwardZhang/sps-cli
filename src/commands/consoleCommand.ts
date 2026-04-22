@@ -93,18 +93,42 @@ export async function executeConsole(flags: Record<string, unknown>): Promise<vo
   // acquire lock
   acquireLock(process.pid, port, VERSION);
 
-  // 优雅退出
+  // 优雅退出：
+  //   - 首次 signal → 尝试优雅关闭，3 秒内没关完就强退
+  //   - 第二次 signal → 立即强退（130）
+  let shutdownCalled = false;
+  let sigintCount = 0;
+  const FORCE_TIMEOUT_MS = 3000;
+
   const shutdown = async (signal: string): Promise<void> => {
-    log.info(`\nReceived ${signal}, shutting down...`);
+    if (shutdownCalled) return;
+    shutdownCalled = true;
+    log.info(`\nReceived ${signal}, shutting down... (press Ctrl+C again to force)`);
+    const forceTimer = setTimeout(() => {
+      log.warn(`Shutdown timeout (${FORCE_TIMEOUT_MS}ms), forcing exit`);
+      releaseLock();
+      process.exit(1);
+    }, FORCE_TIMEOUT_MS);
     try {
       await handle.close();
     } catch (err) {
       log.warn(`Error during shutdown: ${err instanceof Error ? err.message : String(err)}`);
     }
+    clearTimeout(forceTimer);
     releaseLock();
     process.exit(0);
   };
-  process.on('SIGINT', () => void shutdown('SIGINT'));
+
+  process.on('SIGINT', () => {
+    sigintCount++;
+    if (sigintCount === 1) {
+      void shutdown('SIGINT');
+    } else {
+      log.warn('Force exit');
+      releaseLock();
+      process.exit(130);
+    }
+  });
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
   // 打印 banner
