@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Play, Square, RotateCcw, Plus, Search, Filter } from 'lucide-react';
+import { Play, Square, RotateCcw, Plus, Search, Filter, X, ChevronDown } from 'lucide-react';
 import { listProjects } from '../../shared/api/projects';
 import {
   listCards,
@@ -29,6 +29,8 @@ export function BoardPage() {
   const project = params.get('project');
   const [detailSeq, setDetailSeq] = useState<number | null>(null);
   const [keyword, setKeyword] = useState('');
+  const [skillFilter, setSkillFilter] = useState<Set<string>>(() => new Set());
+  const [labelFilter, setLabelFilter] = useState<Set<string>>(() => new Set());
   const { confirm, prompt } = useDialog();
 
   useProjectStream(project);
@@ -80,13 +82,43 @@ export function BoardPage() {
   }
 
   const cards = cardsQ.data?.data ?? [];
-  const filtered = keyword
-    ? cards.filter((c) =>
-        c.title.toLowerCase().includes(keyword.toLowerCase()) ||
-        c.skills.some((s) => s.includes(keyword)) ||
-        c.labels.some((l) => l.includes(keyword)),
-      )
-    : cards;
+
+  // v0.48.1 聚合出项目所有用到的 skill / label，供筛选下拉
+  const { allSkills, allLabels } = useMemo(() => {
+    const sk = new Set<string>();
+    const lb = new Set<string>();
+    for (const c of cards) {
+      for (const s of c.skills) sk.add(s);
+      for (const l of c.labels) lb.add(l);
+    }
+    return {
+      allSkills: [...sk].sort(),
+      allLabels: [...lb].sort(),
+    };
+  }, [cards]);
+
+  const filtered = cards.filter((c) => {
+    // 关键字模糊：title / skill / label 任一命中
+    if (keyword) {
+      const kw = keyword.toLowerCase();
+      const hit =
+        c.title.toLowerCase().includes(kw) ||
+        c.skills.some((s) => s.toLowerCase().includes(kw)) ||
+        c.labels.some((l) => l.toLowerCase().includes(kw));
+      if (!hit) return false;
+    }
+    // skill 下拉：多选 AND 于关键字
+    if (skillFilter.size > 0) {
+      const hasAny = c.skills.some((s) => skillFilter.has(s));
+      if (!hasAny) return false;
+    }
+    // label 下拉：多选 AND 于关键字 + skill
+    if (labelFilter.size > 0) {
+      const hasAny = c.labels.some((l) => labelFilter.has(l));
+      if (!hasAny) return false;
+    }
+    return true;
+  });
   const projectSummary = projectsQ.data?.data.find((p) => p.name === project);
   const running = projectSummary?.pipelineStatus === 'running';
 
@@ -167,6 +199,34 @@ export function BoardPage() {
             aria-label="搜索卡片"
           />
         </div>
+        <MultiSelect
+          label="skill"
+          options={allSkills}
+          selected={skillFilter}
+          onChange={setSkillFilter}
+        />
+        <MultiSelect
+          label="label"
+          options={allLabels}
+          selected={labelFilter}
+          onChange={setLabelFilter}
+        />
+        {(keyword || skillFilter.size > 0 || labelFilter.size > 0) && (
+          <button
+            className="nb-btn"
+            style={{ padding: '4px 10px', fontSize: 11 }}
+            onClick={() => {
+              setKeyword('');
+              setSkillFilter(new Set());
+              setLabelFilter(new Set());
+            }}
+            type="button"
+            aria-label="清空筛选"
+          >
+            <X size={11} strokeWidth={3} />
+            清空
+          </button>
+        )}
         <span className="text-xs text-[var(--color-text-muted)] flex items-center gap-1 font-[family-name:var(--font-mono)]">
           <Filter size={12} />
           {filtered.length} / {cards.length}
@@ -215,4 +275,115 @@ function columnFilter(state: string) {
     if (state === 'Done') return c.state === 'Done' || c.state === 'Canceled';
     return c.state === state;
   };
+}
+
+/**
+ * Pastel Neubrutalism 风格的多选下拉。点按钮展开选项列表；勾选 toggle 一个项；
+ * 点外面关；ESC 也关。
+ */
+function MultiSelect({
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string;
+  options: string[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent): void => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('click', onClickOutside);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', onClickOutside);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const toggle = (val: string): void => {
+    const next = new Set(selected);
+    if (next.has(val)) next.delete(val);
+    else next.add(val);
+    onChange(next);
+  };
+
+  const disabled = options.length === 0;
+  const count = selected.size;
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        className="nb-btn"
+        style={{ padding: '6px 12px', fontSize: 12 }}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`按 ${label} 筛选`}
+      >
+        {label}
+        {count > 0 && (
+          <span
+            className="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-[var(--color-primary)] text-[var(--color-text)] border border-[var(--color-text)]"
+          >
+            {count}
+          </span>
+        )}
+        <ChevronDown
+          size={11}
+          strokeWidth={3}
+          className={['transition-transform', open ? 'rotate-180' : ''].join(' ')}
+        />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute left-0 top-full mt-2 z-20 min-w-[200px] max-h-64 overflow-auto nb-card p-2"
+          style={{ padding: 8 }}
+        >
+          {options.map((opt) => {
+            const checked = selected.has(opt);
+            return (
+              <label
+                key={opt}
+                className={[
+                  'flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-sm font-[family-name:var(--font-mono)]',
+                  checked ? 'bg-[var(--color-accent-mint)]' : 'hover:bg-[var(--color-bg-cream)]',
+                ].join(' ')}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(opt)}
+                  className="flex-shrink-0"
+                />
+                <span className="truncate">{opt}</span>
+              </label>
+            );
+          })}
+          {count > 0 && (
+            <button
+              type="button"
+              className="w-full mt-2 pt-2 border-t-2 border-dashed border-[var(--color-text)] text-xs font-bold text-[var(--color-crashed)] text-center"
+              onClick={() => onChange(new Set())}
+            >
+              清空选择
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }

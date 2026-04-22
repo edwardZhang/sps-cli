@@ -17,7 +17,7 @@ export default function App() {
     <ErrorBoundary>
       <Routes>
         <Route element={<AppShell />}>
-          <Route index element={<Navigate to="/board" replace />} />
+          <Route index element={<Navigate to="/projects" replace />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/new" element={<NewProjectPage />} />
           <Route path="/projects/:name" element={<ProjectDetailPage />} />
