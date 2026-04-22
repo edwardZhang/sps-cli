@@ -5,6 +5,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'error';
   content: string;
   ts: string;
+  status?: 'streaming' | 'complete' | 'error';
 }
 
 export interface ChatSessionSummary {
@@ -43,6 +44,9 @@ export async function deleteSession(id: string): Promise<void> {
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
+/**
+ * 非阻塞：立刻返回 user 和 assistantId（pending），assistant 内容通过 SSE chunk + complete 推送。
+ */
 export async function postMessage(sessionId: string, content: string) {
   const res = await fetch(`/api/chat/sessions/${sessionId}/messages`, {
     method: 'POST',
@@ -50,5 +54,5 @@ export async function postMessage(sessionId: string, content: string) {
     body: JSON.stringify({ content }),
   });
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-  return (await res.json()) as { user: ChatMessage; assistant: ChatMessage };
+  return (await res.json()) as { user: ChatMessage; assistantId: string };
 }
