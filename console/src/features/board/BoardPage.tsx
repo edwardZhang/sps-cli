@@ -53,6 +53,23 @@ export function BoardPage() {
     setParams({ project: name });
   };
 
+  const cards = cardsQ.data?.data ?? [];
+
+  // v0.48.1 聚合出项目所有用到的 skill / label，供筛选下拉
+  // v0.49 修复：hook 必须在所有 early return 之前调用（React rules-of-hooks）
+  const { allSkills, allLabels } = useMemo(() => {
+    const sk = new Set<string>();
+    const lb = new Set<string>();
+    for (const c of cards) {
+      for (const s of c.skills) sk.add(s);
+      for (const l of c.labels) lb.add(l);
+    }
+    return {
+      allSkills: [...sk].sort(),
+      allLabels: [...lb].sort(),
+    };
+  }, [cards]);
+
   if (!project) {
     return (
       <div className="flex flex-col gap-6 max-w-4xl">
@@ -80,22 +97,6 @@ export function BoardPage() {
       </div>
     );
   }
-
-  const cards = cardsQ.data?.data ?? [];
-
-  // v0.48.1 聚合出项目所有用到的 skill / label，供筛选下拉
-  const { allSkills, allLabels } = useMemo(() => {
-    const sk = new Set<string>();
-    const lb = new Set<string>();
-    for (const c of cards) {
-      for (const s of c.skills) sk.add(s);
-      for (const l of c.labels) lb.add(l);
-    }
-    return {
-      allSkills: [...sk].sort(),
-      allLabels: [...lb].sort(),
-    };
-  }, [cards]);
 
   const filtered = cards.filter((c) => {
     // 关键字模糊：title / skill / label 任一命中

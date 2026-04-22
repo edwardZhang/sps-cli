@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { ArrowLeft, FolderGit2, Settings, Workflow, Trash2, Save, RefreshCw, Loader2, Check } from 'lucide-react';
@@ -149,11 +149,13 @@ function ConfigTab({ name }: { name: string }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [etag, setEtag] = useState<string | null>(null);
 
-  // Initialize draft once data arrives
-  if (data && draft === null) {
-    setDraft(data.content);
-    setEtag(data.etag);
-  }
+  // v0.49 修复：hydrate from query in useEffect，不在 render 期 setState
+  useEffect(() => {
+    if (data && draft === null) {
+      setDraft(data.content);
+      setEtag(data.etag);
+    }
+  }, [data, draft]);
 
   const dirty = draft !== null && data !== undefined && draft !== data.content;
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   RefreshCw,
@@ -270,10 +270,13 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [etag, setEtag] = useState<string | null>(null);
 
-  if (rawQ.data && draft === null) {
-    setDraft(rawQ.data.content);
-    setEtag(rawQ.data.etag);
-  }
+  // v0.49 修复：hydrate draft from query data in useEffect，不在 render 期 setState
+  useEffect(() => {
+    if (rawQ.data && draft === null) {
+      setDraft(rawQ.data.content);
+      setEtag(rawQ.data.etag);
+    }
+  }, [rawQ.data, draft]);
 
   const dirty = draft !== null && rawQ.data && draft !== rawQ.data.content;
 
