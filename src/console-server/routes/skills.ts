@@ -172,6 +172,34 @@ export function createSkillsRoute(): Hono {
     });
   });
 
+  app.get('/:name/references/:file', (c) => {
+    const name = c.req.param('name');
+    const file = c.req.param('file');
+    // v0.46.1: serve reference file content for on-demand markdown preview.
+    //   Guard against path traversal: file must be a simple basename ending in .md
+    if (!/^[a-zA-Z0-9_.-]+\.md$/.test(file)) {
+      return c.json({ type: 'validation', title: 'invalid filename', status: 422 }, 422);
+    }
+    const users = listUserSkills();
+    const user = users.find((u) => u.name === name);
+    if (!user) {
+      return c.json({ type: 'not-found', title: 'Skill not found', status: 404 }, 404);
+    }
+    const full = resolve(user.userPath, 'references', file);
+    if (!existsSync(full)) {
+      return c.json({ type: 'not-found', title: 'Reference not found', status: 404 }, 404);
+    }
+    try {
+      const content = readFileSync(full, 'utf-8');
+      return c.json({ name: file, content });
+    } catch (err) {
+      return c.json(
+        { type: 'internal', title: 'Read failed', status: 500, detail: String(err) },
+        500,
+      );
+    }
+  });
+
   app.post('/:name/link', async (c) => {
     const name = c.req.param('name');
     const body = await c.req.json().catch(() => null) as { project?: string } | null;

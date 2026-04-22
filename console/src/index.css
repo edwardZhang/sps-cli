@@ -208,4 +208,80 @@
     background: currentColor;
     border: 1.5px solid var(--color-text);
   }
+
+  /* Markdown rendering inside chat bubbles + skill preview.
+     Keeps Pastel Neubrutalism tokens: no blur shadows, hard borders. */
+  .prose-chat { color: var(--color-text); line-height: 1.6; }
+  .prose-chat > *:first-child { margin-top: 0; }
+  .prose-chat > *:last-child { margin-bottom: 0; }
+  .prose-chat h1 { font-family: var(--font-heading); font-weight: 700; font-size: 1.5rem; margin: 1em 0 0.5em; }
+  .prose-chat h2 { font-family: var(--font-heading); font-weight: 700; font-size: 1.25rem; margin: 1em 0 0.5em; }
+  .prose-chat h3 { font-family: var(--font-heading); font-weight: 700; font-size: 1.1rem; margin: 0.8em 0 0.4em; }
+  .prose-chat h4, .prose-chat h5, .prose-chat h6 { font-family: var(--font-heading); font-weight: 700; margin: 0.8em 0 0.3em; }
+  .prose-chat p { margin: 0.6em 0; }
+  .prose-chat ul, .prose-chat ol { margin: 0.6em 0; padding-left: 1.6em; }
+  .prose-chat ul { list-style: disc; }
+  .prose-chat ol { list-style: decimal; }
+  .prose-chat li { margin: 0.2em 0; }
+  .prose-chat li > ul, .prose-chat li > ol { margin: 0.2em 0; }
+  .prose-chat code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    background: var(--color-bg-cream);
+    border: 1.5px solid var(--color-text);
+    border-radius: 4px;
+    padding: 0 4px;
+  }
+  .prose-chat pre {
+    margin: 0.8em 0;
+    padding: 12px;
+    background: var(--color-bg-cream);
+    border: 2px solid var(--color-text);
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    line-height: 1.45;
+  }
+  .prose-chat pre code {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+  }
+  .prose-chat blockquote {
+    margin: 0.8em 0;
+    padding-left: 1em;
+    border-left: 3px solid var(--color-text);
+    color: var(--color-text-muted);
+  }
+  .prose-chat table {
+    border-collapse: collapse;
+    margin: 0.8em 0;
+    border: 2px solid var(--color-text);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .prose-chat th, .prose-chat td {
+    padding: 6px 10px;
+    border: 1px solid var(--color-text);
+    text-align: left;
+  }
+  .prose-chat th {
+    background: var(--color-bg-cream);
+    font-weight: 700;
+  }
+  .prose-chat a {
+    color: var(--color-running);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .prose-chat a:hover {
+    color: var(--color-text);
+  }
+  .prose-chat hr {
+    margin: 1em 0;
+    border: 0;
+    border-top: 2px dashed var(--color-text);
+  }
 }

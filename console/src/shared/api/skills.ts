@@ -31,6 +31,12 @@ export function getSkill(name: string) {
   return apiGet<SkillDetail>(`/api/skills/${encodeURIComponent(name)}`);
 }
 
+export function getSkillReference(name: string, file: string) {
+  return apiGet<{ name: string; content: string }>(
+    `/api/skills/${encodeURIComponent(name)}/references/${encodeURIComponent(file)}`,
+  );
+}
+
 async function postJson(path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(path, {
     method: 'POST',

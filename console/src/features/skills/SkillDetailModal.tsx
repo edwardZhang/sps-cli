@@ -1,8 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { X, Link as LinkIcon, Snowflake, Flame } from 'lucide-react';
+import { X, Link as LinkIcon, Snowflake, Flame, ChevronRight, FileText } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
 import {
   getSkill,
+  getSkillReference,
   linkSkill,
   unlinkSkill,
   freezeSkill,
@@ -209,9 +213,18 @@ export function SkillDetailModal({
               <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
                 SKILL.md 预览
               </h3>
-              <pre className="text-xs whitespace-pre-wrap font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4 max-h-80 overflow-auto">
-                {data.body || '(empty)'}
-              </pre>
+              <div className="prose-chat bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4 max-h-80 overflow-auto text-sm">
+                {data.body ? (
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeHighlight]}
+                  >
+                    {data.body}
+                  </ReactMarkdown>
+                ) : (
+                  <p className="text-[var(--color-text-muted)] italic">(empty)</p>
+                )}
+              </div>
             </div>
 
             {data.references.length > 0 && (
@@ -219,14 +232,9 @@ export function SkillDetailModal({
                 <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
                   References
                 </h3>
-                <ul className="text-sm space-y-1 font-[family-name:var(--font-mono)]">
+                <ul className="flex flex-col gap-2">
                   {data.references.map((r) => (
-                    <li key={r.name} className="flex items-center gap-3">
-                      <span>{r.name}</span>
-                      <span className="text-xs text-[var(--color-text-subtle)]">
-                        {r.lines} lines
-                      </span>
-                    </li>
+                    <ReferenceRow key={r.name} skillName={name} file={r.name} lines={r.lines} />
                   ))}
                 </ul>
               </div>
@@ -235,5 +243,63 @@ export function SkillDetailModal({
         )}
       </div>
     </div>
+  );
+}
+
+function ReferenceRow({
+  skillName,
+  file,
+  lines,
+}: {
+  skillName: string;
+  file: string;
+  lines: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['skill-ref', skillName, file],
+    queryFn: () => getSkillReference(skillName, file),
+    enabled: open,
+    staleTime: Infinity,
+  });
+  return (
+    <li className="border-2 border-[var(--color-text)] rounded-lg overflow-hidden bg-[var(--color-bg-cream)]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={`${open ? '收起' : '展开'} ${file}`}
+        aria-expanded={open}
+        className="w-full flex items-center gap-2 px-3 py-2 text-sm font-[family-name:var(--font-mono)] hover:bg-[var(--color-accent-yellow)] transition-colors"
+      >
+        <ChevronRight
+          size={12}
+          strokeWidth={3}
+          className={['transition-transform', open ? 'rotate-90' : ''].join(' ')}
+        />
+        <FileText size={12} strokeWidth={2.5} />
+        <span className="flex-1 text-left font-bold">{file}</span>
+        <span className="text-xs text-[var(--color-text-subtle)]">{lines} lines</span>
+      </button>
+      {open && (
+        <div className="px-4 py-3 border-t-2 border-[var(--color-text)] bg-[var(--color-bg)] max-h-96 overflow-auto">
+          {isLoading && <p className="text-xs text-[var(--color-text-muted)]">加载中…</p>}
+          {isError && (
+            <p className="text-xs text-[var(--color-crashed)]">
+              加载失败: {error instanceof Error ? error.message : String(error)}
+            </p>
+          )}
+          {data && (
+            <div className="prose-chat text-sm">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+              >
+                {data.content}
+              </ReactMarkdown>
+            </div>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
