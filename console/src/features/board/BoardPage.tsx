@@ -367,9 +367,13 @@ export function BoardPage() {
   );
 }
 
+// v0.49.5 修复：Board 只有 4 列但 pipeline 有 7+ 种 state，要全部 cover
+// 否则 Todo / QA 等状态的卡片会消失
 function columnFilter(state: string) {
   return (c: CardT): boolean => {
-    if (state === 'Backlog') return c.state === 'Backlog' || c.state === 'Planning';
+    if (state === 'Backlog') return c.state === 'Backlog' || c.state === 'Planning' || c.state === 'Todo';
+    if (state === 'Inprogress') return c.state === 'Inprogress';
+    if (state === 'Review') return c.state === 'Review' || c.state === 'QA';
     if (state === 'Done') return c.state === 'Done' || c.state === 'Canceled';
     return c.state === state;
   };
