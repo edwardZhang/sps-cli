@@ -169,4 +169,179 @@ describe('projects route', () => {
     });
     expect(res.status).toBe(422);
   });
+
+  // ── v0.49.3 Pipeline 文件 CRUD tests ──────────────────────────────
+
+  it('GET /:name/pipelines/:file returns content + parsed + etag', async () => {
+    const pipelinesDir = resolve(tmpHome, '.coral', 'projects', 'myproj', 'pipelines');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      resolve(pipelinesDir, 'project.yaml'),
+      'mode: project\nstages:\n  - name: develop\n    on_complete: "move_card Done"\n',
+    );
+    const app = await buildApp();
+    const res = await app.request('/api/projects/myproj/pipelines/project.yaml');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      content: string;
+      etag: string;
+      parsed: { mode: string; stages: Array<{ name: string }> } | null;
+      parseError: string | null;
+      isActive: boolean;
+    };
+    expect(body.isActive).toBe(true);
+    expect(body.parseError).toBeNull();
+    expect(body.parsed?.mode).toBe('project');
+    expect(body.parsed?.stages?.[0]?.name).toBe('develop');
+    expect(body.etag).toHaveLength(16);
+  });
+
+  it('GET /:name/pipelines/:file returns parseError when YAML malformed', async () => {
+    const pipelinesDir = resolve(tmpHome, '.coral', 'projects', 'myproj', 'pipelines');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(resolve(pipelinesDir, 'broken.yaml'), 'stages:\n  - name: [unclosed\n');
+    const app = await buildApp();
+    const res = await app.request('/api/projects/myproj/pipelines/broken.yaml');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { parsed: unknown; parseError: string | null };
+    expect(body.parsed).toBeNull();
+    expect(body.parseError).toBeTruthy();
+  });
+
+  it('GET /:name/pipelines/:file rejects path traversal', async () => {
+    const app = await buildApp();
+    const res = await app.request('/api/projects/myproj/pipelines/..%2Fetc%2Fpasswd');
+    expect(res.status).toBe(422);
+  });
+
+  it('PATCH /:name/pipelines/:file enforces etag + yaml validation', async () => {
+    const pipelinesDir = resolve(tmpHome, '.coral', 'projects', 'myproj', 'pipelines');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(resolve(pipelinesDir, 'foo.yaml'), 'stages: []\n');
+    const app = await buildApp();
+
+    const getRes = await app.request('/api/projects/myproj/pipelines/foo.yaml');
+    const { etag } = (await getRes.json()) as { etag: string };
+
+    // Wrong etag → 409
+    const wrong = await app.request('/api/projects/myproj/pipelines/foo.yaml', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'stages: [new]\n', etag: 'bogus' }),
+    });
+    expect(wrong.status).toBe(409);
+
+    // Invalid YAML → 422
+    const badYaml = await app.request('/api/projects/myproj/pipelines/foo.yaml', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'stages:\n  - [\n', etag }),
+    });
+    expect(badYaml.status).toBe(422);
+
+    // Valid save → 200
+    const ok = await app.request('/api/projects/myproj/pipelines/foo.yaml', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: 'mode: project\nstages:\n  - name: x\n    on_complete: "move_card Done"\n',
+        etag,
+      }),
+    });
+    expect(ok.status).toBe(200);
+    const saved = readFileSync(resolve(pipelinesDir, 'foo.yaml'), 'utf-8');
+    expect(saved).toContain('name: x');
+  });
+
+  it('POST /:name/pipelines creates with blank template by default', async () => {
+    mkdirSync(resolve(tmpHome, '.coral', 'projects', 'myproj', 'pipelines'), { recursive: true });
+    const app = await buildApp();
+    const res = await app.request('/api/projects/myproj/pipelines', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'ci.yaml' }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { name: string; content: string };
+    expect(body.name).toBe('ci.yaml');
+    expect(body.content).toContain('mode: project');
+    expect(body.content).toContain('develop');
+  });
+
+  it('POST /:name/pipelines 409 when file exists', async () => {
+    const pipelinesDir = resolve(tmpHome, '.coral', 'projects', 'myproj', 'pipelines');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(resolve(pipelinesDir, 'dup.yaml'), 'stages: []\n');
+
+    const app = await buildApp();
+    const res = await app.request('/api/projects/myproj/pipelines', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'dup.yaml' }),
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it('POST /:name/pipelines with active template copies project.yaml', async () => {
+    const pipelinesDir = resolve(tmpHome, '.coral', 'projects', 'myproj', 'pipelines');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(resolve(pipelinesDir, 'project.yaml'), 'mode: project\n# my active\n');
+
+    const app = await buildApp();
+    const res = await app.request('/api/projects/myproj/pipelines', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'clone.yaml', template: 'active' }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { content: string };
+    expect(body.content).toContain('# my active');
+  });
+
+  it('DELETE /:name/pipelines/:file refuses project.yaml and sample', async () => {
+    const pipelinesDir = resolve(tmpHome, '.coral', 'projects', 'myproj', 'pipelines');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(resolve(pipelinesDir, 'project.yaml'), 'x\n');
+    writeFileSync(resolve(pipelinesDir, 'sample.yaml.example'), 'y\n');
+
+    const app = await buildApp();
+
+    const r1 = await app.request('/api/projects/myproj/pipelines/project.yaml', {
+      method: 'DELETE',
+    });
+    expect(r1.status).toBe(409);
+
+    const r2 = await app.request('/api/projects/myproj/pipelines/sample.yaml.example', {
+      method: 'DELETE',
+    });
+    expect(r2.status).toBe(409);
+  });
+
+  it('DELETE /:name/pipelines/:file removes non-active yaml', async () => {
+    const pipelinesDir = resolve(tmpHome, '.coral', 'projects', 'myproj', 'pipelines');
+    mkdirSync(pipelinesDir, { recursive: true });
+    const f = resolve(pipelinesDir, 'scratch.yaml');
+    writeFileSync(f, 'stages: []\n');
+
+    const app = await buildApp();
+    const res = await app.request('/api/projects/myproj/pipelines/scratch.yaml', {
+      method: 'DELETE',
+    });
+    expect(res.status).toBe(204);
+    expect(existsSync(f)).toBe(false);
+  });
+
+  it('GET /:name/pipelines returns available sorted alphabetically', async () => {
+    const pipelinesDir = resolve(tmpHome, '.coral', 'projects', 'myproj', 'pipelines');
+    mkdirSync(pipelinesDir, { recursive: true });
+    // Write out of order
+    writeFileSync(resolve(pipelinesDir, 'zulu.yaml'), 'x\n');
+    writeFileSync(resolve(pipelinesDir, 'alpha.yaml'), 'x\n');
+    writeFileSync(resolve(pipelinesDir, 'middle.yaml'), 'x\n');
+
+    const app = await buildApp();
+    const res = await app.request('/api/projects/myproj/pipelines');
+    const body = (await res.json()) as { available: Array<{ name: string }> };
+    expect(body.available.map((p) => p.name)).toEqual(['alpha.yaml', 'middle.yaml', 'zulu.yaml']);
+  });
 });

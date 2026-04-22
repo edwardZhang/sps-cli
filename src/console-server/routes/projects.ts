@@ -384,7 +384,10 @@ export function createProjectsRoute(): Hono {
     if (!existsSync(pipelinesDir)) {
       return c.json({ active: null, available: [] });
     }
-    const files = readdirSync(pipelinesDir).filter((f) => f.endsWith('.yaml'));
+    // v0.49.3: 按字母序排，保证列表显示稳定（fs readdir 顺序不保证）
+    const files = readdirSync(pipelinesDir)
+      .filter((f) => f.endsWith('.yaml'))
+      .sort();
     const activePath = resolve(pipelinesDir, 'project.yaml');
     const activeHash = existsSync(activePath)
       ? createHash('sha256').update(readFileSync(activePath, 'utf-8')).digest('hex')

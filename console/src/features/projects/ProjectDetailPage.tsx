@@ -14,6 +14,7 @@ import {
 } from '../../shared/api/projects';
 import { useDialog } from '../../shared/components/DialogProvider';
 import { PipelineEditor } from './PipelineEditor';
+import { NewPipelineDialog } from './NewPipelineDialog';
 
 type Tab = 'overview' | 'config' | 'pipelines' | 'danger';
 
@@ -263,12 +264,13 @@ function ConfigTab({ name }: { name: string }) {
 
 function PipelinesTab({ name }: { name: string }) {
   const qc = useQueryClient();
-  const { confirm, alert, prompt } = useDialog();
+  const { confirm, alert } = useDialog();
   const { data, isLoading } = useQuery({
     queryKey: ['project-pipelines', name],
     queryFn: () => listPipelines(name),
   });
   const [editingFile, setEditingFile] = useState<string | null>(null);
+  const [newDialogOpen, setNewDialogOpen] = useState(false);
 
   const switchMutation = useMutation({
     mutationFn: (pipeline: string) => switchPipeline(name, pipeline),
@@ -297,6 +299,7 @@ function PipelinesTab({ name }: { name: string }) {
       createPipelineFile(name, args.name, args.template),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['project-pipelines', name] });
+      setNewDialogOpen(false);
       setEditingFile(res.name); // 新建后直接打开编辑器
     },
     onError: (err) => {
@@ -306,18 +309,6 @@ function PipelinesTab({ name }: { name: string }) {
       });
     },
   });
-
-  const handleCreate = async (): Promise<void> => {
-    const fname = await prompt({
-      title: '新建 pipeline',
-      body: '文件名（以 .yaml 结尾），如 ci.yaml',
-      placeholder: 'ci.yaml',
-    });
-    if (!fname) return;
-    const withExt = fname.endsWith('.yaml') ? fname : `${fname}.yaml`;
-    // 简化：默认用 blank template；后续可以加模板下拉
-    createMutation.mutate({ name: withExt, template: 'blank' });
-  };
 
   if (isLoading) {
     return <div className="nb-card"><p className="text-[var(--color-text-muted)]">加载中…</p></div>;
@@ -343,7 +334,7 @@ function PipelinesTab({ name }: { name: string }) {
             type="button"
             className="nb-btn nb-btn-mint"
             style={{ padding: '6px 12px', fontSize: 12 }}
-            onClick={handleCreate}
+            onClick={() => setNewDialogOpen(true)}
             disabled={createMutation.isPending}
             aria-label="新建 pipeline"
           >
@@ -439,6 +430,16 @@ function PipelinesTab({ name }: { name: string }) {
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['project-pipelines', name] });
           }}
+        />
+      )}
+
+      {newDialogOpen && (
+        <NewPipelineDialog
+          hasActive={!!data?.active}
+          hasSample={true /* 假定 init 时总会创建 */}
+          isPending={createMutation.isPending}
+          onCancel={() => setNewDialogOpen(false)}
+          onCreate={(n, t) => createMutation.mutate({ name: n, template: t })}
         />
       )}
     </>
