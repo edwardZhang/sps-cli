@@ -66,7 +66,8 @@ function countCards(cardsDir: string): ProjectSummary['cards'] {
 
 function countActiveWorkers(runtimeDir: string): ProjectSummary['workers'] {
   if (!existsSync(runtimeDir)) return { total: 0, active: 0 };
-  const markers = readdirSync(runtimeDir).filter((f) => /^worker-\d+-current\.json$/.test(f));
+  // v0.49.16：marker 真实格式 worker-worker-N-current.json（双前缀），兼容单前缀老格式
+  const markers = readdirSync(runtimeDir).filter((f) => /^worker-(?:worker-)?\d+-current\.json$/.test(f));
   let active = 0;
   const now = Date.now();
   for (const f of markers) {

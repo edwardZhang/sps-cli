@@ -8,7 +8,9 @@ import { basename } from 'node:path';
 import { eventBus } from '../sse/eventBus.js';
 
 function extractProjectAndSlot(path: string): { project: string; slot: number } | null {
-  const m = path.match(/projects\/([^/]+)\/runtime\/worker-(\d+)-current\.json$/);
+  // v0.49.16：marker 文件真实格式 worker-worker-N-current.json（worker-manager 传 slot="worker-N"），
+  // 兼容单前缀老格式。
+  const m = path.match(/projects\/([^/]+)\/runtime\/worker-(?:worker-)?(\d+)-current\.json$/);
   if (!m) return null;
   const slot = Number.parseInt(m[2] ?? '', 10);
   if (!Number.isFinite(slot)) return null;
@@ -48,7 +50,7 @@ export function startMarkerWatcher(coralRoot: string): FSWatcher {
   });
 
   const handle = (event: string, path: string): void => {
-    if (!/worker-\d+-current\.json$/.test(path)) return;
+    if (!/worker-(?:worker-)?\d+-current\.json$/.test(path)) return;
     publishMarker(event, path);
   };
 

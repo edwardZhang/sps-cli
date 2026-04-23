@@ -244,7 +244,7 @@ export function createSystemRoute(version: string, startedAt: Date): Hono {
         if (!existsSync(resolve(dir, 'cards'))) issues.push('missing cards/');
         const runtime = resolve(dir, 'runtime');
         if (existsSync(runtime)) {
-          const markers = readdirSync(runtime).filter((f) => /worker-\d+-current\.json$/.test(f));
+          const markers = readdirSync(runtime).filter((f) => /worker-(?:worker-)?\d+-current\.json$/.test(f));
           for (const mf of markers) {
             try {
               const stat = statSync(resolve(runtime, mf));

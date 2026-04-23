@@ -43,7 +43,9 @@ function isPidAlive(pid: number | null): boolean {
 
 function parseMarker(markerPath: string): { slot: number; data: Record<string, unknown> | null } | null {
   const basename = markerPath.split('/').pop() ?? '';
-  const m = basename.match(/^worker-(\d+)-current\.json$/);
+  // v0.49.16: marker 实际文件名是 worker-worker-<N>-current.json（worker-manager 传 slot="worker-<N>" 给
+  // getMarkerPath，后者再拼 worker-${slot} → 双 worker- 前缀）。兼容老格式（单前缀）。
+  const m = basename.match(/^worker-(?:worker-)?(\d+)-current\.json$/);
   if (!m) return null;
   const slot = Number.parseInt(m[1] ?? '', 10);
   if (!Number.isFinite(slot)) return null;
@@ -184,10 +186,12 @@ async function readWorkerLogTail(
 function listWorkerMarkerPaths(project: string): { slot: number; path: string }[] {
   const dir = projectRuntimeDir(project);
   if (!existsSync(dir)) return [];
+  // v0.49.16：支持 worker-worker-N-current.json（真实格式）和 worker-N-current.json（老兼容）
+  const re = /^worker-(?:worker-)?(\d+)-current\.json$/;
   return readdirSync(dir)
-    .filter((f) => /^worker-\d+-current\.json$/.test(f))
+    .filter((f) => re.test(f))
     .map((f) => ({
-      slot: Number.parseInt((f.match(/^worker-(\d+)-/) ?? ['', '0'])[1] ?? '0', 10),
+      slot: Number.parseInt((f.match(re) ?? ['', '0'])[1] ?? '0', 10),
       path: resolve(dir, f),
     }))
     .filter((m) => Number.isFinite(m.slot) && m.slot > 0)
@@ -219,9 +223,14 @@ export function createWorkersRoute(): Hono {
       return c.json({ type: 'validation', title: 'invalid slot', status: 422 }, 422);
     }
     const runtimeDir = projectRuntimeDir(project);
-    const markerPath = resolve(runtimeDir, `worker-${slot}-current.json`);
+    // v0.49.16：真实文件名是 worker-worker-N-current.json（双前缀），老格式做 fallback
+    let markerPath = resolve(runtimeDir, `worker-worker-${slot}-current.json`);
     if (!existsSync(markerPath)) {
-      return c.json({ type: 'not-found', title: 'worker marker not found', status: 404 }, 404);
+      const legacy = resolve(runtimeDir, `worker-${slot}-current.json`);
+      if (!existsSync(legacy)) {
+        return c.json({ type: 'not-found', title: 'worker marker not found', status: 404 }, 404);
+      }
+      markerPath = legacy;
     }
     const worker = workerFromMarker(project, slot, markerPath);
     const markerData = parseMarker(markerPath)?.data ?? null;
