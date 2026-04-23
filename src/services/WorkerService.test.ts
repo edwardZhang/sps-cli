@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FakeClock } from '../infra/clock.js';
 import { InMemoryFileSystem } from '../infra/filesystem.js';
 import { InMemoryEventBus } from '../shared/domainEvents.js';
-import { projectDir, runtimeDir, workerMarkerFile } from '../shared/runtimePaths.js';
+import { projectDir, runtimeDir, stateFile, workerMarkerFile } from '../shared/runtimePaths.js';
 import { type WorkerExecutor, WorkerService } from './WorkerService.js';
 
 describe('WorkerService', () => {
@@ -160,6 +160,74 @@ describe('WorkerService', () => {
       const { svc } = newSvc();
       const r = await svc.listByProject('../etc');
       if (!r.ok) expect(r.error.kind).toBe('validation');
+    });
+
+    /**
+     * v0.50.5 回归：worker 完成后 supervisor 把 state.json 里 slot 置 idle，
+     * 但 marker 文件不清。WorkerService 必须以 state.json 为权威 → 报 idle，
+     * 不能因为 marker 存在就继续报 running。
+     */
+    it('state.json 说 slot idle → 报 idle（不管 marker 是否新鲜）', async () => {
+      const { svc, fs, clock } = newSvc();
+      seedProject(fs, 'p');
+      writeMarker(fs, 'p', 1, {
+        cardId: 'md-3',
+        stage: 'develop',
+        dispatchedAt: clock.nowIso(),
+        pid: process.pid, // 活着
+      });
+      // supervisor 标记 slot 已空闲
+      fs.writeFile(
+        stateFile('p'),
+        JSON.stringify({
+          workers: {
+            'worker-1': {
+              status: 'idle',
+              seq: null,
+              branch: null,
+              worktree: null,
+              claimedAt: null,
+              lastHeartbeat: null,
+            },
+          },
+        }),
+      );
+      const r = await svc.listByProject('p');
+      if (r.ok) {
+        expect(r.value[0]?.state).toBe('idle');
+        expect(r.value[0]?.card).toBeNull();
+      }
+    });
+
+    it('state.json 说 slot active + marker 新鲜 → running（老路径保留）', async () => {
+      const { svc, fs, clock } = newSvc();
+      seedProject(fs, 'p');
+      writeMarker(fs, 'p', 1, {
+        cardId: 'md-5',
+        stage: 'develop',
+        dispatchedAt: clock.nowIso(),
+        pid: process.pid,
+      });
+      fs.writeFile(
+        stateFile('p'),
+        JSON.stringify({
+          workers: {
+            'worker-1': {
+              status: 'active',
+              seq: 5,
+              branch: null,
+              worktree: null,
+              claimedAt: clock.nowIso(),
+              lastHeartbeat: clock.nowIso(),
+            },
+          },
+        }),
+      );
+      const r = await svc.listByProject('p');
+      if (r.ok) {
+        expect(['running', 'starting']).toContain(r.value[0]?.state);
+        expect(r.value[0]?.card?.seq).toBe(5);
+      }
     });
   });
 

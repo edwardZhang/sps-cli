@@ -25,10 +25,33 @@ import {
   projectsDir,
   runtimeDir,
   slotFromMarkerFilename,
+  stateFile,
   WorkerMarkerFilenameRe,
   workerMarkerFile,
 } from '../shared/runtimePaths.js';
 import { WorkerMarkerSchema } from '../shared/runtimeSchemas.js';
+
+/**
+ * 读 state.json 里某 slot 的 status + seq。权威的"worker 是否在跑"信号。
+ * 文件不存在 / 解析失败 → 返 null，WorkerService 回落到只看 marker。
+ */
+function readSlotStateJson(
+  fs: FileSystem,
+  project: string,
+  slotName: string,
+): { status: string; seq: number | null } | null {
+  const path = stateFile(project);
+  if (!fs.exists(path)) return null;
+  try {
+    const raw = fs.readFile(path);
+    const parsed = JSON.parse(raw) as { workers?: Record<string, { status?: string; seq?: number | null }> };
+    const w = parsed.workers?.[slotName];
+    if (!w) return null;
+    return { status: String(w.status ?? 'idle'), seq: w.seq ?? null };
+  } catch {
+    return null;
+  }
+}
 
 export type WorkerState = 'idle' | 'starting' | 'running' | 'stuck' | 'crashed';
 
@@ -283,8 +306,19 @@ export class WorkerService {
     const fresh = markerUpdatedAt ? now - new Date(markerUpdatedAt).getTime() < STUCK_THRESHOLD_MS : false;
     const ageMs = markerUpdatedAt ? now - new Date(markerUpdatedAt).getTime() : null;
 
+    // v0.50.5：state.json 是"slot 是否在跑"的权威源。worker 完成后 supervisor 会把
+    // slot.status 置 idle + seq=null，但 marker 文件不清（hook 还要靠它反查 current-card）。
+    // 仅看 marker 会把已完成的 slot 当 running → 5 分钟后 stuck。这里先读 state.json：
+    //   - slot.status === 'idle' → 报 idle，卡片信息清空（marker 残留忽略）
+    //   - 否则保留原来的"marker 导向"状态机
+    const slotName = `worker-${slot}`;
+    const slotJson = readSlotStateJson(this.deps.fs, project, slotName);
+    const slotIsIdle = slotJson?.status === 'idle' || slotJson?.seq === null;
+
     let state: WorkerState;
-    if (!alive) {
+    if (slotIsIdle) {
+      state = 'idle';
+    } else if (!alive) {
       state = card !== null ? 'crashed' : 'idle';
     } else if (card === null) {
       state = 'idle';
@@ -295,8 +329,20 @@ export class WorkerService {
       else state = 'running';
     }
 
-    const runtimeMs = startedAt ? now - new Date(startedAt).getTime() : null;
-    return { slot, pid, state, card, stage, startedAt, runtimeMs, markerUpdatedAt };
+    // idle 状态下不再展示卡片（前端 "active 列表" 会把 idle 过滤掉；但 detail 页也不该还显示上次的卡）
+    const cardOut = state === 'idle' ? null : card;
+
+    const runtimeMs = startedAt && state !== 'idle' ? now - new Date(startedAt).getTime() : null;
+    return {
+      slot,
+      pid,
+      state,
+      card: cardOut,
+      stage: state === 'idle' ? null : stage,
+      startedAt: state === 'idle' ? null : startedAt,
+      runtimeMs,
+      markerUpdatedAt,
+    };
   }
 }
 
