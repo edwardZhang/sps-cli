@@ -335,14 +335,34 @@ function WorkerDetailModal({
 
             <div>
               <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                最近 {data.recentLogs.length} 行日志
+                Claude 输出 · 最近 {data.recentOutput.length} 行
+              </h3>
+              {data.recentOutput.length === 0 ? (
+                <p className="text-xs text-[var(--color-text-muted)] italic">
+                  还没收到 session 输出。Worker 刚启动时需要几秒才能拿到第一条。
+                </p>
+              ) : (
+                <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-3 max-h-96 overflow-auto whitespace-pre-wrap break-words">
+                  {data.recentOutput
+                    .map((l) => {
+                      const prefix = l.ts ? `${l.ts} [${l.kind}] ` : `[${l.kind}] `;
+                      return `${prefix}${l.text}`;
+                    })
+                    .join('\n')}
+                </pre>
+              )}
+            </div>
+
+            <div>
+              <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider text-[var(--color-text-muted)]">
+                Supervisor 心跳 · 最近 {data.recentLogs.length} 行
               </h3>
               {data.recentLogs.length === 0 ? (
                 <p className="text-xs text-[var(--color-text-muted)] italic">
-                  没找到带 worker-{slot} 标签的日志。去 Logs 页看全量。
+                  没找到带 worker-{slot} 标签的 supervisor 日志。
                 </p>
               ) : (
-                <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-3 max-h-64 overflow-auto whitespace-pre-wrap break-words">
+                <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-3 max-h-40 overflow-auto whitespace-pre-wrap break-words">
                   {data.recentLogs
                     .map((l) => `${l.ts ?? ''} [${l.level}] ${l.msg}`)
                     .join('\n')}

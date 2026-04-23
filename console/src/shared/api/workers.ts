@@ -44,10 +44,18 @@ export interface WorkerLogLine {
   msg: string;
 }
 
+// v0.50.10: ACP session log 行 —— Claude 真实输出
+export interface AcpSessionLine {
+  ts: string | null;
+  kind: string; // assistant | tool:<kind> | tool_update | usage | raw
+  text: string;
+}
+
 export interface WorkerDetail extends Worker {
   markerPath: string;
   markerData: Record<string, unknown> | null;
   recentLogs: WorkerLogLine[];
+  recentOutput: AcpSessionLine[];
 }
 
 export function listWorkers(project: string) {
