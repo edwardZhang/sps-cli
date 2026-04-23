@@ -14,6 +14,7 @@ import {
   TimerReset,
 } from 'lucide-react';
 import {
+  getWorkerDetail,
   getWorkersAggregate,
   killWorker,
   launchWorker,
@@ -420,6 +421,13 @@ function WorkerDetailPanel({
 }) {
   const { confirm, alert } = useDialog();
   const canRestart = worker.state === 'crashed' || worker.state === 'stuck';
+  // v0.50.11：聚合页也要能看 Claude 实际输出。按需 fetch 单 worker 详情。
+  const detailQ = useQuery({
+    queryKey: ['worker-detail', worker.project, worker.slot],
+    queryFn: () => getWorkerDetail(worker.project, worker.slot),
+    refetchInterval: 3000,
+  });
+  const recentOutput = detailQ.data?.recentOutput ?? [];
 
   return (
     <div className="flex flex-col h-full">
@@ -456,13 +464,35 @@ function WorkerDetailPanel({
           </dd>
         </dl>
 
+        <div>
+          <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1 flex items-center gap-1">
+            <Terminal size={10} strokeWidth={2.5} />
+            Claude 输出 · 最近 {recentOutput.length} 行
+          </div>
+          {detailQ.isLoading && recentOutput.length === 0 ? (
+            <p className="text-xs text-[var(--color-text-muted)] italic">加载中…</p>
+          ) : recentOutput.length === 0 ? (
+            <p className="text-xs text-[var(--color-text-muted)] italic">
+              还没收到 session 输出。Worker 刚启动时需要几秒。
+            </p>
+          ) : (
+            <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded p-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">
+              {recentOutput
+                .map((l) => {
+                  const prefix = l.ts ? `${l.ts} [${l.kind}] ` : `[${l.kind}] `;
+                  return `${prefix}${l.text}`;
+                })
+                .join('\n')}
+            </pre>
+          )}
+        </div>
+
         {worker.lastLogLine && (
           <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1 flex items-center gap-1">
-              <Terminal size={10} strokeWidth={2.5} />
-              最近日志
+            <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1 opacity-60">
+              Supervisor 心跳
             </div>
-            <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded p-2 whitespace-pre-wrap break-words">
+            <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded p-2 whitespace-pre-wrap break-words opacity-80">
               {worker.lastLogLine.ts && (
                 <span className="text-[var(--color-text-muted)]">{worker.lastLogLine.ts}{'\n'}</span>
               )}
