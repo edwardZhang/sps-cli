@@ -345,22 +345,22 @@ export function CardDetailModal({
                 </div>
 
                 {/* 检查清单 */}
-                {data.checklist.total > 0 && (
+                {((data.checklist?.total) ?? 0) > 0 && (
                   <div>
                     <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                      检查清单 <span className="text-[var(--color-text-muted)] normal-case tracking-normal">{data.checklist.done}/{data.checklist.total}</span>
+                      检查清单 <span className="text-[var(--color-text-muted)] normal-case tracking-normal">{((data.checklist?.done) ?? 0)}/{((data.checklist?.total) ?? 0)}</span>
                     </h3>
                     <div className="nb-card bg-[var(--color-bg-cream)] p-3">
                       <div className="flex items-center justify-end mb-2">
                         <div className="w-24 h-2 bg-[var(--color-bg)] border-2 border-[var(--color-text)] rounded-full overflow-hidden">
                           <div
                             className="h-full bg-[var(--color-cta)]"
-                            style={{ width: `${data.checklist.percent}%` }}
+                            style={{ width: `${((data.checklist?.percent) ?? 0)}%` }}
                           />
                         </div>
                       </div>
                       <ul className="text-sm space-y-1">
-                        {data.checklist.items.map((item, i) => (
+                        {((data.checklist?.items) ?? []).map((item, i) => (
                           <li key={i} className={`flex items-start gap-2 ${item.done ? 'opacity-60 line-through' : ''}`}>
                             <span>{item.done ? '✓' : '○'}</span>
                             <span>{item.text}</span>
@@ -400,15 +400,15 @@ export function CardDetailModal({
                 </div>
 
                 {/* 编辑态下检查清单仍只读显示 */}
-                {data.checklist.total > 0 && (
+                {((data.checklist?.total) ?? 0) > 0 && (
                   <div className="nb-card bg-[var(--color-bg-cream)] p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-bold text-sm">
-                        检查清单 {data.checklist.done}/{data.checklist.total}
+                        检查清单 {((data.checklist?.done) ?? 0)}/{((data.checklist?.total) ?? 0)}
                       </span>
                     </div>
                     <ul className="text-sm space-y-1">
-                      {data.checklist.items.map((item, i) => (
+                      {((data.checklist?.items) ?? []).map((item, i) => (
                         <li key={i} className={`flex items-start gap-2 ${item.done ? 'opacity-60 line-through' : ''}`}>
                           <span>{item.done ? '✓' : '○'}</span>
                           <span>{item.text}</span>

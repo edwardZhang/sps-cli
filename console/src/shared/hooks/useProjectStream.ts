@@ -51,11 +51,16 @@ export function useProjectStream(project: string | null | undefined): void {
 
     es.addEventListener('card.created', onCardChange);
     es.addEventListener('card.updated', onCardChange);
+    es.addEventListener('card.moved', onCardChange);
     es.addEventListener('card.deleted', onCardChange);
     es.addEventListener('worker.updated', onWorkerChange);
     es.addEventListener('worker.added', onWorkerChange);
     es.addEventListener('worker.deleted', onWorkerChange);
+    // v0.50.6：后端 DomainEvent 是 pipeline.started / pipeline.stopped，
+    // 不是老名字 pipeline.status。两种都挂一下，避免再踩 bus 名漂移。
     es.addEventListener('pipeline.status', onPipelineStatus);
+    es.addEventListener('pipeline.started', onPipelineStatus);
+    es.addEventListener('pipeline.stopped', onPipelineStatus);
 
     return () => es.close();
   }, [project, qc]);
