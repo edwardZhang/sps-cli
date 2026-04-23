@@ -48,6 +48,8 @@ export interface CreateCardInput {
   title: string;
   description?: string;
   skills?: string[];
+  /** 初始 labels —— 例如 `['AI-PIPELINE']` 让卡走流水线，空数组/缺省则不走 */
+  labels?: string[];
   initialState?: string; // default Planning
 }
 
@@ -145,10 +147,18 @@ export class CardService {
         /* skills 写失败不阻塞 create */
       }
     }
+    if (input.labels && input.labels.length > 0) {
+      try {
+        await backend.value.setLabels(created.seq, sanitizeLabels(input.labels));
+      } catch {
+        /* labels 写失败不阻塞 create */
+      }
+    }
 
     const summary = toCardSummary({
       ...created,
       skills: input.skills ?? [],
+      labels: input.labels ?? [],
     });
     this.deps.events.emit({
       type: 'card.created',

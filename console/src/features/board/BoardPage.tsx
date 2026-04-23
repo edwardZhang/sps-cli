@@ -121,8 +121,12 @@ export function BoardPage() {
   const [newCardOpen, setNewCardOpen] = useState(false);
 
   const createCardMutation = useMutation({
-    mutationFn: (input: { title: string; description: string; skills: string[] }) =>
-      createCard(project!, input),
+    mutationFn: (input: {
+      title: string;
+      description: string;
+      skills: string[];
+      labels: string[];
+    }) => createCard(project!, input),
     onSuccess: () => {
       refetchAll();
       setNewCardOpen(false);

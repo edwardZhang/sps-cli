@@ -16,11 +16,18 @@ export function NewCardDialog({
   project: string;
   isPending: boolean;
   onCancel: () => void;
-  onCreate: (input: { title: string; description: string; skills: string[] }) => void;
+  onCreate: (input: {
+    title: string;
+    description: string;
+    skills: string[];
+    labels: string[];
+  }) => void;
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
+  // v0.50.4：默认开 —— Console 里大多数场景是把卡给 pipeline 执行
+  const [includeInPipeline, setIncludeInPipeline] = useState(true);
 
   const skillsQ = useQuery({
     queryKey: ['skills-all', project],
@@ -51,6 +58,7 @@ export function NewCardDialog({
       title: title.trim(),
       description: description.trim(),
       skills: [...selectedSkills],
+      labels: includeInPipeline ? ['AI-PIPELINE'] : [],
     });
   };
 
@@ -159,6 +167,24 @@ export function NewCardDialog({
                 已选 {selectedSkills.size} 个：{[...selectedSkills].join(', ')}
               </p>
             )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-bold">流水线</span>
+            <label className="flex items-center gap-3 cursor-pointer select-none p-3 border-[2px] border-[var(--color-text)] rounded-lg bg-[var(--color-bg-cream)]">
+              <input
+                type="checkbox"
+                className="w-4 h-4 accent-[var(--color-cta)] cursor-pointer"
+                checked={includeInPipeline}
+                onChange={(e) => setIncludeInPipeline(e.target.checked)}
+              />
+              <div className="flex-1">
+                <div className="text-sm font-bold">加入流水线（`AI-PIPELINE` 标签）</div>
+                <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                  打开后 pipeline 会识别这张卡并派 worker 跑。关闭则只是一个普通 todo，需要人工改标签才会被流水线拾起。
+                </div>
+              </div>
+            </label>
           </div>
         </form>
 

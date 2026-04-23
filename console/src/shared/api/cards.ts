@@ -75,7 +75,9 @@ export function launchCard(project: string, seq: number) {
 
 export function createCard(
   project: string,
-  input: { title: string; description?: string; skills?: string[] } | string,
+  input:
+    | { title: string; description?: string; skills?: string[]; labels?: string[] }
+    | string,
 ) {
   const body = typeof input === 'string' ? { title: input } : input;
   return postJson(`/api/projects/${encodeURIComponent(project)}/cards`, body);

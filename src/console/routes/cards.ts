@@ -43,7 +43,7 @@ export function createCardsRoute(deps: CardsRouteDeps): Hono {
 
   app.post('/:project/cards', async (c) => {
     const body = (await c.req.json().catch(() => null)) as
-      | { title?: string; description?: string; skills?: string[] }
+      | { title?: string; description?: string; skills?: string[]; labels?: string[] }
       | null;
     if (!body || typeof body.title !== 'string' || !body.title.trim()) {
       return c.json(
@@ -54,10 +54,14 @@ export function createCardsRoute(deps: CardsRouteDeps): Hono {
     const skills = Array.isArray(body.skills)
       ? body.skills.filter((s) => typeof s === 'string' && /^[a-zA-Z0-9_-]+$/.test(s))
       : undefined;
+    const labels = Array.isArray(body.labels)
+      ? body.labels.filter((l) => typeof l === 'string' && l.trim().length > 0)
+      : undefined;
     const r = await deps.cards.create(c.req.param('project'), {
       title: body.title,
       description: body.description,
       skills,
+      labels,
     });
     if (!r.ok) return c.json(toProblemJson(r.error), toHttpStatus(r.error) as 400);
     return c.json({ ok: true, output: `Created card #${r.value.seq}` });
