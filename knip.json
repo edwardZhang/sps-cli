@@ -1,0 +1,15 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["src/main.ts", "src/console/index.ts"],
+  "project": ["src/**/*.ts", "test/**/*.ts"],
+  "ignore": [
+    "console/**",
+    "src/test-setup.ts",
+    "src/**/*.test.ts",
+    "test/**/*.test.ts"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": [
+    "@biomejs/biome"
+  ]
+}

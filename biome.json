@@ -42,5 +42,66 @@
 				"noUnusedPrivateClassMembers": "warn"
 			}
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["src/shared/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": [
+											"**/core/**",
+											"**/providers/**",
+											"**/manager/**",
+											"**/engines/**",
+											"**/commands/**",
+											"**/console-server/**",
+											"**/console/**",
+											"**/daemon/**",
+											"**/services/**",
+											"**/infra/**"
+										]
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/infra/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": [
+											"**/core/**",
+											"**/providers/**",
+											"**/manager/**",
+											"**/engines/**",
+											"**/commands/**",
+											"**/console-server/**",
+											"**/console/**",
+											"**/daemon/**",
+											"**/services/**"
+										]
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		}
+	]
 }

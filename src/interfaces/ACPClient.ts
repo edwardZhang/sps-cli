@@ -14,8 +14,8 @@
  * @boundedContext agent-control-protocol
  */
 
-import type { AccumulatorEvent, AccumulatorListener } from '../providers/adapters/acp-session-accumulator.js';
 import type { ACPRunStatus, ACPSessionStatus, ACPTool } from '../models/acp.js';
+import type { AccumulatorEvent, AccumulatorListener } from '../providers/adapters/acp-session-accumulator.js';
 
 export type { AccumulatorEvent, AccumulatorListener };
 
