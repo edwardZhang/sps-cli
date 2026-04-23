@@ -150,10 +150,8 @@ export function CardDetailModal({
       aria-modal="true"
       aria-labelledby="card-modal-title"
       className="fixed inset-0 z-40 flex items-start justify-center p-6 bg-black/30 overflow-auto"
-      onClick={onClose}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
         className="nb-card mt-12 w-full max-w-3xl bg-[var(--color-bg)]"
       >
         <header className="flex items-start justify-between gap-4 mb-4">

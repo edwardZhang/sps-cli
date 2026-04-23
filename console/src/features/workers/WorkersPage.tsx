@@ -263,10 +263,8 @@ function WorkerDetailModal({
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-40 flex items-start justify-center p-6 bg-black/30 overflow-auto"
-      onClick={onClose}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
         className="nb-card mt-8 w-full max-w-3xl"
       >
         <header className="flex items-center justify-between mb-3">

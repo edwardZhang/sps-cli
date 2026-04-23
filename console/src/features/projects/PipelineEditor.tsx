@@ -129,10 +129,8 @@ export function PipelineEditor({
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-40 flex items-start justify-center p-6 bg-black/30 overflow-auto"
-      onClick={onClose}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
         className="nb-card mt-8 w-full max-w-4xl flex flex-col"
         style={{ maxHeight: 'calc(100vh - 64px)' }}
       >

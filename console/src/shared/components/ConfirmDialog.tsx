@@ -29,9 +29,8 @@ export function ConfirmDialog({
       aria-modal="true"
       aria-labelledby="confirm-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/30"
-      onClick={onCancel}
     >
-      <div onClick={(e) => e.stopPropagation()} className="nb-card max-w-md w-full">
+      <div className="nb-card max-w-md w-full">
         <h2 id="confirm-title" className="font-[family-name:var(--font-heading)] text-xl font-bold mb-2">
           {title}
         </h2>

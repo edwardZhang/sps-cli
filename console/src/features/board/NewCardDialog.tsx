@@ -61,10 +61,8 @@ export function NewCardDialog({
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-40 flex items-start justify-center p-6 bg-black/30 overflow-auto"
-      onClick={onCancel}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
         className="nb-card mt-8 w-full max-w-xl flex flex-col"
         style={{ maxHeight: 'calc(100vh - 64px)' }}
       >

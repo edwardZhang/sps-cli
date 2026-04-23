@@ -43,9 +43,8 @@ export function NewPipelineDialog({
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/30"
-      onClick={onCancel}
     >
-      <div onClick={(e) => e.stopPropagation()} className="nb-card max-w-md w-full">
+      <div className="nb-card max-w-md w-full">
         <header className="flex items-start justify-between mb-4">
           <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">
             新建 pipeline
