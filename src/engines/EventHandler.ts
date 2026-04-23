@@ -23,7 +23,7 @@ import type { PendingPMAction } from '../core/state.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { WorkerEvent, } from '../manager/worker-manager.js';
-import type { Card } from '../models/types.js';
+import type { Card } from '../shared/types.js';
 
 // ─── Dependencies ──────────────────────────────────────────────
 

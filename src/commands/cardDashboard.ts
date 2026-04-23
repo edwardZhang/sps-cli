@@ -25,7 +25,7 @@ import { loadRuntimeSnapshot } from '../core/runtimeSnapshot.js';
 import { isPersistedSessionAlive } from '../core/sessionLiveness.js';
 import type { TaskLease, WorktreeEvidence } from '../core/state.js';
 import { summarizeWorkerRuntime } from '../core/workerRuntimeSummary.js';
-import type { CardState } from '../models/types.js';
+import type { CardState } from '../shared/types.js';
 import { createTaskBackend } from '../providers/registry.js';
 
 const HOME = process.env.HOME || '/home/coral';

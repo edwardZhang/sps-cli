@@ -12,7 +12,7 @@
  * - parseChecklist 每次读卡时调用（毫秒级成本），不缓存
  * - 只统计顶级项目，嵌套子项不递归（见 v0.42 设计决策 #6）
  */
-import type { ChecklistItem, ChecklistStats } from '../models/types.js';
+import type { ChecklistItem, ChecklistStats } from '../shared/types.js';
 
 /**
  * Parse a markdown body for the "## 检查清单" section and return progress stats.

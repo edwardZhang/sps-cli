@@ -25,9 +25,13 @@ describe('system route', () => {
 
   async function buildApp() {
     const { createSystemRoute } = await import('./system.js');
+    const { createContainer } = await import('../../services/container.js');
     const { Hono } = await import('hono');
     const app = new Hono();
-    app.route('/api/system', createSystemRoute('0.49.0', new Date()));
+    const services = createContainer({
+      systemMeta: { version: '0.49.0', startedAt: new Date() },
+    });
+    app.route('/api/system', createSystemRoute(services.system));
     return app;
   }
 

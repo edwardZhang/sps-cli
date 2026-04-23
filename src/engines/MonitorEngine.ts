@@ -26,7 +26,7 @@ import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { ProcessSupervisor } from '../manager/supervisor.js';
 import type { WorkerManager } from '../manager/worker-manager.js';
-import type { ActionRecord, CheckResult, CommandResult, RecommendedAction } from '../models/types.js';
+import type { ActionRecord, CheckResult, CommandResult, RecommendedAction } from '../shared/types.js';
 import { isProcessAlive } from '../providers/outputParser.js';
 
 /**
@@ -373,7 +373,7 @@ export class MonitorEngine {
 
   private async listRuntimeAwareInprogressCards(): Promise<{ seq: string; title: string; labels: string[] }[]> {
     // Collect cards from all stage activeStates (not just the first stage)
-    const bySeq = new Map<string, import('../models/types.js').Card>();
+    const bySeq = new Map<string, import('../shared/types.js').Card>();
     for (const stage of this.pipelineAdapter.stages) {
       const cards = await this.taskBackend.listByState(stage.activeState);
       for (const card of cards) bySeq.set(card.seq, card);

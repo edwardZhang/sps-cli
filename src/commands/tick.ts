@@ -37,7 +37,7 @@ import { ProcessSupervisor } from '../manager/supervisor.js';
 // PostActions and Recovery are no longer used directly — WM handles recovery
 // and SPSEventHandler handles PM operations via the event system.
 import { WorkerManagerImpl } from '../manager/worker-manager-impl.js';
-import type { CommandResult, StepResult, TickResult } from '../models/types.js';
+import type { CommandResult, StepResult, TickResult } from '../shared/types.js';
 import { createAgentRuntime, createNotifier, createRepoBackend, createTaskBackend } from '../providers/registry.js';
 
 const DEFAULT_INTERVAL_S = 30;

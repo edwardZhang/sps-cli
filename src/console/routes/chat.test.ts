@@ -27,10 +27,12 @@ describe('chat route', () => {
 
   async function buildApp() {
     const { createChatRoute } = await import('./chat.js');
+    const { createContainer } = await import('../../services/container.js');
     const { Hono } = await import('hono');
     const app = new Hono();
     const log = new Logger('test', 'chat-test');
-    app.route('/api/chat', createChatRoute(log));
+    const services = createContainer();
+    app.route('/api/chat', createChatRoute(log, services.chat));
     return app;
   }
 

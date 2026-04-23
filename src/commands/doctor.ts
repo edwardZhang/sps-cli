@@ -29,7 +29,7 @@ import { checkPathExists } from '../core/paths.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import type { RuntimeState } from '../core/state.js';
 import { createIdleWorkerSlot, writeState } from '../core/state.js';
-import type { CheckResult, CommandResult } from '../models/types.js';
+import type { CheckResult, CommandResult } from '../shared/types.js';
 
 // ─── Template Dir resolution (mirrors projectInit.ts) ────────────
 const __dirname = dirname(fileURLToPath(import.meta.url));

@@ -74,7 +74,10 @@ export async function startConsoleServer(
   //  - SseEventBus 给所有 service 发 DomainEvent
   //  - Default*Executor 在 container 里默认装好（Phase 3a）
   const bus = new SseEventBus();
-  const services = createContainer({ events: bus });
+  const services = createContainer({
+    events: bus,
+    systemMeta: { version, startedAt },
+  });
 
   const app = new Hono();
 
@@ -115,8 +118,8 @@ export async function startConsoleServer(
   app.route('/api/workers', createWorkersAggregateRoute(services.workers));
   app.route('/api/logs', createLogsRoute(services.logs));
   app.route('/api/skills', createSkillsRoute(services.skills));
-  app.route('/api/system', createSystemRoute(version, startedAt));
-  app.route('/api/chat', createChatRoute(log));
+  app.route('/api/system', createSystemRoute(services.system));
+  app.route('/api/chat', createChatRoute(log, services.chat));
 
   // ─── SSE ─────────────────────────────────────────────────────────────
   app.route('/stream/projects', createProjectStreamRoute(bus));

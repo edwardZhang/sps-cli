@@ -18,7 +18,7 @@ import { existsSync } from 'node:fs';
 import type { ProjectConfig } from '../core/config.js';
 import { resolveGitlabProjectId } from '../core/config.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
-import type { MrStatus } from '../models/types.js';
+import type { MrStatus } from '../shared/types.js';
 export class GitLabRepoBackend implements RepoBackend {
   private readonly gitlabUrl: string;
   private readonly projectId: string;

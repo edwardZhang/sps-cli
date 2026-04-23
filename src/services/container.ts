@@ -6,9 +6,12 @@
  *
  * 使用：
  *   CLI:     const c = createContainer();
- *   Console: const c = createContainer({ events });      // 注入 SseEventBus
+ *   Console: const c = createContainer({ events, systemMeta });
  *   Tests:   const c = createContainer({ fs, clock, events, spawner });
  */
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { type Clock, SystemClock } from '../infra/clock.js';
 import { type FileSystem, NodeFileSystem } from '../infra/filesystem.js';
 import { NodeProcessSpawner, type ProcessSpawner } from '../infra/spawn.js';
@@ -24,9 +27,10 @@ import {
 } from './executors.js';
 import { LogService } from './LogService.js';
 import { type PipelineExecutor, PipelineService } from './PipelineService.js';
-import { type ProjectInitExecutor, ProjectService } from './ProjectService.js';
 import type { TaskBackendFactory } from './ports.js';
+import { type ProjectInitExecutor, ProjectService } from './ProjectService.js';
 import { SkillService } from './SkillService.js';
+import { SystemService } from './SystemService.js';
 import { type WorkerExecutor, WorkerService } from './WorkerService.js';
 
 export interface ServiceContainer {
@@ -37,6 +41,12 @@ export interface ServiceContainer {
   readonly skills: SkillService;
   readonly logs: LogService;
   readonly chat: ChatService;
+  readonly system: SystemService;
+}
+
+export interface SystemMeta {
+  version: string;
+  startedAt: Date;
 }
 
 export interface ContainerOptions {
@@ -45,12 +55,14 @@ export interface ContainerOptions {
   clock?: Clock;
   events?: DomainEventBus;
   spawner?: ProcessSpawner;
-  /** Phase 3 注入的 CLI 适配器（未注入时相关 Service 方法返 internal 错误） */
+  /** Phase 3 注入的 CLI 适配器 */
   taskBackendFactory?: TaskBackendFactory;
   projectInitExecutor?: ProjectInitExecutor;
   workerExecutor?: WorkerExecutor;
   pipelineExecutor?: PipelineExecutor;
   chatExecutor?: ChatExecutor;
+  /** SystemService 元数据 —— 未注入时从 package.json 读 version + now() */
+  systemMeta?: SystemMeta;
 }
 
 export function createContainer(opts: ContainerOptions = {}): ServiceContainer {
@@ -60,11 +72,15 @@ export function createContainer(opts: ContainerOptions = {}): ServiceContainer {
   const spawner = opts.spawner ?? new NodeProcessSpawner();
   const taskBackendFactory = opts.taskBackendFactory ?? new DefaultTaskBackendFactory();
 
-  // 默认 executor 注入 —— 测试可以覆盖
   const workerExecutor = opts.workerExecutor ?? new DefaultWorkerExecutor();
   const pipelineExecutor = opts.pipelineExecutor ?? new DefaultPipelineExecutor(spawner);
   const chatExecutor = opts.chatExecutor ?? new DefaultChatExecutor();
   const projectInitExecutor = opts.projectInitExecutor ?? new DefaultProjectInitExecutor();
+
+  const systemMeta: SystemMeta = opts.systemMeta ?? {
+    version: resolveSelfVersion(),
+    startedAt: new Date(clock.now()),
+  };
 
   const cards = new CardService({
     backendFactory: taskBackendFactory,
@@ -85,7 +101,6 @@ export function createContainer(opts: ContainerOptions = {}): ServiceContainer {
       clock,
       events,
       executor: workerExecutor,
-      // 给 Worker 反查 card title 用 —— 避免只返 #seq fallback
       cardTitleLookup: async (project, seq) => {
         const r = await cards.get(project, seq);
         return r.ok ? r.value.title : null;
@@ -106,5 +121,27 @@ export function createContainer(opts: ContainerOptions = {}): ServiceContainer {
       events,
       executor: chatExecutor,
     }),
+    system: new SystemService({
+      fs,
+      clock,
+      spawner,
+      version: systemMeta.version,
+      startedAt: systemMeta.startedAt,
+    }),
   };
+}
+
+// ─── helpers ───────────────────────────────────────────────────────
+
+function resolveSelfVersion(): string {
+  try {
+    const here = fileURLToPath(import.meta.url);
+    // dist/services/container.js → dist/../package.json
+    // src/services/container.ts → src/../package.json
+    const pkgPath = resolve(dirname(here), '..', '..', 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }

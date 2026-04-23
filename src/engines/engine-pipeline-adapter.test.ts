@@ -27,7 +27,7 @@ import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 import type { ProcessSupervisor } from '../manager/supervisor.js';
 import type { TaskRunResponse, WorkerManager } from '../manager/worker-manager.js';
-import type { Card } from '../models/types.js';
+import type { Card } from '../shared/types.js';
 import { SPSEventHandler } from './EventHandler.js';
 import { MonitorEngine } from './MonitorEngine.js';
 import { SchedulerEngine } from './SchedulerEngine.js';

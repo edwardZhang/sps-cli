@@ -21,7 +21,7 @@ import { basename, resolve } from 'node:path';
 import { parseChecklist } from '../core/checklist.js';
 import type { ProjectConfig } from '../core/config.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
-import type { Card, CardState } from '../models/types.js';
+import type { Card, CardState } from '../shared/types.js';
 
 /** Legacy default states (used when no custom states provided). */
 const DEFAULT_STATES: CardState[] = ['Planning', 'Backlog', 'Todo', 'Inprogress', 'QA', 'Done'];
