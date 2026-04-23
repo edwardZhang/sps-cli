@@ -1,7 +1,7 @@
 import { useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Pause, Play, Search, Download, History, Radio } from 'lucide-react';
+import { Pause, Play, Search, Download, History, Radio, ChevronDown, Folder } from 'lucide-react';
 import { fetchLogs, logStreamUrl, type LogLine } from '../../shared/api/logs';
 import { listProjects } from '../../shared/api/projects';
 
@@ -104,24 +104,6 @@ export function LogsPage() {
             {paused && <span className="text-[var(--color-stuck)] ml-2 font-bold">⏸ PAUSED</span>}
           </p>
         </div>
-        <div className="flex gap-3 items-center">
-          <select
-            className="nb-input"
-            style={{ padding: '4px 10px', fontSize: 12 }}
-            value={project ?? ''}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (!v) setParams({}); // clear → 聚合
-              else setParams({ project: v });
-            }}
-            aria-label="筛选项目"
-          >
-            <option value="">全部项目</option>
-            {projectsQ.data?.data.map((p) => (
-              <option key={p.name} value={p.name}>{p.name}</option>
-            ))}
-          </select>
-        </div>
       </header>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -177,6 +159,36 @@ export function LogsPage() {
             </button>
           </>
         )}
+        {/* v0.49.12：项目筛选下拉（Neubrutalism 风格），放在关键字左侧 */}
+        <div className="relative">
+          <Folder
+            size={14}
+            strokeWidth={2.5}
+            className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--color-text)]"
+          />
+          <select
+            className="nb-input appearance-none pl-9 pr-9 font-[family-name:var(--font-mono)] cursor-pointer"
+            style={{ padding: '10px 36px 10px 36px', fontSize: 13, minWidth: 180 }}
+            value={project ?? ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) setParams({});
+              else setParams({ project: v });
+            }}
+            aria-label="筛选项目"
+          >
+            <option value="">全部项目</option>
+            {projectsQ.data?.data.map((p) => (
+              <option key={p.name} value={p.name}>{p.name}</option>
+            ))}
+          </select>
+          <ChevronDown
+            size={14}
+            strokeWidth={3}
+            className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--color-text)]"
+          />
+        </div>
+
         <div className="relative flex-1 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)]" />
           <input
