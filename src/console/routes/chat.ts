@@ -1,5 +1,5 @@
 /**
- * @module        console-server/routes/chat
+ * @module        console/routes/chat
  * @description   Chat sessions via daemon — structured streaming with tool events
  *
  * v0.46 重写：
@@ -8,7 +8,7 @@
  *   - 每个 chat session 映射到 daemon slot `session-chat-<sessionId>`，多轮对话有上下文
  *   - SSE 事件按 block 类型分开推（text / tool_use / tool_update / complete）
  */
-import { Hono } from 'hono';
+
 import { randomUUID } from 'node:crypto';
 import {
   existsSync,
@@ -19,9 +19,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { resolve } from 'node:path';
-import { DaemonClient } from '../../daemon/daemonClient.js';
+import { Hono } from 'hono';
 import { ensureDaemon } from '../../commands/agentDaemon.js';
-import { Logger } from '../../core/logger.js';
+import type { Logger } from '../../core/logger.js';
+import { DaemonClient } from '../../daemon/daemonClient.js';
 import { eventBus } from '../sse/eventBus.js';
 
 const HOME = process.env.HOME || '/home/coral';

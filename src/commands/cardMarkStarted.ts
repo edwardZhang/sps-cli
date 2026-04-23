@@ -24,8 +24,8 @@
 import { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import { readCurrentCardMarker } from '../core/markerFile.js';
-import { createTaskBackend } from '../providers/registry.js';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+import { createTaskBackend } from '../providers/registry.js';
 
 export async function executeCardMarkStarted(
   project: string,

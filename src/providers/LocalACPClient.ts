@@ -14,8 +14,8 @@
  * @boundedContext acp
  */
 import type {
-  AccumulatorListener,
   ACPClient,
+  AccumulatorListener,
   EnsureSessionInput,
   EnsureSessionResult,
   InspectRunInput,

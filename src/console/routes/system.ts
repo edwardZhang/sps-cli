@@ -1,12 +1,13 @@
 /**
- * @module        console-server/routes/system
+ * @module        console/routes/system
  * @description   系统信息：版本、运行时、env（脱敏）、doctor 聚合
  */
-import { Hono } from 'hono';
+
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { Hono } from 'hono';
 
 const HOME = process.env.HOME || '/home/coral';
 const ENV_PATH = resolve(HOME, '.coral', 'env');

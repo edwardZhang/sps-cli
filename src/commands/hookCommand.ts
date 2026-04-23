@@ -23,11 +23,12 @@
  * - 依赖 worker 启动时注入的 SPS_* env vars（见 worker-manager-impl.ts）
  * - 读 stdin 的 Claude hook payload（JSON）辅助判断
  */
-import { executeCardMarkComplete } from './cardMarkComplete.js';
+
 import { ProjectContext } from '../core/context.js';
 import { readCurrentCardMarker } from '../core/markerFile.js';
-import { createTaskBackend } from '../providers/registry.js';
 import { ProjectPipelineAdapter } from '../core/projectPipelineAdapter.js';
+import { createTaskBackend } from '../providers/registry.js';
+import { executeCardMarkComplete } from './cardMarkComplete.js';
 
 /** Read all of stdin as a string (best effort, with timeout). */
 async function readStdin(timeoutMs = 1_000): Promise<string> {

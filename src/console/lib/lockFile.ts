@@ -1,5 +1,5 @@
 /**
- * @module        console-server/lib/lockFile
+ * @module        console/lib/lockFile
  * @description   单实例锁：~/.coral/console.lock 保存运行中 console 的 pid + port。
  *                stale lock (进程已死) 会被重建。
  */

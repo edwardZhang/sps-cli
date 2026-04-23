@@ -22,12 +22,30 @@ export interface SupervisorSpawnOptions {
   cwd?: string;
 }
 
+export interface CliSyncOptions {
+  args: string[];
+  cwd?: string;
+  timeoutMs?: number;
+}
+
+export interface CliSyncResult {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}
+
 export interface ProcessSpawner {
   /**
    * 启动一个 detached supervisor 进程，父退出后子继续跑。
    * 返回 ChildProcess 句柄（调用方可以 kill，但不 await）。
    */
   spawnSupervisor(opts: SupervisorSpawnOptions): ChildProcess;
+
+  /**
+   * 同步 spawn sps 子命令（短任务）—— 用于 executor glue。
+   * Console 路由禁止直接用，必须经过 service → executor → spawner 这条路径。
+   */
+  runCliSync(opts: CliSyncOptions): Promise<CliSyncResult>;
 }
 
 /**
@@ -63,6 +81,35 @@ export class NodeProcessSpawner implements ProcessSpawner {
     child.unref();
     return child;
   }
+
+  runCliSync(opts: CliSyncOptions): Promise<CliSyncResult> {
+    const { node, entry } = cliEntry();
+    return new Promise((resolvePromise) => {
+      const child = spawn(node, [entry, ...opts.args], {
+        cwd: opts.cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout?.on('data', (d: Buffer) => {
+        stdout += d.toString();
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        stderr += d.toString();
+      });
+      const timer = opts.timeoutMs
+        ? setTimeout(() => child.kill('SIGTERM'), opts.timeoutMs)
+        : null;
+      child.on('close', (code) => {
+        if (timer) clearTimeout(timer);
+        resolvePromise({ exitCode: code, stdout, stderr });
+      });
+      child.on('error', (err) => {
+        if (timer) clearTimeout(timer);
+        resolvePromise({ exitCode: -1, stdout, stderr: stderr + String(err) });
+      });
+    });
+  }
 }
 
 // ─── 测试用 fake ───────────────────────────────────────────────────
@@ -79,7 +126,15 @@ export interface FakeSpawnCall {
  */
 export class FakeProcessSpawner implements ProcessSpawner {
   public calls: FakeSpawnCall[] = [];
+  public syncCalls: Array<{ args: string[]; cwd?: string }> = [];
+  /** 测试可以预设每次 runCliSync 的响应；缺省返 { exitCode: 0, stdout:'', stderr:'' } */
+  public nextSyncResult: CliSyncResult | null = null;
   private _pid = 100000;
+
+  async runCliSync(opts: CliSyncOptions): Promise<CliSyncResult> {
+    this.syncCalls.push({ args: opts.args, cwd: opts.cwd });
+    return this.nextSyncResult ?? { exitCode: 0, stdout: '', stderr: '' };
+  }
 
   spawnSupervisor(opts: SupervisorSpawnOptions): ChildProcess {
     this.calls.push({ args: opts.args, logPath: opts.logPath, cwd: opts.cwd });

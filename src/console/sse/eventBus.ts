@@ -1,9 +1,9 @@
 /**
- * @module        console-server/sse/eventBus
+ * @module        console/sse/eventBus
  * @description   内部事件总线 —— watchers 推事件，SSE handlers 订阅推给客户端
  *
  * @role          core
- * @layer         console-server
+ * @layer         console
  * @boundedContext console
  */
 import { EventEmitter } from 'node:events';

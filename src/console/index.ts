@@ -1,26 +1,32 @@
 /**
- * @module        console-server
+ * @module        console
  * @description   Hono HTTP server + SSE + chokidar watchers —— SPS Console 后端
  *
  * @role          server
- * @layer         console-server
+ * @layer         console
  * @boundedContext console
  *
- * 启动流程：
+ * 启动流程（v0.50+）：
  *   1. 选端口（默认 4311，冲突自动递增）
- *   2. 注册路由（/api/*）+ SSE（/stream/*）+ 静态资源（dist/console-assets/）
- *   3. 启动 chokidar watchers → eventBus
- *   4. 返回 server handle + cleanup 函数
+ *   2. 构造 ServiceContainer（注入 SseEventBus + NodeFileSystem + 各 Executor）
+ *   3. 注册路由（/api/*） —— 每条 route 依赖 container 里的 service
+ *   4. 启动 chokidar watchers（infra/chokidarWatchers）—— 发 DomainEvent 到 bus
+ *   5. 返回 server handle + cleanup 函数
+ *
+ * v0.49 的 spawn CLI 逻辑全部移到 services/executors.ts 的 Default*Executor 里。
+ * 本文件不再调 spawnCliSync。
  */
-import { serve, type ServerType } from '@hono/node-server';
-import { serveStatic } from '@hono/node-server/serve-static';
-import { Hono } from 'hono';
-import { cors } from 'hono/cors';
-import type { FSWatcher } from 'chokidar';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Logger } from '../core/logger.js';
+import { type ServerType, serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import type { Logger } from '../core/logger.js';
+import { startChokidarWatchers, type WatcherHandles } from '../infra/chokidarWatchers.js';
+import { SseEventBus } from '../infra/sseBus.js';
+import { createContainer } from '../services/container.js';
 import { createCardsRoute } from './routes/cards.js';
 import { createChatRoute, createChatStreamRoute } from './routes/chat.js';
 import { createLogsRoute, createLogsStreamRoute } from './routes/logs.js';
@@ -28,12 +34,8 @@ import { createPipelineRoute } from './routes/pipeline.js';
 import { createProjectsRoute } from './routes/projects.js';
 import { createSkillsRoute } from './routes/skills.js';
 import { createSystemRoute } from './routes/system.js';
-import { createWorkersRoute, createWorkersAggregateRoute } from './routes/workers.js';
-import { eventBus } from './sse/eventBus.js';
+import { createWorkersAggregateRoute, createWorkersRoute } from './routes/workers.js';
 import { createProjectStreamRoute } from './sse/projectStream.js';
-import { startCardWatcher } from './watchers/cardWatcher.js';
-import { startMarkerWatcher } from './watchers/markerWatcher.js';
-import { startPipelinePoller } from './watchers/pipelinePoller.js';
 
 const HOME = process.env.HOME || '/home/coral';
 const CORAL_ROOT = resolve(HOME, '.coral');
@@ -53,13 +55,10 @@ export interface ConsoleServerHandle {
 }
 
 function findConsoleAssetsDir(): string | null {
-  // npm install: dist/console-server/index.js → ../../console-assets
   const a = resolve(__dirname, '..', '..', 'console-assets');
   if (existsSync(resolve(a, 'index.html'))) return a;
-  // dev build: workflow-cli/dist/console-server/index.js → ../console-assets
   const b = resolve(__dirname, '..', 'console-assets');
   if (existsSync(resolve(b, 'index.html'))) return b;
-  // 源码运行：src/console-server → ../../console/dist (vite 输出)
   const c = resolve(__dirname, '..', '..', 'console', 'dist');
   if (existsSync(resolve(c, 'index.html'))) return c;
   return null;
@@ -71,6 +70,12 @@ export async function startConsoleServer(
   const { port, host, dev, version, log } = opts;
   const startedAt = new Date();
 
+  // ─── Service container ─────────────────────────────────────────────
+  //  - SseEventBus 给所有 service 发 DomainEvent
+  //  - Default*Executor 在 container 里默认装好（Phase 3a）
+  const bus = new SseEventBus();
+  const services = createContainer({ events: bus });
+
   const app = new Hono();
 
   // 中间件
@@ -81,7 +86,6 @@ export async function startConsoleServer(
     log.info(`${c.req.method} ${c.req.path} ${c.res.status} ${ms}ms`);
   });
 
-  // CORS：dev 模式允许 vite dev server (localhost:5173)
   if (dev) {
     app.use(
       '/api/*',
@@ -93,21 +97,32 @@ export async function startConsoleServer(
     );
   }
 
-  // API 路由
-  app.route('/api/projects', createProjectsRoute());
-  app.route('/api/projects', createCardsRoute());
-  app.route('/api/projects', createPipelineRoute(log));
-  app.route('/api/projects', createWorkersRoute());
-  app.route('/api/workers', createWorkersAggregateRoute());
-  app.route('/api/logs', createLogsRoute(log));
-  app.route('/api/skills', createSkillsRoute());
+  // ─── API 路由（每条挂对应 service） ─────────────────────────────────
+  app.route(
+    '/api/projects',
+    createProjectsRoute({ projects: services.projects, pipelines: services.pipelines }),
+  );
+  app.route(
+    '/api/projects',
+    createCardsRoute({
+      cards: services.cards,
+      workers: services.workers,
+      pipelines: services.pipelines,
+    }),
+  );
+  app.route('/api/projects', createPipelineRoute(services.pipelines));
+  app.route('/api/projects', createWorkersRoute(services.workers));
+  app.route('/api/workers', createWorkersAggregateRoute(services.workers));
+  app.route('/api/logs', createLogsRoute(services.logs));
+  app.route('/api/skills', createSkillsRoute(services.skills));
   app.route('/api/system', createSystemRoute(version, startedAt));
   app.route('/api/chat', createChatRoute(log));
-  app.route('/stream/projects', createProjectStreamRoute());
+
+  // ─── SSE ─────────────────────────────────────────────────────────────
+  app.route('/stream/projects', createProjectStreamRoute(bus));
   app.route('/stream/logs', createLogsStreamRoute(log));
   app.route('/stream/chat', createChatStreamRoute());
 
-  // SSE heartbeat（占位，M3 加完整事件流）
   app.get('/stream/heartbeat', async (c) => {
     c.header('Content-Type', 'text/event-stream');
     c.header('Cache-Control', 'no-cache');
@@ -140,7 +155,6 @@ export async function startConsoleServer(
     return new Response(stream);
   });
 
-  // 错误 handler
   app.onError((err, c) => {
     log.error(`Unhandled error: ${err.message}\n${err.stack || ''}`);
     return c.json(
@@ -154,48 +168,38 @@ export async function startConsoleServer(
     );
   });
 
-  // 静态资源 + SPA fallback（非 dev 模式）
+  // ─── Static assets + SPA fallback ──────────────────────────────────
   const assetsDir = dev ? null : findConsoleAssetsDir();
   if (!dev && assetsDir) {
     const relativeRoot = assetsDir.replace(process.cwd() + '/', './');
     app.use('/*', serveStatic({ root: relativeRoot }));
-    // SPA fallback：任何未命中的路径返回 index.html
     app.get('/*', async (c) => {
       const indexPath = resolve(assetsDir, 'index.html');
       return c.html(readFileSync(indexPath, 'utf-8'));
     });
     log.info(`Serving static assets from ${assetsDir}`);
   } else if (!dev && !assetsDir) {
-    app.get('/', (c) => c.text(
-      '[sps console] Frontend not built. Run: cd console && npm run build',
-      503,
-    ));
+    app.get('/', (c) =>
+      c.text('[sps console] Frontend not built. Run: cd console && npm run build', 503),
+    );
   } else {
-    // dev 模式：重定向到 vite dev server
     app.get('/', (c) => c.redirect('http://localhost:5173'));
   }
 
-  // 启动 server
   const server = serve({ fetch: app.fetch, port, hostname: host });
 
-  // 启动 watchers
-  const watchers: FSWatcher[] = [];
-  const stopFns: Array<() => void> = [];
+  // ─── Watchers —— 新 infra/chokidarWatchers，发 DomainEvent 到 bus ───
+  let watcherHandles: WatcherHandles | null = null;
   try {
-    watchers.push(startCardWatcher(CORAL_ROOT));
-    watchers.push(startMarkerWatcher(CORAL_ROOT));
-    stopFns.push(startPipelinePoller(CORAL_ROOT));
-    log.info('watchers started: cards, markers, pipeline-poller');
+    watcherHandles = startChokidarWatchers({ coralRoot: CORAL_ROOT, bus });
+    log.info('watchers started: cards + markers + pipeline-poller (via DomainEventBus)');
   } catch (err) {
     log.warn(`watcher setup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const close = async (): Promise<void> => {
-    for (const stop of stopFns) stop();
-    await Promise.all(watchers.map((w) => w.close().catch(() => { /* swallow */ })));
+    if (watcherHandles) await watcherHandles.close();
 
-    // 关键：SSE 是长连接，server.close() 会无限等它们。
-    // 必须主动断开所有现有连接（node 18.2+ Server API）
     const s = server as unknown as {
       closeAllConnections?: () => void;
       closeIdleConnections?: () => void;
@@ -207,14 +211,13 @@ export async function startConsoleServer(
       /* ignore */
     }
 
-    // 即便如此，加个保险超时避免永久卡住
     await Promise.race([
       new Promise<void>((r) => {
         server.close(() => r());
       }),
       new Promise<void>((r) => setTimeout(r, 2000)),
     ]);
-    eventBus.clearHistory();
+    bus.clearHistory();
   };
 
   return { server, close };

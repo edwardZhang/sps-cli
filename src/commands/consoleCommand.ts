@@ -13,14 +13,14 @@
  *   无实例   → acquire lock, 启 server, open browser, 注册 SIGTERM/SIGINT cleanup
  */
 import { createRequire } from 'node:module';
-import { Logger } from '../core/logger.js';
-import { startConsoleServer } from '../console-server/index.js';
+import { startConsoleServer } from '../console/index.js';
 import {
   acquireLock,
   detectRunningConsole,
   releaseLock,
-} from '../console-server/lib/lockFile.js';
-import { pickPort } from '../console-server/lib/portPicker.js';
+} from '../console/lib/lockFile.js';
+import { pickPort } from '../console/lib/portPicker.js';
+import { Logger } from '../core/logger.js';
 
 const DEFAULT_PORT = 4311;
 const _require = createRequire(import.meta.url);

@@ -2,10 +2,11 @@
  * chat route tests — session CRUD + validation.
  * Streaming paths (daemon integration) covered by e2e, not here.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Logger } from '../../core/logger.js';
 
 describe('chat route', () => {

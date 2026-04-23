@@ -1,51 +1,56 @@
 /**
  * @module        test/e2e/helpers/testServer
- * @description   Phase 0 characterization 用：构造 Hono app，挂载所有 /api 路由
+ * @description   E2E 用：构造 Hono app，挂载所有 /api 路由（通过 service container）
  *
- * 不启真 HTTP server —— 用 Hono 的 app.request() 直接驱动，零网络、全同步。
- * E2E 要断言的是"路由接了哪些请求、返回什么 JSON"，和真端口行为等价。
+ * 不启真 HTTP server —— 用 Hono 的 app.request() 直接驱动。
  */
 import { Hono } from 'hono';
 import { vi } from 'vitest';
 
 export interface TestAppHandle {
   app: Hono;
-  /** fetch-like 接口，自动拼 /api 前缀 */
   req: (
     path: string,
     init?: { method?: string; body?: unknown; headers?: Record<string, string> },
   ) => Promise<Response>;
 }
 
-/**
- * 构造含全部路由的测试 app。
- * 必须在调用前设置 process.env.HOME 到 fake 目录，因为路由模块里有 top-level HOME 常量。
- * 使用 vi.resetModules() + 动态 import 确保 HOME 被重读。
- */
 export async function buildTestApp(): Promise<TestAppHandle> {
   vi.resetModules();
 
-  const { createCardsRoute } = await import('../../../src/console-server/routes/cards.js');
-  const { createProjectsRoute } = await import('../../../src/console-server/routes/projects.js');
+  const { createCardsRoute } = await import('../../../src/console/routes/cards.js');
+  const { createProjectsRoute } = await import('../../../src/console/routes/projects.js');
   const { createWorkersRoute, createWorkersAggregateRoute } = await import(
-    '../../../src/console-server/routes/workers.js'
+    '../../../src/console/routes/workers.js'
   );
-  const { createSkillsRoute } = await import('../../../src/console-server/routes/skills.js');
-  const { createLogsRoute } = await import('../../../src/console-server/routes/logs.js');
-  const { createPipelineRoute } = await import('../../../src/console-server/routes/pipeline.js');
-  const { createSystemRoute } = await import('../../../src/console-server/routes/system.js');
-  const { Logger } = await import('../../../src/core/logger.js');
+  const { createSkillsRoute } = await import('../../../src/console/routes/skills.js');
+  const { createLogsRoute } = await import('../../../src/console/routes/logs.js');
+  const { createPipelineRoute } = await import('../../../src/console/routes/pipeline.js');
+  const { createSystemRoute } = await import('../../../src/console/routes/system.js');
+  const { createContainer } = await import('../../../src/services/container.js');
+  const { SseEventBus } = await import('../../../src/infra/sseBus.js');
 
-  const log = new Logger('test');
+  const bus = new SseEventBus();
+  const services = createContainer({ events: bus });
 
   const app = new Hono();
-  app.route('/api/projects', createProjectsRoute());
-  app.route('/api/projects', createCardsRoute());
-  app.route('/api/projects', createWorkersRoute());
-  app.route('/api/projects', createPipelineRoute(log));
-  app.route('/api/workers', createWorkersAggregateRoute());
-  app.route('/api/skills', createSkillsRoute());
-  app.route('/api/logs', createLogsRoute(log));
+  app.route(
+    '/api/projects',
+    createProjectsRoute({ projects: services.projects, pipelines: services.pipelines }),
+  );
+  app.route(
+    '/api/projects',
+    createCardsRoute({
+      cards: services.cards,
+      workers: services.workers,
+      pipelines: services.pipelines,
+    }),
+  );
+  app.route('/api/projects', createWorkersRoute(services.workers));
+  app.route('/api/projects', createPipelineRoute(services.pipelines));
+  app.route('/api/workers', createWorkersAggregateRoute(services.workers));
+  app.route('/api/skills', createSkillsRoute(services.skills));
+  app.route('/api/logs', createLogsRoute(services.logs));
   app.route('/api/system', createSystemRoute('test-version', new Date()));
 
   const req: TestAppHandle['req'] = (path, init = {}) => {

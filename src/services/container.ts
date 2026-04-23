@@ -16,6 +16,12 @@ import { type DomainEventBus, NoopEventBus } from '../shared/domainEvents.js';
 import { CardService } from './CardService.js';
 import { type ChatExecutor, ChatService } from './ChatService.js';
 import { DefaultTaskBackendFactory } from './defaults.js';
+import {
+  DefaultChatExecutor,
+  DefaultPipelineExecutor,
+  DefaultProjectInitExecutor,
+  DefaultWorkerExecutor,
+} from './executors.js';
 import { LogService } from './LogService.js';
 import { type PipelineExecutor, PipelineService } from './PipelineService.js';
 import { type ProjectInitExecutor, ProjectService } from './ProjectService.js';
@@ -54,30 +60,43 @@ export function createContainer(opts: ContainerOptions = {}): ServiceContainer {
   const spawner = opts.spawner ?? new NodeProcessSpawner();
   const taskBackendFactory = opts.taskBackendFactory ?? new DefaultTaskBackendFactory();
 
+  // 默认 executor 注入 —— 测试可以覆盖
+  const workerExecutor = opts.workerExecutor ?? new DefaultWorkerExecutor();
+  const pipelineExecutor = opts.pipelineExecutor ?? new DefaultPipelineExecutor(spawner);
+  const chatExecutor = opts.chatExecutor ?? new DefaultChatExecutor();
+  const projectInitExecutor = opts.projectInitExecutor ?? new DefaultProjectInitExecutor();
+
+  const cards = new CardService({
+    backendFactory: taskBackendFactory,
+    events,
+    clock,
+  });
+
   return {
     projects: new ProjectService({
       fs,
       clock,
       events,
-      initExecutor: opts.projectInitExecutor,
+      initExecutor: projectInitExecutor,
     }),
-    cards: new CardService({
-      backendFactory: taskBackendFactory,
-      events,
-      clock,
-    }),
+    cards,
     workers: new WorkerService({
       fs,
       clock,
       events,
-      executor: opts.workerExecutor,
+      executor: workerExecutor,
+      // 给 Worker 反查 card title 用 —— 避免只返 #seq fallback
+      cardTitleLookup: async (project, seq) => {
+        const r = await cards.get(project, seq);
+        return r.ok ? r.value.title : null;
+      },
     }),
     pipelines: new PipelineService({
       fs,
       clock,
       events,
       spawner,
-      executor: opts.pipelineExecutor,
+      executor: pipelineExecutor,
     }),
     skills: new SkillService({ events }),
     logs: new LogService({ fs }),
@@ -85,7 +104,7 @@ export function createContainer(opts: ContainerOptions = {}): ServiceContainer {
       fs,
       clock,
       events,
-      executor: opts.chatExecutor,
+      executor: chatExecutor,
     }),
   };
 }
