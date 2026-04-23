@@ -1109,8 +1109,32 @@ export class StageEngine {
       return result;
     }
 
+    // v0.49.15：手动单卡 launch 允许从任意非活跃态启动（Done/QA/Review/Canceled
+     // 等终态卡片视为"重跑"）。已在跑（activeState）就拒绝——要先 kill worker。
+    if (card.state === this.stage.activeState) {
+      result.status = 'fail';
+      result.exitCode = 2;
+      result.details = { error: `Card seq:${seq} already in ${card.state}. Kill the worker first before re-launching.` };
+      return result;
+    }
+
+    // 任何非 Backlog/Ready 的终态卡片先移回 Ready，再走统一 launch
+    const readyState = this.pipelineAdapter.states.ready;
+    const backlogState = this.pipelineAdapter.states.backlog;
+    if (card.state !== readyState && card.state !== backlogState) {
+      try {
+        await this.taskBackend.move(seq, readyState);
+        card.state = readyState;
+      } catch (err) {
+        result.status = 'fail';
+        result.exitCode = 1;
+        result.details = { error: `Failed to move seq:${seq} from ${card.state} to ${readyState}: ${err instanceof Error ? err.message : String(err)}` };
+        return result;
+      }
+    }
+
     // If card is in Backlog, do prepare first
-    if (card.state === this.pipelineAdapter.states.backlog) {
+    if (card.state === backlogState) {
       const prepareAction = await this.prepareCard(card, opts);
       result.actions.push(prepareAction);
       if (prepareAction.result === 'fail') {
@@ -1119,19 +1143,12 @@ export class StageEngine {
         return result;
       }
       const updated = await this.taskBackend.getBySeq(seq);
-      if (!updated || updated.state !== this.pipelineAdapter.states.ready) {
+      if (!updated || updated.state !== readyState) {
         result.status = 'fail';
         result.exitCode = 1;
-        result.details = { error: `Card not in ${this.pipelineAdapter.states.ready} after prepare` };
+        result.details = { error: `Card not in ${readyState} after prepare` };
         return result;
       }
-    }
-
-    if (card.state !== this.pipelineAdapter.states.ready && card.state !== this.pipelineAdapter.states.backlog) {
-      result.status = 'fail';
-      result.exitCode = 2;
-      result.details = { error: `Card seq:${seq} is in ${card.state}, expected ${this.pipelineAdapter.states.backlog} or ${this.pipelineAdapter.states.ready}` };
-      return result;
     }
 
     const launchAction = await this.launchWorker(card, opts);

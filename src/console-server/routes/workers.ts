@@ -63,18 +63,30 @@ function workerFromMarker(project: string, slot: number, markerPath: string): Wo
   let startedAt: string | null = null;
   let markerUpdatedAt: string | null = null;
 
+  // v0.49.15：marker schema 是 { cardId: "md-<seq>", stage, dispatchedAt, pid, sessionId }
+  // —— 以前按 seq/title/startedAt 读永远空，导致 UI 永远显示 idle。
   const parsed = parseMarker(markerPath);
   if (parsed?.data) {
     const d = parsed.data;
     if (typeof d.pid === 'number') pid = d.pid;
-    if (typeof d.seq === 'number' && typeof d.title === 'string') {
-      card = { seq: d.seq, title: d.title };
-    } else if (typeof d.seq === 'number') {
-      card = { seq: d.seq, title: `#${d.seq}` };
+    if (typeof d.cardId === 'string') {
+      const m = d.cardId.match(/^(?:md-)?(\d+)$/);
+      if (m) {
+        const seq = Number.parseInt(m[1] ?? '', 10);
+        if (Number.isFinite(seq)) {
+          let title = `#${seq}`;
+          try {
+            const detail = readCard(resolve(HOME, '.coral', 'projects', project), seq);
+            if (detail?.title) title = detail.title;
+          } catch { /* cardReader 失败就用 #seq */ }
+          card = { seq, title };
+        }
+      }
     }
     if (typeof d.stage === 'string') stage = d.stage;
-    if (typeof d.startedAt === 'string') startedAt = d.startedAt;
-    if (typeof d.startTime === 'string') startedAt = startedAt ?? d.startTime;
+    if (typeof d.dispatchedAt === 'string') startedAt = d.dispatchedAt;
+    // 兼容老字段（旧版 marker 可能有）
+    if (typeof d.startedAt === 'string') startedAt = startedAt ?? d.startedAt;
   }
   try {
     const stat = statSync(markerPath);

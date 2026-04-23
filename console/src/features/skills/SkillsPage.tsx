@@ -56,7 +56,7 @@ export function SkillsPage() {
   }, [data]);
 
   return (
-    <div className="flex flex-col gap-4 max-w-6xl">
+    <div className="flex flex-col gap-4 max-w-full">
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">Skills 🎯</h1>

@@ -40,25 +40,26 @@ function parseConf(confPath: string): Record<string, string> {
   return out;
 }
 
+/**
+ * v0.49.15：卡片存在 cards/<state>/N-title.md 子目录，state 由物理目录名决定
+ * （MarkdownTaskBackend 不把 state 写进 frontmatter）。之前扫顶层 *.md 永远返 0。
+ */
 function countCards(cardsDir: string): ProjectSummary['cards'] {
   if (!existsSync(cardsDir)) return { total: 0, inprogress: 0, done: 0 };
   let total = 0;
   let inprogress = 0;
   let done = 0;
-  const entries = readdirSync(cardsDir).filter((f) => f.endsWith('.md'));
-  for (const f of entries) {
-    total++;
+  for (const entry of readdirSync(cardsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const sub = resolve(cardsDir, entry.name);
+    const dirLower = entry.name.toLowerCase();
+    let files: string[] = [];
     try {
-      const raw = readFileSync(resolve(cardsDir, f), 'utf-8');
-      // 极简 frontmatter 解析：抓 state
-      const stateMatch = raw.match(/^state:\s*(\w+)/m);
-      if (stateMatch) {
-        if (stateMatch[1] === 'Inprogress') inprogress++;
-        else if (stateMatch[1] === 'Done') done++;
-      }
-    } catch {
-      /* skip broken card */
-    }
+      files = readdirSync(sub).filter((f) => /^\d+.*\.md$/.test(f));
+    } catch { continue; }
+    total += files.length;
+    if (dirLower === 'inprogress') inprogress += files.length;
+    else if (dirLower === 'done') done += files.length;
   }
   return { total, inprogress, done };
 }
