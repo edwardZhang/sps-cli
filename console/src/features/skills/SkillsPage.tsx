@@ -109,7 +109,8 @@ export function SkillsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+      {/* v0.49.11：auto-fill 按可用宽度放，每列最小 280px，超宽屏自动放更多列 */}
+      <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
         {filtered.map((s) => (
           <SkillCard
             key={s.name}
