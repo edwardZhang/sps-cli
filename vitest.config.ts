@@ -4,8 +4,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
     setupFiles: ['src/test-setup.ts'],
+    testTimeout: 15000,  // e2e 含 spawn，放宽
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
