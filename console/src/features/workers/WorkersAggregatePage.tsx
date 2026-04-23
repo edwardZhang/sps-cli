@@ -18,24 +18,30 @@ import {
   getWorkersAggregate,
   killWorker,
   launchWorker,
+  listWorkers,
   type AggregateWorker,
   type ProjectCapacity,
+  type Worker,
   type WorkerState,
 } from '../../shared/api/workers';
 import { useDialog } from '../../shared/components/DialogProvider';
 
 /**
- * Workers 聚合视图（v0.49.9）
+ * Workers 聚合视图（v0.50.13 起：右侧改为项目级详情）
  *
- * 三段式 + 右侧 detail panel：
+ * 三段式 + 右侧 project detail panel：
  *   Alerts：stuck / crashed worker 置顶（有才显示）
  *   Active：running / starting 的卡片式展示
  *   Capacity：项目级总览
- *   右侧：选中 worker 的详细信息（marker/pid/stage/runtime/最近日志）
+ *   右侧：选中项目的 workers 列表（卡片 tabs）+ 选中 worker 详情
+ *
+ * 点击 Capacity 项目行 / Alert 卡 / Active 卡都会设置右侧 = 对应项目；
+ * 如果点的是具体 worker 卡，默认 tab 落在它；否则落在项目的第一个 worker。
  */
 export function WorkersAggregatePage() {
   const qc = useQueryClient();
-  const [selected, setSelected] = useState<{ project: string; slot: number } | null>(null);
+  // v0.50.13：selected scope = project（可选 slot 作为默认 tab）
+  const [selected, setSelected] = useState<{ project: string; slot?: number } | null>(null);
 
   const aggQ = useQuery({
     queryKey: ['workers-agg'],
@@ -64,13 +70,7 @@ export function WorkersAggregatePage() {
     };
   }, [aggQ.data?.capacity.map((c) => c.project).join(','), qc]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const allWorkers = useMemo(() => {
-    const merged = [...(aggQ.data?.alerts ?? []), ...(aggQ.data?.active ?? [])];
-    return merged;
-  }, [aggQ.data]);
-
-  const selectedWorker =
-    selected && allWorkers.find((w) => w.project === selected.project && w.slot === selected.slot);
+  // v0.50.13：allWorkers 已不需要（右侧按 project fetch listWorkers）
 
   const totals = useMemo(() => {
     if (!aggQ.data) return { projects: 0, running: 0, starting: 0, stuck: 0, crashed: 0, idle: 0 };
@@ -146,16 +146,21 @@ export function WorkersAggregatePage() {
               />
 
               {/* Capacity */}
-              <CapacitySection capacity={aggQ.data.capacity} />
+              <CapacitySection
+                capacity={aggQ.data.capacity}
+                selected={selected}
+                onSelect={(project) => setSelected({ project })}
+              />
             </>
           )}
         </div>
 
-        {/* 右：detail panel 占 50% 宽度，高度撑满分栏区域 */}
+        {/* 右：project-scoped detail panel */}
         <aside className="nb-card p-0 overflow-hidden flex flex-col h-full">
-          {selectedWorker ? (
-            <WorkerDetailPanel
-              worker={selectedWorker}
+          {selected ? (
+            <ProjectWorkersPanel
+              project={selected.project}
+              initialSlot={selected.slot}
               onChange={() => qc.invalidateQueries({ queryKey: ['workers-agg'] })}
             />
           ) : (
@@ -163,7 +168,7 @@ export function WorkersAggregatePage() {
               <div>
                 <Activity size={32} className="mx-auto mb-3 text-[var(--color-text-subtle)]" strokeWidth={2} />
                 <p className="text-sm text-[var(--color-text-muted)]">
-                  点击左侧的 worker 查看详情
+                  点击项目 / worker 查看详情
                 </p>
               </div>
             </div>
@@ -182,7 +187,7 @@ function AlertsSection({
   onSelect,
 }: {
   alerts: AggregateWorker[];
-  selected: { project: string; slot: number } | null;
+  selected: { project: string; slot?: number } | null;
   onSelect: (project: string, slot: number) => void;
 }) {
   if (alerts.length === 0) {
@@ -249,7 +254,7 @@ function ActiveSection({
   onSelect,
 }: {
   active: AggregateWorker[];
-  selected: { project: string; slot: number } | null;
+  selected: { project: string; slot?: number } | null;
   onSelect: (project: string, slot: number) => void;
 }) {
   if (active.length === 0) {
@@ -317,7 +322,15 @@ function ActiveSection({
 
 // ── Capacity section ───────────────────────────────────────────────
 
-function CapacitySection({ capacity }: { capacity: ProjectCapacity[] }) {
+function CapacitySection({
+  capacity,
+  selected,
+  onSelect,
+}: {
+  capacity: ProjectCapacity[];
+  selected: { project: string; slot?: number } | null;
+  onSelect: (project: string) => void;
+}) {
   if (capacity.length === 0) {
     return null;
   }
@@ -340,8 +353,16 @@ function CapacitySection({ capacity }: { capacity: ProjectCapacity[] }) {
           <tbody>
             {capacity.map((c) => {
               const busy = c.running + c.starting + c.stuck + c.crashed;
+              const isSel = selected?.project === c.project;
               return (
-                <tr key={c.project} className="border-b border-dashed border-[var(--color-border-light)] last:border-0 hover:bg-[var(--color-accent-yellow)]">
+                <tr
+                  key={c.project}
+                  onClick={() => onSelect(c.project)}
+                  className={[
+                    'border-b border-dashed border-[var(--color-border-light)] last:border-0 cursor-pointer hover:bg-[var(--color-accent-yellow)]',
+                    isSel ? 'bg-[var(--color-accent-yellow)]' : '',
+                  ].join(' ')}
+                >
                   <td className="px-3 py-2 font-[family-name:var(--font-mono)] font-bold">
                     {c.project}
                   </td>
@@ -359,12 +380,9 @@ function CapacitySection({ capacity }: { capacity: ProjectCapacity[] }) {
                     {busy === 0 && <span>idle</span>}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <Link
-                      to={`/workers?project=${encodeURIComponent(c.project)}`}
-                      className="text-xs underline text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                    >
+                    <span className="text-xs text-[var(--color-text-muted)]">
                       详情 →
-                    </Link>
+                    </span>
                   </td>
                 </tr>
               );
@@ -410,33 +428,153 @@ function dotColor(s: string): string {
   }
 }
 
-// ── Detail panel (右侧) ─────────────────────────────────────────
+// ── Project workers panel (右侧) ───────────────────────────────
+//
+// v0.50.13：右侧详情 scope 改为项目。顶部是 worker tabs（卡片样式），
+// 下面展示选中 worker 的完整详情（原 二级 WorkersPage modal 内容）。
 
-function WorkerDetailPanel({
+function ProjectWorkersPanel({
+  project,
+  initialSlot,
+  onChange,
+}: {
+  project: string;
+  initialSlot: number | undefined;
+  onChange: () => void;
+}) {
+  const workersQ = useQuery({
+    queryKey: ['workers', project],
+    queryFn: () => listWorkers(project),
+    refetchInterval: 3000,
+  });
+  const workers = workersQ.data?.data ?? [];
+
+  // 当前 tab：优先用 initialSlot（从 Alert/Active 点进来时带过来），否则第一个
+  const [activeSlot, setActiveSlot] = useState<number | null>(null);
+  useEffect(() => {
+    if (workers.length === 0) {
+      setActiveSlot(null);
+      return;
+    }
+    // 切项目时重置；initialSlot 对应有 worker 就用它
+    const fallback = workers[0]!.slot;
+    setActiveSlot((prev) => {
+      // 当前 prev 在新 workers 列表里还存在就保留
+      if (prev != null && workers.some((w) => w.slot === prev)) return prev;
+      if (initialSlot != null && workers.some((w) => w.slot === initialSlot)) return initialSlot;
+      return fallback;
+    });
+    // 依赖 project + initialSlot + workers 长度，避免 workers 数组引用每次 refetch 变化时抖动
+  }, [project, initialSlot, workers.length]);
+
+  const activeWorker = workers.find((w) => w.slot === activeSlot) ?? null;
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* 顶部：项目名 + worker tabs */}
+      <div className="px-4 py-3 border-b-2 border-[var(--color-text)] bg-[var(--color-bg-cream)]">
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-[family-name:var(--font-mono)] font-bold truncate">{project}</span>
+          <Link
+            to={`/board?project=${encodeURIComponent(project)}`}
+            className="text-xs underline text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          >
+            看板 →
+          </Link>
+        </div>
+
+        {workersQ.isLoading && workers.length === 0 ? (
+          <p className="text-xs text-[var(--color-text-muted)] italic">加载 workers…</p>
+        ) : workers.length === 0 ? (
+          <p className="text-xs text-[var(--color-text-muted)] italic">该项目没有 worker slot。</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {workers.map((w) => (
+              <WorkerTab
+                key={w.slot}
+                worker={w}
+                active={w.slot === activeSlot}
+                onClick={() => setActiveSlot(w.slot)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 下部：active worker 详情 */}
+      {activeWorker ? (
+        <WorkerDetail
+          project={project}
+          worker={activeWorker}
+          onChange={onChange}
+        />
+      ) : (
+        <div className="flex-1 flex items-center justify-center p-6 text-center">
+          <p className="text-sm text-[var(--color-text-muted)]">
+            {workers.length === 0 ? '无 worker' : '请选择一个 worker'}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WorkerTab({
+  worker,
+  active,
+  onClick,
+}: {
+  worker: Worker;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'nb-card p-2 text-left min-w-[130px] transition-transform',
+        active ? 'ring-4 ring-[var(--color-text)]' : 'opacity-80 hover:opacity-100',
+      ].join(' ')}
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <StateBadge state={worker.state} />
+        <span className="font-[family-name:var(--font-mono)] font-bold text-xs">
+          worker-{worker.slot}
+        </span>
+      </div>
+      {worker.card ? (
+        <div className="text-[11px] truncate font-[family-name:var(--font-mono)]">
+          #{worker.card.seq} {worker.card.title}
+        </div>
+      ) : (
+        <div className="text-[11px] text-[var(--color-text-muted)] italic">空闲</div>
+      )}
+    </button>
+  );
+}
+
+function WorkerDetail({
+  project,
   worker,
   onChange,
 }: {
-  worker: AggregateWorker;
+  project: string;
+  worker: Worker;
   onChange: () => void;
 }) {
   const { confirm, alert } = useDialog();
   const canRestart = worker.state === 'crashed' || worker.state === 'stuck';
-  // v0.50.11：聚合页也要能看 Claude 实际输出。按需 fetch 单 worker 详情。
   const detailQ = useQuery({
-    queryKey: ['worker-detail', worker.project, worker.slot],
-    queryFn: () => getWorkerDetail(worker.project, worker.slot),
+    queryKey: ['worker-detail', project, worker.slot],
+    queryFn: () => getWorkerDetail(project, worker.slot),
     refetchInterval: 3000,
   });
   const recentOutput = detailQ.data?.recentOutput ?? [];
+  const recentLogs = detailQ.data?.recentLogs ?? [];
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b-2 border-[var(--color-text)] bg-[var(--color-bg-cream)] flex items-center gap-2">
-        <StateBadge state={worker.state} />
-        <span className="font-[family-name:var(--font-mono)] font-bold truncate">
-          {worker.project}/worker-{worker.slot}
-        </span>
-      </div>
+    <>
       <div className="flex-1 overflow-auto p-4 flex flex-col gap-4">
         {worker.card ? (
           <div>
@@ -487,19 +625,16 @@ function WorkerDetailPanel({
           )}
         </div>
 
-        {worker.lastLogLine && (
+        {recentLogs.length > 0 && (
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1 opacity-60">
-              Supervisor 心跳
+              Supervisor 心跳 · 最近 {recentLogs.length} 行
             </div>
-            <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded p-2 whitespace-pre-wrap break-words opacity-80">
-              {worker.lastLogLine.ts && (
-                <span className="text-[var(--color-text-muted)]">{worker.lastLogLine.ts}{'\n'}</span>
-              )}
-              {worker.lastLogLine.msg}
+            <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded p-2 max-h-40 overflow-auto whitespace-pre-wrap break-words opacity-80">
+              {recentLogs.map((l) => `${l.ts ?? ''} [${l.level}] ${l.msg}`).join('\n')}
             </pre>
             <Link
-              to={`/logs?project=${encodeURIComponent(worker.project)}&worker=${worker.slot}`}
+              to={`/logs?project=${encodeURIComponent(project)}&worker=${worker.slot}`}
               className="text-xs underline text-[var(--color-running)] mt-1 inline-block"
             >
               查看完整 log →
@@ -509,13 +644,6 @@ function WorkerDetailPanel({
       </div>
 
       <div className="px-4 py-3 border-t-2 border-[var(--color-text)] bg-[var(--color-bg-cream)] flex gap-2 justify-end flex-wrap">
-        <Link
-          to={`/board?project=${encodeURIComponent(worker.project)}${worker.card ? `&card=${worker.card.seq}` : ''}`}
-          className="nb-btn"
-          style={{ padding: '4px 10px', fontSize: 11 }}
-        >
-          看板
-        </Link>
         {canRestart && worker.card && (
           <button
             type="button"
@@ -528,9 +656,9 @@ function WorkerDetailPanel({
                 confirm: '重启',
               });
               if (!ok) return;
-              try { await killWorker(worker.project, worker.slot); } catch { /* 已死 */ }
+              try { await killWorker(project, worker.slot); } catch { /* 已死 */ }
               try {
-                await launchWorker(worker.project, worker.slot, worker.card!.seq);
+                await launchWorker(project, worker.slot, worker.card!.seq);
                 onChange();
               } catch (err) {
                 void alert({ title: '重启失败', body: err instanceof Error ? err.message : String(err) });
@@ -554,7 +682,7 @@ function WorkerDetailPanel({
               });
               if (!ok) return;
               try {
-                await killWorker(worker.project, worker.slot);
+                await killWorker(project, worker.slot);
                 onChange();
               } catch (err) {
                 void alert({ title: '终止失败', body: err instanceof Error ? err.message : String(err) });
@@ -565,7 +693,7 @@ function WorkerDetailPanel({
           </button>
         )}
       </div>
-    </div>
+    </>
   );
 }
 
