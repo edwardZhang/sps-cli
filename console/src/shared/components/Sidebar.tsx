@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   MessageSquare,
   LayoutGrid,
@@ -8,6 +9,7 @@ import {
   Globe,
   Settings,
 } from 'lucide-react';
+import { getSystemInfo } from '../api/system';
 
 const NAV_ITEMS = [
   { to: '/chat', label: '对话', icon: MessageSquare },
@@ -20,13 +22,19 @@ const NAV_ITEMS = [
 ];
 
 export function Sidebar() {
+  // v0.50.14：Sidebar 版本号走 /api/system/info，不再硬编码。
+  const infoQ = useQuery({
+    queryKey: ['system-info'],
+    queryFn: getSystemInfo,
+    staleTime: 60_000,
+  });
   return (
     <>
       <div className="font-[family-name:var(--font-heading)] font-bold text-lg px-3 pt-2 pb-4 flex items-center gap-3 text-[var(--color-text)]">
         <span className="w-5 h-5 rounded-md bg-[var(--color-accent-mint)] border-2 border-[var(--color-text)] shadow-[2px_2px_0_var(--color-text)]" />
         SPS Console
         <span className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] font-normal">
-          v0.44
+          {infoQ.data ? `v${infoQ.data.version}` : '…'}
         </span>
       </div>
       <nav className="flex flex-col gap-1.5 mt-2" aria-label="主导航">

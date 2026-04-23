@@ -21,6 +21,21 @@ export interface DoctorReport {
   ok: boolean;
 }
 
+// v0.50.14：per-project 真实 doctor
+export interface DoctorCheck {
+  name: string;
+  status: 'pass' | 'warn' | 'fail' | 'info';
+  message: string;
+}
+
+export interface DoctorProjectResult {
+  project: string;
+  ok: boolean;
+  checks: DoctorCheck[];
+  fixes: string[];
+  log: string;
+}
+
 export function getSystemInfo() {
   return apiGet<SystemInfo>('/api/system/info');
 }
@@ -63,10 +78,26 @@ export function getLatestVersion() {
   return apiGet<{ current: string; latest: string; upToDate: boolean }>('/api/system/latest-version');
 }
 
-export async function upgradeSps(): Promise<{ ok: boolean; output: string }> {
+export async function upgradeSps(): Promise<{
+  ok: boolean;
+  output: string;
+  installedVersion: string | null;
+  command: string;
+}> {
   const res = await fetch('/api/system/upgrade', { method: 'POST' });
   if (!res.ok && res.status !== 409) {
     throw new Error(`${res.status}: ${await res.text()}`);
   }
+  return res.json();
+}
+
+// v0.50.14：单项目真实 doctor
+export async function runProjectDoctor(
+  project: string,
+  fix = false,
+): Promise<DoctorProjectResult> {
+  const qs = fix ? '?fix=1' : '';
+  const res = await fetch(`/api/system/doctor/${encodeURIComponent(project)}${qs}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return res.json();
 }

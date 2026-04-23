@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, Radio, AlertCircle } from 'lucide-react';
 import { getSystemInfo } from '../api/system';
@@ -110,20 +110,55 @@ function SseBadge({ state }: { state: 'connecting' | 'open' | 'closed' }) {
   );
 }
 
-/** 轻量 heartbeat SSE 连接，监控连接健康度。一次连上后保持常连。 */
+/**
+ * 轻量 heartbeat SSE 连接，监控连接健康度。
+ *
+ * v0.50.14：区分瞬时重连和终态关闭。
+ *   - error 事件时看 readyState：CONNECTING 就是重连中（显示 connecting），
+ *     CLOSED 才是终态（显示 closed）
+ *   - EventSource 内置自动重连用 3s 间隔（浏览器默认）；它放弃时 readyState=CLOSED
+ *   - CLOSED 后手动重建 EventSource（每 10s 重试一次），不然前端一直卡在 down
+ */
 function useHeartbeatSse(): 'connecting' | 'open' | 'closed' {
   const [state, setState] = useState<'connecting' | 'open' | 'closed'>('connecting');
-  const esRef = useRef<EventSource | null>(null);
+
   useEffect(() => {
-    const es = new EventSource('/stream/heartbeat');
-    esRef.current = es;
-    es.addEventListener('server.heartbeat', () => setState('open'));
-    es.addEventListener('error', () => setState('closed'));
-    es.addEventListener('open', () => setState('open'));
+    let es: EventSource | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
+    const connect = (): void => {
+      if (disposed) return;
+      es = new EventSource('/stream/heartbeat');
+      es.addEventListener('server.heartbeat', () => setState('open'));
+      es.addEventListener('open', () => setState('open'));
+      es.addEventListener('error', () => {
+        // readyState：0 CONNECTING（auto-retry 中） / 1 OPEN / 2 CLOSED
+        const rs = es?.readyState;
+        if (rs === EventSource.CLOSED) {
+          setState('closed');
+          // 浏览器放弃重连——10s 后自己再拉起一次
+          if (retryTimer == null) {
+            retryTimer = setTimeout(() => {
+              retryTimer = null;
+              es?.close();
+              connect();
+            }, 10_000);
+          }
+        } else {
+          setState('connecting');
+        }
+      });
+    };
+
+    connect();
+
     return () => {
-      es.close();
-      esRef.current = null;
+      disposed = true;
+      if (retryTimer != null) clearTimeout(retryTimer);
+      es?.close();
     };
   }, []);
+
   return state;
 }

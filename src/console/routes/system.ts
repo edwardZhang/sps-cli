@@ -65,6 +65,13 @@ export function createSystemRoute(system: SystemService): Hono {
     return c.json({ data: r.value });
   });
 
+  // v0.50.14：单项目真实 doctor
+  app.post('/doctor/:project', async (c) => {
+    const project = c.req.param('project');
+    const fix = c.req.query('fix') === '1' || c.req.query('fix') === 'true';
+    return sendResult(c, await system.doctorProject(project, { fix }));
+  });
+
   /** 前端错误日志：服务 stderr only，不进 Service */
   app.post('/client-errors', async (c) => {
     const raw = await c.req.text().catch(() => '');
