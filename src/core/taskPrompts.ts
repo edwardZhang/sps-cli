@@ -59,49 +59,30 @@ export function buildPhasePrompt(ctx: PhasePromptContext): string {
 }
 
 function buildTaskSection(ctx: SharedPromptContext): string {
-  return `# Current Task
+  // v0.50.9：只显式列 MR 相关字段，当 merge mode = create 时才输出。其余情况
+  // Card Full ID / GitLab Project ID / MR Mode 对 Worker 基本无用，去掉降噪。
+  const mrLine = ctx.mergeMode === 'create'
+    ? `\nTarget branch: ${ctx.targetBranch} (MR mode, GitLab project ${ctx.gitlabProjectId})`
+    : '';
+  return `# Task
 
-Task ID: ${ctx.taskSeq}
-Task: ${ctx.taskTitle}
-Working Directory: ${ctx.worktreePath}
-Target Branch: ${ctx.targetBranch}
-Card Full ID: ${ctx.cardId}
-GitLab Project ID: ${ctx.gitlabProjectId}
-MR Mode: ${ctx.mergeMode}
+${ctx.taskTitle} (seq ${ctx.taskSeq})
+
+Working directory: ${ctx.worktreePath}${mrLine}
 
 Description:
 ${ctx.taskDescription || '(no description)'}`;
 }
 
 function buildPhaseInstructions(ctx: PhasePromptContext): string {
-  return `# Development Instructions
+  // v0.50.9：大幅瘦身。只保留 SPS 框架不可回避的不变式：worktree 隔离、push、
+  // 报告 blocker、说 "done" 作为完成信号。其他项目级约定（CHANGELOG / DECISIONS /
+  // conventional commits）归 CLAUDE.md 管，projectRules 段会注入。
+  return `# How to Run
 
-You are working on this task in the current directory: ${ctx.worktreePath}
+Work inside \`${ctx.worktreePath}\`. Inspect the code, implement the task, commit, then \`git push\` to the current branch. Say "done" only after the push succeeds.
 
-This is a single-worker pipeline. You work directly in the project directory on the current branch.
-
-## Steps
-
-1. Confirm the current branch and check git status
-2. Inspect the current code and determine what remains to finish the task
-3. Complete the implementation
-4. Run appropriate validation or tests when needed
-5. Commit and push to the current branch when done
-
-## Rules
-
-1. Work only in the current directory: ${ctx.worktreePath}
-2. Complete the implementation for this task
-3. Commit frequently with conventional commit messages (feat:, fix:, refactor:, etc.)
-4. Push to the current branch: git push
-5. Before finishing, update docs/CHANGELOG.md with a concise summary
-6. If you made architecture or technical decisions, append them to docs/DECISIONS.md
-7. If you are blocked by permissions, confirmations, or missing environment requirements, report the exact blocker
-8. Say "done" only after all changes are committed and pushed
-
-## Completion
-
-The task is complete when all changes are committed and pushed to the current branch.`;
+If blocked by missing permissions / unclear requirements / environment issues, report the exact blocker instead of guessing.`;
 }
 
 /**
@@ -126,30 +107,18 @@ export function buildTaskPrompt(ctx: SharedPromptContext): string {
     sections.push('---');
   }
 
-  sections.push(`# Current Task
+  sections.push(`# Task
 
-Task ID: ${ctx.taskSeq}
-Task: ${ctx.taskTitle}
-Working Directory: ${ctx.worktreePath}
+${ctx.taskTitle} (seq ${ctx.taskSeq})
+
+Working directory: ${ctx.worktreePath}
 
 Description:
 ${ctx.taskDescription || '(no description)'}`);
 
-  sections.push(`# Task Instructions
+  sections.push(`# How to Run
 
-You are working on a task in: ${ctx.worktreePath}
-
-Rules:
-1. Work only in the specified directory
-2. Complete the task as described
-3. Output results to the appropriate files
-4. Validate your output before finishing
-5. Do NOT modify files outside the working directory
-6. Say "done" when finished
-
-Completion rule:
-- All required output files are created and validated
-- Say "done" after confirming the results are correct`);
+Work inside \`${ctx.worktreePath}\`. Complete the task, validate the output, then say "done". Don't touch files outside this directory. If blocked, report the exact blocker.`);
 
   return sections.join('\n\n').trim() + '\n';
 }

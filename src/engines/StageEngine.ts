@@ -862,9 +862,9 @@ export class StageEngine {
   }
 
   private loadSkillProfiles(card: Card): string {
-    let skills = card.labels
-      .filter(l => l.startsWith('skill:'))
-      .map(l => l.slice('skill:'.length));
+    // v0.50.9：读 frontmatter 的 skills 字段（v0.42+ 正道）。Console UI 存的就是这个。
+    // 老的 skill:* labels 早在 v0.42 hard-break 掉了，不再兼容。
+    let skills = Array.isArray(card.skills) ? card.skills.filter(Boolean) : [];
 
     if (skills.length === 0 && this.stage.profile) {
       skills = this.stage.profile.split(',').map(s => s.trim()).filter(Boolean);
@@ -879,8 +879,8 @@ export class StageEngine {
 
     if (skills.length === 0) return '';
 
-    this.log.ok(`Skill labels: ${skills.join(', ')}`);
-    return `# Required Skills\n\nThis task requires the following skills: ${skills.join(', ')}.\nLoad the dev-worker skill and read the corresponding references.`;
+    this.log.ok(`Skills: ${skills.join(', ')}`);
+    return `# Required Skills\n\nThis task requires: ${skills.join(', ')}. Load the dev-worker skill and read the corresponding references before starting.`;
   }
 
   // loadProjectKnowledge removed — replaced by memory system (buildMemoryContext)

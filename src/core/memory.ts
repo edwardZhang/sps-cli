@@ -378,59 +378,21 @@ export function buildMemoryWriteInstructions(project: string, agentId?: string):
   const agentDir = agentId ? getAgentMemoryDir(agentId) : null;
   const isAgentMode = project === '_agent';
 
-  const agentSection = agentDir ? `
-- **Agent memory** (\`${agentDir}/\`): Your personal experience — interaction patterns, user communication preferences observed by you, pitfalls you encountered. Only you read this.` : '';
+  // v0.50.9：极简化。只保留路径 + 最小 frontmatter 规范 + 强触发条件。
+  // 详细写法（types 分类、Why/Scope 结构、避免清单）移到按需查阅——大多数任务
+  // 根本不需要写 memory，没必要每张卡都灌一次规范全文。
+  const dirs: string[] = [`- user: \`${userDir}/\``];
+  if (agentDir) dirs.push(`- agent: \`${agentDir}/\``);
+  if (!isAgentMode) dirs.push(`- project: \`${getProjectMemoryDir(project)}/\``);
 
-  const projectSection = isAgentMode ? '' : `
-- **Project memory** (\`${getProjectMemoryDir(project)}/\`): Project-specific knowledge — conventions, decisions, lessons, references. Shared across all workers on this project.`;
+  return `# Memory (optional)
 
-  return `# Memory System
+Persistent memory lives at:
+${dirs.join('\n')}
 
-You have a persistent memory system. Write directly to these directories. Use \`mkdir -p <dir>\` if the directory does not exist yet.
+**Only save non-obvious, reusable facts** — user-stated rules, architectural decisions, pitfalls encountered, external resource pointers. Skip: code structure, file paths, git history, CLAUDE.md content, task state.
 
-- **User memory** (\`${userDir}/\`): Cross-project user preferences — coding style, language, workflow habits. Shared across all projects and agents.${agentSection}${projectSection}
-
-## Memory Types
-
-- **convention**: Project rules and standards (e.g., "API uses camelCase"). Never expires.
-- **decision**: Architecture/tech choices (e.g., "chose Phaser over PixiJS"). Slow decay.
-- **lesson**: Lessons learned, pitfalls (e.g., "migration must be schema-first"). Decays after 30 days.
-- **reference**: Pointers to external resources (e.g., "design docs in Figma"). Never expires.
-
-## How to Write
-
-Write each memory as a markdown file with this frontmatter:
-
-\`\`\`markdown
----
-name: Short title
-description: One-line summary for index search
-type: convention | decision | lesson | reference
----
-
-Content here. For decision/lesson types, include:
-**Why:** reason
-**Scope:** where this applies
-\`\`\`
-
-Then add one line to the \`${MEMORY_INDEX}\` in the same directory:
-\`- [Title](filename.md) — one-line hook\`
-
-## When to Write
-
-- User states a project rule or preference → convention
-- A technical choice is made → decision
-- Something unexpected happened or a pitfall was found → lesson
-- An external resource location is mentioned → reference
-
-Most conversations do NOT need memory. Only save what is non-obvious and useful for future tasks.
-
-## What NOT to Save
-
-- Code structure, file paths (derivable from code)
-- Git history (use git log)
-- Temporary task state
-- Anything in CLAUDE.md or AGENTS.md`;
+To save: write \`<slug>.md\` with frontmatter \`name / description / type\` (type ∈ convention / decision / lesson / reference), then append one line to \`${MEMORY_INDEX}\` in the same dir: \`- [Title](file.md) — hook\`. \`mkdir -p\` if the dir does not exist.`;
 }
 
 // ─── Writing (for CLI use) ──────────────────────────────────────
