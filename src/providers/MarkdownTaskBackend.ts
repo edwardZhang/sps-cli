@@ -15,7 +15,7 @@
  */
 import {
   existsSync, mkdirSync, readdirSync, readFileSync,
-  renameSync, writeFileSync,
+  renameSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { parseChecklist } from '../core/checklist.js';
@@ -207,6 +207,11 @@ export class MarkdownTaskBackend implements TaskBackend {
     const { frontmatter, body } = this.parseFile(filePath);
     frontmatter.labels = [...new Set(labels.map((l) => l.trim()).filter(Boolean))];
     this.writeFile(filePath, frontmatter, body);
+  }
+
+  async delete(seq: string): Promise<void> {
+    const { filePath } = this.findCardFile(seq);
+    unlinkSync(filePath);
   }
 
   // ─── Claim ────────────────────────────────────────────────────

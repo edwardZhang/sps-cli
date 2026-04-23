@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { X, Play, RotateCcw, GitBranch, Edit3, Save, Loader2, Plus } from 'lucide-react';
+import { X, Play, RotateCcw, GitBranch, Edit3, Save, Loader2, Plus, Trash2 } from 'lucide-react';
 import {
+  deleteCard,
   getCard,
   launchCard,
   resetCard,
@@ -11,16 +12,21 @@ import { listSkills } from '../../shared/api/skills';
 import { SkillBadge, LabelBadge } from '../../shared/components/Badges';
 import { useDialog } from '../../shared/components/DialogProvider';
 
-/** 从 body 里抽出 "## 描述" 段的内容（用于编辑态 textarea 初始值）。 */
-function extractDescription(body: string): string {
+/** 抽出 body 里指定 "## <heading>" 段的内容。 */
+function extractSection(body: string, heading: string): string {
   const lines = body.split('\n');
-  const descIdx = lines.findIndex((l) => /^##\s+描述\s*$/.test(l));
-  if (descIdx === -1) return '';
+  const re = new RegExp(`^##\\s+${heading}\\s*$`);
+  const idx = lines.findIndex((l) => re.test(l));
+  if (idx === -1) return '';
   let nextIdx = lines.length;
-  for (let i = descIdx + 1; i < lines.length; i++) {
+  for (let i = idx + 1; i < lines.length; i++) {
     if (/^##\s+/.test(lines[i] ?? '')) { nextIdx = i; break; }
   }
-  return lines.slice(descIdx + 1, nextIdx).join('\n').trim();
+  return lines.slice(idx + 1, nextIdx).join('\n').trim();
+}
+
+function extractDescription(body: string): string {
+  return extractSection(body, '描述');
 }
 
 export function CardDetailModal({
@@ -219,16 +225,28 @@ export function CardDetailModal({
               </div>
             )}
 
-            {/* Skills */}
+            {/* Skills / Labels — 分两行展示 */}
             {!editing ? (
-              (data.skills.length > 0 || data.labels.length > 0) && (
-                <div className="flex items-center gap-2 flex-wrap">
-                  {data.skills.map((s) => <SkillBadge key={s} name={s} />)}
-                  {data.labels.map((l) => (
-                    <LabelBadge key={l} label={l} kind={l === 'NEEDS-FIX' ? 'warn' : 'default'} />
-                  ))}
-                </div>
-              )
+              <>
+                {data.skills.length > 0 && (
+                  <div>
+                    <div className="text-sm font-bold mb-1.5">Skills</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {data.skills.map((s) => <SkillBadge key={s} name={s} />)}
+                    </div>
+                  </div>
+                )}
+                {data.labels.length > 0 && (
+                  <div>
+                    <div className="text-sm font-bold mb-1.5">Labels</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {data.labels.map((l) => (
+                        <LabelBadge key={l} label={l} kind={l === 'NEEDS-FIX' ? 'warn' : 'default'} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 <div>
@@ -314,63 +332,97 @@ export function CardDetailModal({
               </>
             )}
 
-            {/* Checklist — read-only always (CLI 管理) */}
-            {data.checklist.total > 0 && (
-              <div className="nb-card bg-[var(--color-bg-cream)] p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-bold text-sm">
-                    检查清单 {data.checklist.done}/{data.checklist.total}
-                  </span>
-                  <div className="w-24 h-2 bg-[var(--color-bg)] border-2 border-[var(--color-text)] rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-[var(--color-cta)]"
-                      style={{ width: `${data.checklist.percent}%` }}
-                    />
-                  </div>
-                </div>
-                <ul className="text-sm space-y-1">
-                  {data.checklist.items.map((item, i) => (
-                    <li key={i} className={`flex items-start gap-2 ${item.done ? 'opacity-60 line-through' : ''}`}>
-                      <span>{item.done ? '✓' : '○'}</span>
-                      <span>{item.text}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Description */}
+            {/* 描述 / 检查清单 / 日志 — 三个独立框 */}
             {!editing ? (
-              data.body && (
+              <>
+                {/* 描述 */}
                 <div>
                   <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                    正文
+                    描述
                   </h3>
                   <pre className="text-xs whitespace-pre-wrap font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4 max-h-64 overflow-auto">
-                    {data.body.trim() || '（空）'}
+                    {extractSection(data.body, '描述') || '（空）'}
                   </pre>
                 </div>
-              )
+
+                {/* 检查清单 */}
+                {data.checklist.total > 0 && (
+                  <div>
+                    <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
+                      检查清单 <span className="text-[var(--color-text-muted)] normal-case tracking-normal">{data.checklist.done}/{data.checklist.total}</span>
+                    </h3>
+                    <div className="nb-card bg-[var(--color-bg-cream)] p-3">
+                      <div className="flex items-center justify-end mb-2">
+                        <div className="w-24 h-2 bg-[var(--color-bg)] border-2 border-[var(--color-text)] rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-[var(--color-cta)]"
+                            style={{ width: `${data.checklist.percent}%` }}
+                          />
+                        </div>
+                      </div>
+                      <ul className="text-sm space-y-1">
+                        {data.checklist.items.map((item, i) => (
+                          <li key={i} className={`flex items-start gap-2 ${item.done ? 'opacity-60 line-through' : ''}`}>
+                            <span>{item.done ? '✓' : '○'}</span>
+                            <span>{item.text}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                {/* 日志 */}
+                <div>
+                  <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
+                    日志
+                  </h3>
+                  <pre className="text-xs whitespace-pre-wrap font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4 max-h-64 overflow-auto">
+                    {extractSection(data.body, '日志') || '（空）'}
+                  </pre>
+                </div>
+              </>
             ) : (
-              <div>
-                <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                  描述
-                </h3>
-                <textarea
-                  className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
-                  style={{ minHeight: 180, resize: 'vertical' }}
-                  value={draftDesc}
-                  onChange={(e) => setDraftDesc(e.target.value)}
-                  aria-label="卡片描述"
-                />
-                <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
-                  只替换 "## 描述" 段的内容；检查清单和日志段不动。
-                </p>
-              </div>
+              <>
+                <div>
+                  <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
+                    描述
+                  </h3>
+                  <textarea
+                    className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
+                    style={{ minHeight: 180, resize: 'vertical' }}
+                    value={draftDesc}
+                    onChange={(e) => setDraftDesc(e.target.value)}
+                    aria-label="卡片描述"
+                  />
+                  <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
+                    只替换 "## 描述" 段的内容；检查清单和日志段不动。
+                  </p>
+                </div>
+
+                {/* 编辑态下检查清单仍只读显示 */}
+                {data.checklist.total > 0 && (
+                  <div className="nb-card bg-[var(--color-bg-cream)] p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-bold text-sm">
+                        检查清单 {data.checklist.done}/{data.checklist.total}
+                      </span>
+                    </div>
+                    <ul className="text-sm space-y-1">
+                      {data.checklist.items.map((item, i) => (
+                        <li key={i} className={`flex items-start gap-2 ${item.done ? 'opacity-60 line-through' : ''}`}>
+                          <span>{item.done ? '✓' : '○'}</span>
+                          <span>{item.text}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Action bar */}
-            <div className="flex gap-2 pt-2 border-t-2 border-[var(--color-border-light)] justify-end">
+            <div className="flex gap-2 pt-2 border-t-2 border-[var(--color-border-light)] justify-end flex-wrap">
               {!editing ? (
                 <>
                   <button
@@ -416,6 +468,41 @@ export function CardDetailModal({
                   >
                     <RotateCcw size={14} strokeWidth={2.5} />
                     重置卡片
+                  </button>
+                  <button
+                    className="nb-btn"
+                    style={{ background: 'var(--color-crashed)', color: 'var(--color-bg)' }}
+                    type="button"
+                    onClick={async () => {
+                      const step1 = await confirm({
+                        title: `删除卡片 #${seq}`,
+                        body: `即将删除 "${data.title}"。此操作不可恢复（md 文件将被物理删除）。是否继续？`,
+                        confirm: '继续',
+                        danger: true,
+                      });
+                      if (!step1) return;
+                      const step2 = await confirm({
+                        title: '最终确认',
+                        body: `请再次确认删除卡片 #${seq}。`,
+                        confirm: '确定删除',
+                        danger: true,
+                      });
+                      if (!step2) return;
+                      try {
+                        await deleteCard(project, seq);
+                        onChanged();
+                        onClose();
+                      } catch (err) {
+                        void alert({
+                          title: '删除失败',
+                          body: err instanceof Error ? err.message : String(err),
+                        });
+                      }
+                    }}
+                    aria-label="删除卡片"
+                  >
+                    <Trash2 size={14} strokeWidth={2.5} />
+                    删除卡片
                   </button>
                 </>
               ) : (

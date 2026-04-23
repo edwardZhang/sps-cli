@@ -175,6 +175,32 @@ export function createCardsRoute(): Hono {
     }
   });
 
+  app.delete('/:project/cards/:seq', async (c) => {
+    const project = c.req.param('project');
+    const seq = c.req.param('seq');
+    const dir = projectDir(project);
+    if (!existsSync(dir)) return notFound(c, project) as Response;
+    try {
+      const { ProjectContext } = await import('../../core/context.js');
+      const { createTaskBackend } = await import('../../providers/registry.js');
+      const ctx = ProjectContext.load(project);
+      const backend = createTaskBackend(ctx.config);
+      await backend.bootstrap();
+      await backend.delete(seq);
+      return c.json({ ok: true, seq: Number(seq) });
+    } catch (err) {
+      return c.json(
+        {
+          type: 'internal',
+          title: 'delete failed',
+          status: 500,
+          detail: err instanceof Error ? err.message : String(err),
+        },
+        500,
+      );
+    }
+  });
+
   app.post('/:project/cards/:seq/reset', async (c) => {
     const project = c.req.param('project');
     const seq = c.req.param('seq');

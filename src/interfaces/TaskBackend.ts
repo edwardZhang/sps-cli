@@ -35,6 +35,8 @@ export interface TaskBackend {
   setDescription(seq: string, desc: string): Promise<void>;
   /** v0.49.7+: replace entire labels array (dedupe + drop empty). */
   setLabels(seq: string, labels: string[]): Promise<void>;
+  /** v0.49.13+: delete the card md file. */
+  delete(seq: string): Promise<void>;
   checklistCreate(seq: string, items: string[]): Promise<void>;
   checklistList(seq: string): Promise<{ id: string; text: string; checked: boolean }[]>;
   checklistCheck(seq: string, itemId: string): Promise<void>;

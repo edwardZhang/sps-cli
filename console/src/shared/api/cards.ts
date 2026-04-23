@@ -51,6 +51,16 @@ export function resetCard(project: string, seq: number) {
   return postJson(`/api/projects/${encodeURIComponent(project)}/cards/${seq}/reset`);
 }
 
+export async function deleteCard(project: string, seq: number): Promise<void> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(project)}/cards/${seq}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+}
+
 export function launchCard(project: string, seq: number) {
   return postJson(`/api/projects/${encodeURIComponent(project)}/cards/${seq}/launch`);
 }
