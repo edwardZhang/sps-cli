@@ -98,6 +98,17 @@ export class PipelineService {
         logPath,
       });
       const pid = child.pid ?? null;
+      // v0.50.7：写 supervisor.pid 文件 —— ProjectService.isPipelineRunning 靠它判活。
+      // 历史上 sps tick 进程不自己写这个文件（v0.44 Console 引入时的设计缺陷，
+      // 从来没有生效过 pipeline running 检测）。Service 层一口气把 spawn + pid
+      // 登记都做了，对外原子。
+      if (pid !== null && pid > 0) {
+        try {
+          this.deps.fs.writeFileAtomic(supervisorPidFile(project), `${pid}\n`);
+        } catch {
+          /* pid 文件写失败不阻塞启动，下一次 poll 会补偿 */
+        }
+      }
       this.deps.events.emit({
         type: 'pipeline.started',
         project,
@@ -131,6 +142,15 @@ export class PipelineService {
           details: { message: cause instanceof Error ? cause.message : String(cause) },
         }),
       );
+    }
+    // 清 supervisor.pid —— pipeline 已经停了，配对的文件也该清
+    try {
+      const pidPath = supervisorPidFile(project);
+      if (this.deps.fs.exists(pidPath)) {
+        this.deps.fs.unlink(pidPath);
+      }
+    } catch {
+      /* best effort */
     }
     this.deps.events.emit({
       type: 'pipeline.stopped',

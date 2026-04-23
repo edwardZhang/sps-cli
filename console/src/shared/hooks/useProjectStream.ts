@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { Card } from '../api/cards';
 
 /**
  * 订阅 /stream/projects/:name SSE。
@@ -16,15 +15,13 @@ export function useProjectStream(project: string | null | undefined): void {
 
     const onCardChange = (ev: MessageEvent): void => {
       try {
-        const data = JSON.parse(ev.data) as { project: string; seq: number; card?: Card };
+        const data = JSON.parse(ev.data) as { project: string; seq: number };
         qc.invalidateQueries({ queryKey: ['cards', data.project] });
-        if (data.card) {
-          qc.setQueryData(['card', data.project, data.seq], {
-            ...(qc.getQueryData(['card', data.project, data.seq]) ?? {}),
-            ...data.card,
-          });
-        }
-        // project list 聚合数字也变
+        // v0.50.7：不再把事件里的 partial Card 塞进 ['card', p, seq] 缓存 ——
+        // 事件的 card 是 CardSummary 形，没有 body / 完整 checklist.items。塞进去
+        // 会让 CardDetailModal 显示残缺数据，直到下一轮真 refetch 才补全。
+        // 改为失效缓存，强制 useQuery 发真请求。
+        qc.invalidateQueries({ queryKey: ['card', data.project, data.seq] });
         qc.invalidateQueries({ queryKey: ['projects'] });
       } catch {
         /* ignore */
