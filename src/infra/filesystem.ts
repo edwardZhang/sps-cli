@@ -133,11 +133,23 @@ interface MemoryEntry {
  * 不追求和 POSIX 100% 语义一致，够测试用即可。
  */
 export class InMemoryFileSystem implements FileSystem {
-  private root: MemoryEntry = { kind: 'dir', mtimeMs: 0, children: new Map() };
-  private clock = 0;
+  private root: MemoryEntry;
+  private counter = 0;
+  private readonly nowFn: () => number;
+
+  /**
+   * @param opts.nowFn 自定义"写入时的 mtime 生成器"。默认用 Date.now()（和 Node FS 语义一致）。
+   *                   测试想要精确控制 mtime 可以传 FakeClock 的 now 方法。
+   */
+  constructor(opts: { nowFn?: () => number } = {}) {
+    this.nowFn = opts.nowFn ?? (() => Date.now());
+    this.root = { kind: 'dir', mtimeMs: this.nowFn(), children: new Map() };
+  }
 
   private tick(): number {
-    return ++this.clock;
+    // 递增计数避免同毫秒下两次 write 得到相同 mtimeMs（测试偶有）
+    this.counter += 1;
+    return this.nowFn() + (this.counter % 1000) * 0.001;
   }
 
   private walk(path: string, createDirs: boolean): MemoryEntry | null {
