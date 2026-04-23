@@ -1,6 +1,6 @@
 {
   "name": "@coralai/sps-console",
-  "version": "0.50.11",
+  "version": "0.50.12",
   "description": "SPS Console — Web UI for sps-cli",
   "private": true,
   "type": "module",

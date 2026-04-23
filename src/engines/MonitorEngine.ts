@@ -86,6 +86,9 @@ export class MonitorEngine {
     };
 
     try {
+      // v0.50.12：优先自愈 Stop-hook race 留下的 false-positive NEEDS-FIX（同时
+      // 带 COMPLETED-<stage>）。放最前面，这样后续 check 看到的是已清理的卡。
+      await this.checkRaceRecovery(checks, actions);
       await this.checkWorkerHealth(checks, actions);
       await this.checkAcpShimHealth(checks, actions);
       await this.checkOrphanSlots(checks, actions);
@@ -108,6 +111,84 @@ export class MonitorEngine {
     }
 
     return result;
+  }
+
+  // ─── Check 0: Race-recovery (v0.50.12) ────────────────────────────
+  //
+  // 场景：Stop hook 是 Claude 异步写的文件操作，ACP session_completed 可能比它
+  // 早到达 SPS。`EventHandler.onCompleted` 读卡时 label 还没写 → 误标 NEEDS-FIX
+  // → 稍后 hook 写上 COMPLETED-<stage> → 卡片两个 label 同时在，永远卡在 Inprogress。
+  //
+  // 这里识别这种"race 留下的假阳性 NEEDS-FIX"：卡片同时带 NEEDS-FIX + COMPLETED-<stage>
+  // 时，按成功语义处理：清 NEEDS-FIX/CLAIMED/STARTED-<stage> + 移到 onCompleteState
+  // + 释放 slot/lease。
+  //
+  // EventHandler 侧已加 5s 轮询预防大部分 race；这里作为兜底处理已卡住的卡 +
+  // 更慢的 hook 情况。
+
+  private async checkRaceRecovery(
+    checks: CheckResult[],
+    actions: ActionRecord[],
+  ): Promise<void> {
+    const recovered: string[] = [];
+
+    for (const stage of this.pipelineAdapter.stages) {
+      const cards = await this.taskBackend.listByState(stage.activeState);
+      const completedLabel = `COMPLETED-${stage.name}`;
+      for (const card of cards) {
+        if (!card.labels.includes('NEEDS-FIX')) continue;
+        if (!card.labels.includes(completedLabel)) continue;
+
+        // race-recovery：按 onCompleted 成功路径处理
+        try {
+          // 清瞬态 label —— NEEDS-FIX 是误判，CLAIMED/STARTED-<stage> 是运行时残留
+          await this.removeLabelSafe(card.seq, 'NEEDS-FIX');
+          await this.removeLabelSafe(card.seq, 'CLAIMED');
+          await this.removeLabelSafe(card.seq, `STARTED-${stage.name}`);
+
+          // 移到下一阶段
+          const targetState = stage.onCompleteState || this.pipelineAdapter.states.done;
+          if (card.state !== targetState) {
+            await this.taskBackend.move(card.seq, targetState);
+          }
+
+          // 清 state.json 里的 slot + lease
+          this.runtimeStore.updateState('monitor-race-recovery', (draft) => {
+            this.runtimeStore.releaseTaskProjection(draft, card.seq, { dropLease: true });
+          });
+
+          recovered.push(card.seq);
+          this.log.ok(`seq ${card.seq}: race-recovery — cleared NEEDS-FIX (has ${completedLabel}), advanced to ${targetState}`);
+          actions.push({
+            action: 'race-recovery',
+            entity: `seq:${card.seq}`,
+            result: 'ok',
+            message: `Stop-hook race healed: NEEDS-FIX cleared, advanced to ${targetState}`,
+          });
+          this.logEvent('race-recovery', card.seq, 'ok', { stage: stage.name, targetState });
+          await this.notifySafe(
+            `✅ [${this.ctx.projectName}] seq:${card.seq} race-recovery — NEEDS-FIX cleared, advanced to ${targetState}`,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.log.error(`seq ${card.seq}: race-recovery failed: ${msg}`);
+          actions.push({
+            action: 'race-recovery',
+            entity: `seq:${card.seq}`,
+            result: 'fail',
+            message: `race-recovery failed: ${msg}`,
+          });
+        }
+      }
+    }
+
+    checks.push({
+      name: 'race-recovery',
+      status: 'pass',
+      message: recovered.length > 0
+        ? `Healed ${recovered.length} Stop-hook race card(s): ${recovered.join(', ')}`
+        : 'no race-condition cards',
+    });
   }
 
   // ─── Check 1: Orphan Slot Cleanup ─────────────────────────────

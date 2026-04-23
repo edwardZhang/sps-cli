@@ -148,13 +148,52 @@ describe('SPSEventHandler.onCompleted (label gating)', () => {
       runtimeStore: new RuntimeStore({ paths: { stateFile: join(dir, 'state.json') }, maxWorkers: 1 } as any),
       project: 'test',
       pipelineAdapter: makePipelineAdapter(),
+      completedLabelPoll: { timeoutMs: 30, intervalMs: 10 },
     });
 
     handler.handle(makeCompletedEvent());
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 100));
 
     expect(addLabel).toHaveBeenCalledWith('42', 'NEEDS-FIX');
     expect(move).not.toHaveBeenCalledWith('42', 'QA');  // NOT moved to onCompleteState
+  });
+
+  // v0.50.12：Stop hook race regression
+  it('polls for COMPLETED label before declaring NEEDS-FIX', async () => {
+    writeState(join(dir, 'state.json'), makeState(), 'init');
+    // 先无 label，第 2 次读才有 —— 模拟 Stop hook 晚到
+    let readCount = 0;
+    const card = (): Card => ({
+      id: 'c42', seq: '42', title: 't', desc: '', state: 'Inprogress',
+      labels: readCount++ >= 1 ? ['COMPLETED-develop'] : [],
+      meta: {},
+    });
+    const move = vi.fn(async () => {});
+    const addLabel = vi.fn(async () => {});
+    const taskBackend = {
+      getBySeq: vi.fn(async () => card()),
+      move, addLabel, comment: vi.fn(async () => {}), removeLabel: vi.fn(async () => {}),
+      releaseClaim: vi.fn(async () => {}), claim: vi.fn(async () => {}),
+    } as unknown as TaskBackend;
+    const handler = new SPSEventHandler({
+      taskBackend,
+      notifier: {
+        send: vi.fn(async () => {}), sendSuccess: vi.fn(async () => {}),
+        sendWarning: vi.fn(async () => {}), sendError: vi.fn(async () => {}),
+        sendDigest: vi.fn(async () => {}),
+      } as any,
+      runtimeStore: new RuntimeStore({ paths: { stateFile: join(dir, 'state.json') }, maxWorkers: 1 } as any),
+      project: 'test',
+      pipelineAdapter: makePipelineAdapter(),
+      completedLabelPoll: { timeoutMs: 500, intervalMs: 20 },
+    });
+
+    handler.handle(makeCompletedEvent());
+    await new Promise((r) => setTimeout(r, 150));
+
+    // label 第 2 次出现，应按成功路径处理
+    expect(move).toHaveBeenCalledWith('42', 'QA');
+    expect(addLabel).not.toHaveBeenCalledWith('42', 'NEEDS-FIX');
   });
 
   it('routes to stage-specific label — COMPLETED-qa for qa stage', async () => {

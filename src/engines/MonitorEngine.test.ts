@@ -430,3 +430,89 @@ describe('MonitorEngine.autoRetry (v0.41.1 bug fixes)', () => {
     expect(removeLabelMock).toHaveBeenCalledWith('42', 'STALE-RUNTIME');
   });
 });
+
+// v0.50.12：Stop-hook race 自愈
+describe('MonitorEngine.checkRaceRecovery', () => {
+  let tempDir: string;
+  beforeEach(() => { tempDir = makeTempDir(); });
+  afterEach(() => { rmSync(tempDir, { recursive: true, force: true }); });
+
+  function makeRaceEngine(card: { seq: string; labels: string[]; state: string }) {
+    const ctx = makeCtx(tempDir);
+    writeState(ctx.paths.stateFile, buildState({
+      workers: { 'worker-1': { ...createIdleWorkerSlot('worker-1'), status: 'active', seq: 17 as any } as any },
+      leases: { '17': { seq: '17', phase: 'coding', slot: 'worker-1' } as any },
+    }), 'init');
+    const moveMock = vi.fn().mockResolvedValue(undefined);
+    const removeLabelMock = vi.fn().mockResolvedValue(undefined);
+    const taskBackend = {
+      listByState: vi.fn().mockImplementation((state: string) => state === 'Inprogress' ? [card] : []),
+      getBySeq: vi.fn().mockResolvedValue(card),
+      move: moveMock,
+      removeLabel: removeLabelMock,
+      addLabel: vi.fn().mockResolvedValue(undefined),
+      comment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TaskBackend;
+    const repoBackend = { getMrStatus: vi.fn().mockResolvedValue({ exists: false, state: 'unknown' }) } as unknown as RepoBackend;
+    const notifier = { send: vi.fn(), sendSuccess: vi.fn(), sendWarning: vi.fn(), sendError: vi.fn(), sendDigest: vi.fn() } as unknown as Notifier;
+    const supervisor = { get: vi.fn() } as unknown as ProcessSupervisor;
+    const develop = {
+      name: 'develop', triggerState: 'Todo', activeState: 'Inprogress', onCompleteState: 'Done',
+      agent: 'claude', completion: 'exit-code',
+    } as any;
+    const pipelineAdapter = {
+      states: { ready: 'Todo', planning: 'Planning', backlog: 'Backlog', done: 'Done', review: 'QA' },
+      stages: [develop], activeStates: ['Inprogress'],
+    } as unknown as ProjectPipelineAdapter;
+    const engine = new MonitorEngine(ctx, taskBackend, repoBackend, notifier, supervisor, pipelineAdapter, makeWorkerManager());
+    return { engine, moveMock, removeLabelMock };
+  }
+
+  it('heals cards with both NEEDS-FIX and COMPLETED-<stage>', async () => {
+    const { engine, moveMock, removeLabelMock } = makeRaceEngine({
+      seq: '17',
+      labels: ['NEEDS-FIX', 'COMPLETED-develop', 'CLAIMED', 'STARTED-develop'],
+      state: 'Inprogress',
+    });
+
+    const checks: any[] = [];
+    const actions: any[] = [];
+    await (engine as any).checkRaceRecovery(checks, actions);
+
+    expect(removeLabelMock).toHaveBeenCalledWith('17', 'NEEDS-FIX');
+    expect(removeLabelMock).toHaveBeenCalledWith('17', 'CLAIMED');
+    expect(removeLabelMock).toHaveBeenCalledWith('17', 'STARTED-develop');
+    expect(moveMock).toHaveBeenCalledWith('17', 'Done');
+    expect(actions.some(a => a.action === 'race-recovery' && a.result === 'ok')).toBe(true);
+  });
+
+  it('ignores cards with only NEEDS-FIX (genuine failure)', async () => {
+    const { engine, moveMock, removeLabelMock } = makeRaceEngine({
+      seq: '17',
+      labels: ['NEEDS-FIX'],
+      state: 'Inprogress',
+    });
+
+    const checks: any[] = [];
+    const actions: any[] = [];
+    await (engine as any).checkRaceRecovery(checks, actions);
+
+    expect(removeLabelMock).not.toHaveBeenCalled();
+    expect(moveMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores cards with only COMPLETED-<stage> (normal path handled elsewhere)', async () => {
+    const { engine, moveMock, removeLabelMock } = makeRaceEngine({
+      seq: '17',
+      labels: ['COMPLETED-develop'],
+      state: 'Inprogress',
+    });
+
+    const checks: any[] = [];
+    const actions: any[] = [];
+    await (engine as any).checkRaceRecovery(checks, actions);
+
+    expect(removeLabelMock).not.toHaveBeenCalled();
+    expect(moveMock).not.toHaveBeenCalled();
+  });
+});

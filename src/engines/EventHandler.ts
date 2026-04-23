@@ -33,6 +33,8 @@ export interface EventHandlerDeps {
   runtimeStore: RuntimeStore;
   project: string;
   pipelineAdapter: ProjectPipelineAdapter;
+  /** v0.50.12：COMPLETED-<stage> label 轮询参数。测试里传小值加速。 */
+  completedLabelPoll?: { timeoutMs: number; intervalMs: number };
 }
 
 // ─── SPSEventHandler ──────────────────────────────────────────
@@ -43,6 +45,7 @@ export class SPSEventHandler {
   private readonly runtimeStore: RuntimeStore;
   private readonly project: string;
   private readonly pipelineAdapter: ProjectPipelineAdapter;
+  private readonly completedLabelPoll: { timeoutMs: number; intervalMs: number };
 
   constructor(deps: EventHandlerDeps) {
     this.taskBackend = deps.taskBackend;
@@ -50,6 +53,7 @@ export class SPSEventHandler {
     this.runtimeStore = deps.runtimeStore;
     this.project = deps.project;
     this.pipelineAdapter = deps.pipelineAdapter;
+    this.completedLabelPoll = deps.completedLabelPoll ?? { timeoutMs: 5000, intervalMs: 500 };
   }
 
   /**
@@ -133,14 +137,18 @@ export class SPSEventHandler {
     // If the label is absent here, the ACP run finished but Claude did not declare (hook
     // didn't run, crashed mid-task, etc). Treat as NEEDS-FIX so the user sees the issue
     // instead of silently advancing a half-done card.
+    //
+    // v0.50.12：Stop hook 是 Claude 侧异步跑的文件写，ACP session_completed 事件可能
+    // 先到达 SPS。直接读一次会踩 race——hook 还在跑，label 没写上就判 NEEDS-FIX。
+    // 改为最多轮询 5 秒（500ms 间隔），给 hook 合理缓冲。
     const stageName = stage?.name ?? 'develop';
     const completedLabel = `COMPLETED-${stageName}`;
-    let card: Card | null = null;
-    try {
-      card = await this.taskBackend.getBySeq(taskId);
-    } catch (err) {
-      this.logError('onCompleted: getBySeq', err);
-    }
+    const card = await this.pollForCompletedLabel(
+      taskId,
+      completedLabel,
+      this.completedLabelPoll.timeoutMs,
+      this.completedLabelPoll.intervalMs,
+    );
     const hasCompletedLabel = !!card?.labels.includes(completedLabel);
 
     if (!hasCompletedLabel) {
@@ -288,6 +296,36 @@ export class SPSEventHandler {
       await this.notifier.send(message);
     } catch (err) {
       this.logError('notify', err);
+    }
+  }
+
+  // ─── Helpers ───────────────────────────────────────────────────
+
+  /**
+   * v0.50.12：轮询 card 直到 COMPLETED-<stage> label 出现或超时。
+   *
+   * Stop hook 是 Claude 异步写文件，ACP session_completed 事件可能先到达。
+   * 直接判一次 label 会把正常完成的卡片误标 NEEDS-FIX。
+   * 一旦看到目标 label 立即返回；超时前至少会读一次卡片。
+   */
+  private async pollForCompletedLabel(
+    taskId: string,
+    completedLabel: string,
+    timeoutMs: number,
+    intervalMs: number,
+  ): Promise<Card | null> {
+    const deadline = Date.now() + timeoutMs;
+    let lastCard: Card | null = null;
+    // 先立即读一次——hook 本来就快时无谓等待
+    for (;;) {
+      try {
+        lastCard = await this.taskBackend.getBySeq(taskId);
+        if (lastCard?.labels.includes(completedLabel)) return lastCard;
+      } catch (err) {
+        this.logError('pollForCompletedLabel: getBySeq', err);
+      }
+      if (Date.now() >= deadline) return lastCard;
+      await new Promise<void>((r) => setTimeout(r, intervalMs));
     }
   }
 
