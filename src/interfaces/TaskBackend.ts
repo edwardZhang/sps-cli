@@ -14,7 +14,7 @@
  * @boundedContext task-management
  */
 
-import type { Card, CardState } from '../models/types.js';
+import type { Card, CardState } from '../shared/types.js';
 
 export interface TaskBackend {
   listAll(): Promise<Card[]>;

@@ -51,7 +51,7 @@ export async function buildTestApp(): Promise<TestAppHandle> {
   app.route('/api/workers', createWorkersAggregateRoute(services.workers));
   app.route('/api/skills', createSkillsRoute(services.skills));
   app.route('/api/logs', createLogsRoute(services.logs));
-  app.route('/api/system', createSystemRoute('test-version', new Date()));
+  app.route('/api/system', createSystemRoute(services.system));
 
   const req: TestAppHandle['req'] = (path, init = {}) => {
     const method = init.method ?? 'GET';

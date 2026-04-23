@@ -14,7 +14,7 @@
  * @boundedContext repository-operations
  */
 
-import type { MrStatus } from '../models/types.js';
+import type { MrStatus } from '../shared/types.js';
 
 export interface RepoBackend {
   ensureCleanBase(repoDir: string, baseBranch: string): Promise<void>;

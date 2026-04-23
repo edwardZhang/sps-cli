@@ -24,7 +24,7 @@ import { readQueue, removeFromQueue } from '../core/queue.js';
 import { readState } from '../core/state.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
-import type { ActionRecord, Card, CommandResult } from '../models/types.js';
+import type { ActionRecord, Card, CommandResult } from '../shared/types.js';
 
 export class SchedulerEngine {
   private log: Logger;

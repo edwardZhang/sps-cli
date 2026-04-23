@@ -1,37 +1,40 @@
 /**
  * @module        console/routes/chat
- * @description   Chat sessions via daemon — structured streaming with tool events
+ * @description   Chat sessions — REST CRUD 走 ChatService；流式 daemon 消息走 delivery-local emitter
  *
- * v0.46 重写：
- *   - 放弃 spawn sps agent + stdout 纯文本解析
- *   - 改用 DaemonClient.ensureSession + startRun + subscribeRun 拿结构化 AccumulatorEvent
- *   - 每个 chat session 映射到 daemon slot `session-chat-<sessionId>`，多轮对话有上下文
- *   - SSE 事件按 block 类型分开推（text / tool_use / tool_update / complete）
+ * @layer         console
+ *
+ * v0.50.1 重构：
+ *   - CRUD (list / create / get / getMessages / delete / interrupt) 改走 ChatService
+ *   - 流式事件（chunk.text / tool_use / tool_update / complete）走本模块内的 EventEmitter
+ *     —— 这些事件是 SSE 连接作用域内的短暂广播，不属于跨服务共享的 DomainEvent
+ *   - 干掉原 console/sse/eventBus.ts（所有 chat-specific publish 挪到 chatBus 里）
  */
 
 import { randomUUID } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Hono } from 'hono';
 import { ensureDaemon } from '../../commands/agentDaemon.js';
 import type { Logger } from '../../core/logger.js';
 import { DaemonClient } from '../../daemon/daemonClient.js';
-import { eventBus } from '../sse/eventBus.js';
+import type { ChatService } from '../../services/ChatService.js';
+import { toHttpStatus, toProblemJson } from '../../shared/errors.js';
+import { chatSessionsDir } from '../../shared/runtimePaths.js';
+import { sendResult } from '../lib/resultToJson.js';
 
-const HOME = process.env.HOME || '/home/coral';
-const SESSIONS_DIR = resolve(HOME, '.coral', 'chat-sessions');
-
-// v0.47.1 保护：并发上限 + 单消息大小上限
 const MAX_CONCURRENT_SESSIONS = 5;
-const MAX_ASSISTANT_CONTENT_BYTES = 10 * 1024 * 1024; // 10MB
-const activeSessions = new Set<string>(); // chatSlot strings currently streaming
+const MAX_ASSISTANT_CONTENT_BYTES = 10 * 1024 * 1024;
+const activeSessions = new Set<string>();
+
+/**
+ * chatBus —— Delivery 层内部的流式广播 EventEmitter。
+ *   - 事件不持久化、不补偿，断线只通过 /sessions/:id/messages?since= 追历史消息
+ *   - 订阅/发布作用域：单 console 进程内
+ */
+const chatBus = new EventEmitter();
+chatBus.setMaxListeners(0);
 
 export type ChatMessageBlock =
   | { type: 'text'; text: string }
@@ -41,15 +44,13 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'error';
   content: string;
-  /** Structured blocks for tool rendering (assistant only). If omitted, content is plain text. */
   blocks?: ChatMessageBlock[];
-  /** True if content/blocks were truncated at MAX_ASSISTANT_CONTENT_BYTES. */
   truncated?: boolean;
   ts: string;
   status?: 'streaming' | 'complete' | 'error';
 }
 
-interface ChatSession {
+interface ChatSessionPersisted {
   id: string;
   createdAt: string;
   lastMessageAt: string | null;
@@ -59,52 +60,22 @@ interface ChatSession {
   messages: ChatMessage[];
 }
 
-function ensureDir(): void {
-  if (!existsSync(SESSIONS_DIR)) mkdirSync(SESSIONS_DIR, { recursive: true });
-}
-
 function sessionPath(id: string): string {
-  return resolve(SESSIONS_DIR, `${id}.json`);
+  return resolve(chatSessionsDir(), `${id}.json`);
 }
 
-function readSession(id: string): ChatSession | null {
+function readSession(id: string): ChatSessionPersisted | null {
   const p = sessionPath(id);
   if (!existsSync(p)) return null;
   try {
-    return JSON.parse(readFileSync(p, 'utf-8')) as ChatSession;
+    return JSON.parse(readFileSync(p, 'utf-8')) as ChatSessionPersisted;
   } catch {
     return null;
   }
 }
 
-function writeSession(s: ChatSession): void {
-  ensureDir();
+function writeSession(s: ChatSessionPersisted): void {
   writeFileSync(sessionPath(s.id), JSON.stringify(s, null, 2));
-}
-
-function listSessions(): ChatSession[] {
-  if (!existsSync(SESSIONS_DIR)) return [];
-  return readdirSync(SESSIONS_DIR)
-    .filter((f) => f.endsWith('.json'))
-    .map((f) => {
-      try {
-        return JSON.parse(readFileSync(resolve(SESSIONS_DIR, f), 'utf-8')) as ChatSession;
-      } catch {
-        return null;
-      }
-    })
-    .filter((s): s is ChatSession => s !== null)
-    .sort((a, b) => {
-      const ta = a.lastMessageAt ?? a.createdAt;
-      const tb = b.lastMessageAt ?? b.createdAt;
-      return tb.localeCompare(ta);
-    });
-}
-
-function summarize(s: ChatSession): Omit<ChatSession, 'messages'> {
-  const { messages, ...rest } = s;
-  void messages;
-  return rest;
 }
 
 function formatTitle(firstMessage: string): string {
@@ -122,16 +93,18 @@ async function streamAssistantResponse(
   userContent: string,
   log: Logger,
 ): Promise<void> {
-  // 1. Ensure daemon is running
   if (!(await ensureDaemon())) {
-    const errMsg: ChatMessage = {
-      id: assistantId,
-      role: 'error',
-      content: 'Failed to start agent daemon',
-      ts: new Date().toISOString(),
-      status: 'error',
-    };
-    persistAndEmitComplete(sessionId, errMsg, log);
+    persistAndEmitComplete(
+      sessionId,
+      {
+        id: assistantId,
+        role: 'error',
+        content: 'Failed to start agent daemon',
+        ts: new Date().toISOString(),
+        status: 'error',
+      },
+      log,
+    );
     return;
   }
 
@@ -139,38 +112,40 @@ async function streamAssistantResponse(
   const slot = chatSlot(sessionId);
   activeSessions.add(slot);
 
-  // 2. Ensure session exists (reuses if present → multi-turn context)
   try {
     await client.ensureSession(slot, 'claude');
   } catch (err) {
     activeSessions.delete(slot);
-    const errMsg: ChatMessage = {
-      id: assistantId,
-      role: 'error',
-      content: `ensureSession failed: ${err instanceof Error ? err.message : String(err)}`,
-      ts: new Date().toISOString(),
-      status: 'error',
-    };
-    persistAndEmitComplete(sessionId, errMsg, log);
+    persistAndEmitComplete(
+      sessionId,
+      {
+        id: assistantId,
+        role: 'error',
+        content: `ensureSession failed: ${err instanceof Error ? err.message : String(err)}`,
+        ts: new Date().toISOString(),
+        status: 'error',
+      },
+      log,
+    );
     return;
   }
 
-  // 3. Subscribe FIRST (before startRun) so we don't miss early events.
-  //    Run the subscription loop in background.
   const subscription = client.subscribeRun(slot);
   const blocks: ChatMessageBlock[] = [];
   let accumulatedText = '';
-
   let truncated = false;
 
   const consume = (async (): Promise<void> => {
     for await (const evt of subscription) {
       if (evt.event === 'text') {
-        if (truncated) continue; // drop further text after cap
-        const remainingBudget = MAX_ASSISTANT_CONTENT_BYTES - Buffer.byteLength(accumulatedText, 'utf-8');
+        if (truncated) continue;
+        const remainingBudget =
+          MAX_ASSISTANT_CONTENT_BYTES - Buffer.byteLength(accumulatedText, 'utf-8');
         if (remainingBudget <= 0) {
           truncated = true;
-          log.warn(`chat[${sessionId}]: assistant output exceeded ${MAX_ASSISTANT_CONTENT_BYTES} bytes — truncating`);
+          log.warn(
+            `chat[${sessionId}]: assistant output exceeded ${MAX_ASSISTANT_CONTENT_BYTES} bytes — truncating`,
+          );
           continue;
         }
         const piece =
@@ -181,14 +156,16 @@ async function streamAssistantResponse(
         const last = blocks[blocks.length - 1];
         if (last?.type === 'text') last.text += piece;
         else blocks.push({ type: 'text', text: piece });
-        eventBus.publish('chat.message.chunk.text', {
+        chatBus.emit('chat.message.chunk.text', {
           sessionId,
           assistantId,
           text: piece,
         });
         if (piece.length < evt.text.length) {
           truncated = true;
-          log.warn(`chat[${sessionId}]: truncated mid-chunk at ${MAX_ASSISTANT_CONTENT_BYTES} bytes`);
+          log.warn(
+            `chat[${sessionId}]: truncated mid-chunk at ${MAX_ASSISTANT_CONTENT_BYTES} bytes`,
+          );
         }
       } else if (evt.event === 'tool_use') {
         blocks.push({
@@ -198,7 +175,7 @@ async function streamAssistantResponse(
           kind: evt.kind,
           status: evt.status,
         });
-        eventBus.publish('chat.message.chunk.tool_use', {
+        chatBus.emit('chat.message.chunk.tool_use', {
           sessionId,
           assistantId,
           id: evt.id,
@@ -209,7 +186,7 @@ async function streamAssistantResponse(
       } else if (evt.event === 'tool_update') {
         const tool = blocks.find((b) => b.type === 'tool_use' && b.id === evt.id);
         if (tool && tool.type === 'tool_use') tool.status = evt.status;
-        eventBus.publish('chat.message.chunk.tool_update', {
+        chatBus.emit('chat.message.chunk.tool_update', {
           sessionId,
           assistantId,
           id: evt.id,
@@ -236,28 +213,27 @@ async function streamAssistantResponse(
     }
   })();
 
-  // 4. Start the run (fire and forget — events flow through subscription)
   try {
     await client.startRun(slot, userContent, 'claude');
   } catch (err) {
     subscription.cancel();
     activeSessions.delete(slot);
-    const errMsg: ChatMessage = {
-      id: assistantId,
-      role: 'error',
-      content: `startRun failed: ${err instanceof Error ? err.message : String(err)}`,
-      ts: new Date().toISOString(),
-      status: 'error',
-    };
-    persistAndEmitComplete(sessionId, errMsg, log);
+    persistAndEmitComplete(
+      sessionId,
+      {
+        id: assistantId,
+        role: 'error',
+        content: `startRun failed: ${err instanceof Error ? err.message : String(err)}`,
+        ts: new Date().toISOString(),
+        status: 'error',
+      },
+      log,
+    );
     return;
   }
 
   try {
-    // Await subscription loop (background — but chat POST already returned 202)
     await consume;
-
-    // 5. Clear run so slot is reusable for next turn
     try {
       await client.clearRun(slot);
     } catch {
@@ -275,118 +251,73 @@ function persistAndEmitComplete(sessionId: string, msg: ChatMessage, log: Logger
   session.lastMessageAt = msg.ts;
   session.messageCount = session.messages.length;
   writeSession(session);
-  eventBus.publish('chat.message.complete', {
+  chatBus.emit('chat.message.complete', {
     sessionId,
     assistantId: msg.id,
     message: msg,
   });
   if (msg.role === 'error') log.warn(`chat[${sessionId}]: ${msg.content}`);
-  else log.ok(`chat[${sessionId}]: assistant complete (${msg.content.length} chars, ${msg.blocks?.length ?? 0} blocks)`);
+  else
+    log.ok(
+      `chat[${sessionId}]: assistant complete (${msg.content.length} chars, ${msg.blocks?.length ?? 0} blocks)`,
+    );
 }
 
-export function createChatRoute(log: Logger): Hono {
+export function createChatRoute(log: Logger, chat: ChatService): Hono {
   const app = new Hono();
 
-  app.get('/sessions', (c) => {
-    return c.json({ data: listSessions().map(summarize) });
+  app.get('/sessions', async (c) => {
+    const r = await chat.list();
+    if (!r.ok) return sendResult(c, r);
+    return c.json({ data: r.value });
   });
 
   app.post('/sessions', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
-    const session: ChatSession = {
-      id: randomUUID(),
-      createdAt: new Date().toISOString(),
-      lastMessageAt: null,
-      title: typeof body?.title === 'string' && body.title ? body.title : '新对话',
-      project: typeof body?.project === 'string' ? body.project : null,
-      messageCount: 0,
-      messages: [],
-    };
-    writeSession(session);
-    eventBus.publish('chat.session.created', { sessionId: session.id });
-    return c.json(summarize(session), 201);
+    const body = (await c.req.json().catch(() => ({}))) as { title?: string; project?: string };
+    const r = await chat.create({ title: body.title, project: body.project });
+    if (!r.ok) return c.json(toProblemJson(r.error), toHttpStatus(r.error) as 400);
+    chatBus.emit('chat.session.created', { sessionId: r.value.id });
+    return c.json(r.value, 201);
   });
 
-  app.get('/sessions/:id', (c) => {
-    const id = c.req.param('id');
-    const s = readSession(id);
-    if (!s) return c.json({ type: 'not-found', title: 'Session not found', status: 404 }, 404);
-    return c.json(s);
+  app.get('/sessions/:id', async (c) => {
+    return sendResult(c, await chat.get(c.req.param('id')));
   });
 
-  /**
-   * GET /sessions/:id/messages?since=<iso-ts> — Diff fetch for reconnect.
-   *   Returns only messages with ts > since. Frontend calls this after SSE
-   *   reconnect to catch up on anything persisted during the gap.
-   */
-  app.get('/sessions/:id/messages', (c) => {
-    const id = c.req.param('id');
-    const s = readSession(id);
-    if (!s) return c.json({ type: 'not-found', title: 'Session not found', status: 404 }, 404);
-    const since = c.req.query('since');
-    const messages = since
-      ? s.messages.filter((m) => m.ts > since)
-      : s.messages;
-    return c.json({ data: messages, total: s.messages.length });
+  app.get('/sessions/:id/messages', async (c) => {
+    const r = await chat.getMessages(c.req.param('id'), c.req.query('since') ?? undefined);
+    return sendResult(c, r);
   });
 
   app.delete('/sessions/:id', async (c) => {
     const id = c.req.param('id');
-    const p = sessionPath(id);
-    if (existsSync(p)) rmSync(p);
-    // Also stop the daemon session so ACP child process is freed
-    try {
-      const client = new DaemonClient();
-      if (await client.isRunning()) {
-        await client.stopSession(chatSlot(id)).catch(() => { /* session may not exist */ });
-      }
-    } catch { /* best effort */ }
-    eventBus.publish('chat.session.deleted', { sessionId: id });
+    const r = await chat.delete(id);
+    if (!r.ok) return c.json(toProblemJson(r.error), toHttpStatus(r.error) as 400);
+    chatBus.emit('chat.session.deleted', { sessionId: id });
     return c.body(null, 204);
   });
 
-  /**
-   * POST /sessions/:id/interrupt — Cancel the in-flight assistant turn.
-   *   Session stays alive so user can send another message with context preserved.
-   *   Accumulator emits 'complete' event with stopReason='cancelled' → subscription loop exits.
-   */
   app.post('/sessions/:id/interrupt', async (c) => {
-    const id = c.req.param('id');
-    const client = new DaemonClient();
-    if (!(await client.isRunning())) {
-      return c.json({ type: 'not-found', title: 'daemon not running', status: 404 }, 404);
-    }
-    try {
-      await client.cancelRun(chatSlot(id));
-    } catch (err) {
-      return c.json(
-        {
-          type: 'internal',
-          title: 'cancel failed',
-          status: 500,
-          detail: err instanceof Error ? err.message : String(err),
-        },
-        500,
-      );
-    }
+    const r = await chat.interrupt(c.req.param('id'));
+    if (!r.ok) return c.json(toProblemJson(r.error), toHttpStatus(r.error) as 400);
     return c.body(null, 204);
   });
 
   /**
-   * POST messages: 非阻塞
-   *   1. 持久化 user msg → 立即返回 user + assistantId (202)
-   *   2. 后台走 daemon，SSE 推 chunk.text / chunk.tool_use / chunk.tool_update / complete
+   * POST messages —— 非阻塞发送。ChatService 只管持久化；streamAssistantResponse
+   * 由 Delivery 层起 goroutine，通过 chatBus 广播给 SSE 订阅者。
    */
   app.post('/sessions/:id/messages', async (c) => {
     const id = c.req.param('id');
-    const s = readSession(id);
-    if (!s) return c.json({ type: 'not-found', title: 'Session not found', status: 404 }, 404);
+    const session = readSession(id);
+    if (!session) {
+      return c.json({ type: 'not-found', title: 'Session not found', status: 404 }, 404);
+    }
     const body = (await c.req.json().catch(() => null)) as { content?: string } | null;
     if (!body?.content || typeof body.content !== 'string') {
       return c.json({ type: 'validation', title: 'content required', status: 422 }, 422);
     }
 
-    // v0.47.1 并发上限：资源保护。当前 session 若已经在跑，也拒绝（避免重复 startRun）
     if (activeSessions.has(chatSlot(id))) {
       return c.json(
         {
@@ -417,21 +348,20 @@ export function createChatRoute(log: Logger): Hono {
       ts: new Date().toISOString(),
       status: 'complete',
     };
-    s.messages.push(userMsg);
-    s.lastMessageAt = userMsg.ts;
-    s.messageCount = s.messages.length;
-    if (s.messages.length === 1) s.title = formatTitle(body.content);
-    writeSession(s);
-    eventBus.publish('chat.message', { sessionId: id, message: userMsg });
+    session.messages.push(userMsg);
+    session.lastMessageAt = userMsg.ts;
+    session.messageCount = session.messages.length;
+    if (session.messages.length === 1) session.title = formatTitle(body.content);
+    writeSession(session);
+    chatBus.emit('chat.message', { sessionId: id, message: userMsg });
 
     const assistantId = randomUUID();
-    eventBus.publish('chat.message.pending', {
+    chatBus.emit('chat.message.pending', {
       sessionId: id,
       assistantId,
       ts: new Date().toISOString(),
     });
 
-    // Fire and forget — events stream via SSE
     streamAssistantResponse(id, assistantId, body.content, log).catch((err) => {
       log.error(`chat[${id}] stream error: ${err instanceof Error ? err.message : String(err)}`);
     });
@@ -442,7 +372,6 @@ export function createChatRoute(log: Logger): Hono {
   return app;
 }
 
-// ── SSE: /stream/chat/:id ───────────────────────────────────────────────
 export function createChatStreamRoute(): Hono {
   const app = new Hono();
   app.get('/:id', (c) => {
@@ -479,7 +408,7 @@ export function createChatStreamRoute(): Hono {
               return;
             send(event, data);
           };
-          eventBus.on(event, fn);
+          chatBus.on(event, fn);
           handlers.push({ event, fn });
         }
 
@@ -494,7 +423,7 @@ export function createChatStreamRoute(): Hono {
 
         c.req.raw.signal?.addEventListener('abort', () => {
           closed = true;
-          for (const h of handlers) eventBus.off(h.event, h.fn);
+          for (const h of handlers) chatBus.off(h.event, h.fn);
           clearInterval(heartbeat);
           try {
             controller.close();

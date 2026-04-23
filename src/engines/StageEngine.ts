@@ -33,7 +33,7 @@ import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
 // IntegrationQueue removed — single worker, no merge queue
 import type { TaskRunRequest, TaskRunResponse, WorkerManager } from '../manager/worker-manager.js';
-import type { ActionRecord, AuxiliaryState, Card, CommandResult, RecommendedAction } from '../models/types.js';
+import type { ActionRecord, AuxiliaryState, Card, CommandResult, RecommendedAction } from '../shared/types.js';
 
 // branchPushed/branchCommitsAhead removed — no worktree/branch management
 
