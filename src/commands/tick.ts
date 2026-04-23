@@ -397,6 +397,18 @@ async function runOneTick(
   const steps: StepResult[] = [];
   const opts = { dryRun };
 
+  // v0.50.16：在 halt-check 前先跑 race-recovery。否则假阳性 NEEDS-FIX
+  // （Stop hook race 残留，同时带 COMPLETED-<stage>）会把整条 pipeline halt，
+  // monitor.tick 里的 race-recovery 永远跑不到 → 卡片卡死。
+  try {
+    const healed = await runner.monitor.healRaceConditions();
+    if (healed > 0) {
+      log.info(`Race-recovery: healed ${healed} false-positive NEEDS-FIX card(s) before halt-check`);
+    }
+  } catch {
+    /* best effort —— race-recovery 失败不阻塞 tick */
+  }
+
   // ── Failure halt: check for NEEDS-FIX cards before doing anything ──
   // If any card has NEEDS-FIX, the pipeline is halted until resolved.
   // TODO: This halts globally. Should only halt if the failed card's stage has halt: true.

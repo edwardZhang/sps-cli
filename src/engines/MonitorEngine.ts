@@ -113,6 +113,30 @@ export class MonitorEngine {
     return result;
   }
 
+  /**
+   * v0.50.16：public entry，供 tick.ts 在 halt-check 前显式跑一次 race-recovery。
+   *
+   * 背景：tick.ts 的 NEEDS-FIX halt check 在 monitor.tick() 前面，假阳性
+   * NEEDS-FIX（有 COMPLETED-<stage> 的 race 卡）会把整条 pipeline halt，
+   * 使 monitor.tick 里的 checkRaceRecovery 永远跑不到。
+   *
+   * 这里让 tick.ts 能在判 halt 前先自愈 race 卡——healed 的卡不会再触发 halt。
+   *
+   * 返回被自愈的卡片数；失败不抛（best-effort）。
+   */
+  async healRaceConditions(): Promise<number> {
+    const checks: CheckResult[] = [];
+    const actions: ActionRecord[] = [];
+    try {
+      await this.checkRaceRecovery(checks, actions);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.warn(`healRaceConditions failed (non-fatal): ${msg}`);
+      return 0;
+    }
+    return actions.filter((a) => a.action === 'race-recovery' && a.result === 'ok').length;
+  }
+
   // ─── Check 0: Race-recovery (v0.50.12) ────────────────────────────
   //
   // 场景：Stop hook 是 Claude 异步写的文件操作，ACP session_completed 可能比它
