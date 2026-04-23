@@ -52,6 +52,8 @@ interface LogLine {
   level: 'debug' | 'info' | 'warn' | 'error' | 'trace';
   msg: string;
   raw: string;
+  /** v0.49.10 聚合视图：每行带项目名，方便 UI 区分。单项目视图时为空串 */
+  project?: string;
 }
 
 function parseLine(raw: string): LogLine {
@@ -80,6 +82,67 @@ function parseLine(raw: string): LogLine {
   return { ts: null, worker: null, level: 'info', msg: cleaned, raw: cleaned };
 }
 
+/**
+ * v0.49.10 跨项目聚合：遍历 `~/.coral/projects/` 的每个项目 logs，取最新 pipeline log，
+ * tail 到 limit 行，合并按 ts 排序后取最末 limit 行。
+ * 每行带 project 字段。
+ */
+async function aggregateLogs(opts: {
+  worker?: string;
+  limit: number;
+  since?: string;
+  log: Logger;
+}): Promise<{ data: LogLine[]; files: string[] }> {
+  const projectsDir = resolve(HOME, '.coral', 'projects');
+  if (!existsSync(projectsDir)) return { data: [], files: [] };
+  const projects = readdirSync(projectsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
+
+  // 每项目取最近一次的 log 文件（mtime 最新）
+  const perProjectFiles: Array<{ project: string; file: string }> = [];
+  for (const p of projects) {
+    const files = findLogFiles(p, opts.worker);
+    if (files.length > 0) perProjectFiles.push({ project: p, file: files[0]! });
+  }
+
+  // 每文件 tail 到 limit 行，归并排序，按 ts 倒序（新的在前）取 limit
+  const perLimit = Math.max(50, Math.floor(opts.limit / Math.max(perProjectFiles.length, 1)) * 2);
+  const merged: LogLine[] = [];
+  for (const { project, file } of perProjectFiles) {
+    try {
+      const lines = await readTailLines(file, perLimit);
+      for (const l of lines) merged.push({ ...l, project });
+    } catch (err) {
+      opts.log.warn(`aggregate log read ${project}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // ts 升序（老的在前，便于 UI 按时间顺序滚动）；ts 缺失的保留原顺序末尾
+  merged.sort((a, b) => {
+    const at = a.ts ? Date.parse(a.ts) : 0;
+    const bt = b.ts ? Date.parse(b.ts) : 0;
+    return at - bt;
+  });
+
+  let filtered = merged;
+  if (opts.since) {
+    const sinceParsed = Date.parse(opts.since);
+    if (!Number.isNaN(sinceParsed)) {
+      filtered = merged.filter((l) => {
+        if (!l.ts) return true;
+        const lt = Date.parse(l.ts);
+        return Number.isNaN(lt) || lt >= sinceParsed;
+      });
+    }
+  }
+
+  return {
+    data: filtered.slice(-opts.limit),
+    files: perProjectFiles.map((p) => p.file.replace(HOME, '~')),
+  };
+}
+
 async function readTailLines(filePath: string, limit: number): Promise<LogLine[]> {
   const stat = statSync(filePath);
   const start = Math.max(0, stat.size - MAX_SCAN_BYTES);
@@ -101,12 +164,15 @@ export function createLogsRoute(log: Logger): Hono {
 
   app.get('/', async (c) => {
     const project = c.req.query('project');
-    if (!project) {
-      return c.json({ type: 'validation', title: 'project required', status: 422 }, 422);
-    }
     const worker = c.req.query('worker') || undefined;
     const limit = Math.min(Number.parseInt(c.req.query('limit') ?? '500', 10) || 500, 2000);
     const since = c.req.query('since'); // ISO timestamp; filter ts >= since
+
+    // v0.49.10：无 project 参数时走聚合视图，遍历所有项目
+    if (!project) {
+      return c.json(await aggregateLogs({ worker, limit, since, log }));
+    }
+
     const files = findLogFiles(project, worker);
     if (files.length === 0) return c.json({ data: [], files: [] });
 

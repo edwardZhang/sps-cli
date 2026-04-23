@@ -85,86 +85,90 @@ export function WorkersAggregatePage() {
   }, [aggQ.data]);
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4 h-[calc(100vh-140px)]">
-      {/* 左：主区 */}
-      <div className="flex flex-col gap-4 overflow-auto pr-2">
-        <header className="flex items-center justify-between flex-wrap gap-3 sticky top-0 bg-[var(--color-bg)] z-10 pb-2">
-          <div>
-            <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold tracking-tight">
-              Workers 👷
-            </h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">
-              跨 {totals.projects} 项目 · {totals.running} 跑 · {totals.starting} 启动 ·{' '}
-              <span className="text-[var(--color-stuck)]">{totals.stuck} 卡</span> ·{' '}
-              <span className="text-[var(--color-crashed)]">{totals.crashed} 崩</span> · {totals.idle} 闲
-            </p>
-          </div>
-          <button
-            className="nb-btn"
-            style={{ padding: '6px 12px', fontSize: 12 }}
-            onClick={() => aggQ.refetch()}
-            disabled={aggQ.isFetching}
-            type="button"
-            aria-label="刷新"
-          >
-            {aggQ.isFetching ? (
-              <Loader2 size={12} strokeWidth={3} className="animate-spin" />
-            ) : (
-              <RefreshCw size={12} strokeWidth={2.5} />
-            )}
-            刷新
-          </button>
-        </header>
+    <div className="flex flex-col gap-4 h-[calc(100vh-140px)]">
+      {/* 顶部 title 占满整页宽度 */}
+      <header className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold tracking-tight">
+            Workers 👷
+          </h1>
+          <p className="text-sm text-[var(--color-text-muted)] mt-1">
+            跨 {totals.projects} 项目 · {totals.running} 跑 · {totals.starting} 启动 ·{' '}
+            <span className="text-[var(--color-stuck)]">{totals.stuck} 卡</span> ·{' '}
+            <span className="text-[var(--color-crashed)]">{totals.crashed} 崩</span> · {totals.idle} 闲
+          </p>
+        </div>
+        <button
+          className="nb-btn"
+          style={{ padding: '6px 12px', fontSize: 12 }}
+          onClick={() => aggQ.refetch()}
+          disabled={aggQ.isFetching}
+          type="button"
+          aria-label="刷新"
+        >
+          {aggQ.isFetching ? (
+            <Loader2 size={12} strokeWidth={3} className="animate-spin" />
+          ) : (
+            <RefreshCw size={12} strokeWidth={2.5} />
+          )}
+          刷新
+        </button>
+      </header>
 
-        {aggQ.isLoading && (
-          <p className="text-[var(--color-text-muted)] italic">加载中…</p>
-        )}
-        {aggQ.isError && (
-          <div className="nb-card bg-[var(--color-crashed-bg)]">
-            <p>加载失败: {aggQ.error instanceof Error ? aggQ.error.message : String(aggQ.error)}</p>
-          </div>
-        )}
-
-        {aggQ.data && (
-          <>
-            {/* Alerts */}
-            <AlertsSection
-              alerts={aggQ.data.alerts}
-              selected={selected}
-              onSelect={(project, slot) => setSelected({ project, slot })}
-            />
-
-            {/* Active */}
-            <ActiveSection
-              active={aggQ.data.active}
-              selected={selected}
-              onSelect={(project, slot) => setSelected({ project, slot })}
-            />
-
-            {/* Capacity */}
-            <CapacitySection capacity={aggQ.data.capacity} />
-          </>
-        )}
-      </div>
-
-      {/* 右：detail panel */}
-      <aside className="nb-card p-0 overflow-hidden flex flex-col sticky top-0 self-start h-full">
-        {selectedWorker ? (
-          <WorkerDetailPanel
-            worker={selectedWorker}
-            onChange={() => qc.invalidateQueries({ queryKey: ['workers-agg'] })}
-          />
-        ) : (
-          <div className="flex-1 flex items-center justify-center p-6 text-center">
-            <div>
-              <Activity size={32} className="mx-auto mb-3 text-[var(--color-text-subtle)]" strokeWidth={2} />
-              <p className="text-sm text-[var(--color-text-muted)]">
-                点击左侧的 worker 查看详情
-              </p>
+      {/* 下方左右分栏：各占 50%；高度一致 */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 flex-1 min-h-0">
+        {/* 左：主区 */}
+        <div className="flex flex-col gap-4 overflow-auto pr-2">
+          {aggQ.isLoading && (
+            <p className="text-[var(--color-text-muted)] italic">加载中…</p>
+          )}
+          {aggQ.isError && (
+            <div className="nb-card bg-[var(--color-crashed-bg)]">
+              <p>加载失败: {aggQ.error instanceof Error ? aggQ.error.message : String(aggQ.error)}</p>
             </div>
-          </div>
-        )}
-      </aside>
+          )}
+
+          {aggQ.data && (
+            <>
+              {/* Alerts */}
+              <AlertsSection
+                alerts={aggQ.data.alerts}
+                selected={selected}
+                onSelect={(project, slot) => setSelected({ project, slot })}
+              />
+
+              {/* Active */}
+              <ActiveSection
+                active={aggQ.data.active}
+                selected={selected}
+                onSelect={(project, slot) => setSelected({ project, slot })}
+              />
+
+              {/* Capacity */}
+              <CapacitySection capacity={aggQ.data.capacity} />
+            </>
+          )}
+        </div>
+
+        {/* 右：detail panel 占 50% 宽度，高度撑满分栏区域 */}
+        <aside className="nb-card p-0 overflow-hidden flex flex-col h-full">
+          {selectedWorker ? (
+            <WorkerDetailPanel
+              worker={selectedWorker}
+              onChange={() => qc.invalidateQueries({ queryKey: ['workers-agg'] })}
+            />
+          ) : (
+            <div className="flex-1 flex items-center justify-center p-6 text-center">
+              <div>
+                <Activity size={32} className="mx-auto mb-3 text-[var(--color-text-subtle)]" strokeWidth={2} />
+                <p className="text-sm text-[var(--color-text-muted)]">
+                  点击左侧的 worker 查看详情
+                </p>
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }

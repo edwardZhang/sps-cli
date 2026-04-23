@@ -6,15 +6,18 @@ export interface LogLine {
   level: 'debug' | 'info' | 'warn' | 'error' | 'trace';
   msg: string;
   raw: string;
+  /** v0.49.10 聚合视图带项目名；单项目模式为空 */
+  project?: string;
 }
 
 export function fetchLogs(opts: {
-  project: string;
+  project?: string;
   worker?: string;
   limit?: number;
   since?: string;
 }) {
-  const params = new URLSearchParams({ project: opts.project });
+  const params = new URLSearchParams();
+  if (opts.project) params.set('project', opts.project);
   if (opts.worker) params.set('worker', opts.worker);
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.since) params.set('since', opts.since);

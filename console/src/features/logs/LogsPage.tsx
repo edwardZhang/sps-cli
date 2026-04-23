@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Pause, Play, Search, Download, History, Radio } from 'lucide-react';
 import { fetchLogs, logStreamUrl, type LogLine } from '../../shared/api/logs';
-import { ProjectPicker } from '../../shared/components/ProjectPicker';
+import { listProjects } from '../../shared/api/projects';
 
 const LEVELS: LogLine['level'][] = ['error', 'warn', 'info', 'debug'];
 const DEFAULT_ENABLED: LogLine['level'][] = ['error', 'warn', 'info'];
@@ -29,17 +29,24 @@ export function LogsPage() {
   });
   const streamRef = useRef<HTMLDivElement>(null);
 
-  // 初始历史：live 模式拉 tail，history 模式按 since 过滤
+  // v0.49.10：无 project 时走聚合视图（后端返带 project 字段的行）
+  const isAggregate = !project;
+
+  // 项目列表（下拉选择）
+  const projectsQ = useQuery({ queryKey: ['projects'], queryFn: listProjects });
+
+  // 初始历史：live 模式拉 tail，history 模式按 since 过滤；聚合模式走 5s refetch（SSE 无法单连接覆盖多项目）
   const { data: initial, refetch: refetchHistory } = useQuery({
-    queryKey: ['logs', project, worker, mode, mode === 'history' ? since : 'live'],
+    queryKey: ['logs', project ?? 'agg', worker, mode, mode === 'history' ? since : 'live'],
     queryFn: () =>
       fetchLogs({
-        project: project ?? '',
+        project: project || undefined,
         worker: worker || undefined,
         limit: mode === 'history' ? 2000 : 500,
         since: mode === 'history' ? new Date(since).toISOString() : undefined,
       }),
-    enabled: !!project,
+    // 聚合 live 模式 5s 兜底（没 SSE 时靠轮询）；单项目 live 有 SSE 不需要轮询
+    refetchInterval: isAggregate && mode === 'live' ? 5000 : false,
   });
 
   useEffect(() => {
@@ -84,15 +91,6 @@ export function LogsPage() {
     });
   }, [lines, enabledLevels, keyword]);
 
-  if (!project) {
-    return (
-      <div className="nb-card max-w-2xl bg-[var(--color-accent-yellow)]">
-        <h1 className="font-[family-name:var(--font-heading)] text-2xl font-bold mb-2">Logs 📜</h1>
-        <p className="text-sm">需要 <code>?project=xx</code>。</p>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-4 max-w-full">
       <header className="flex items-center justify-between gap-3 flex-wrap">
@@ -101,13 +99,28 @@ export function LogsPage() {
             Logs 📜
           </h1>
           <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            {project}
-            {worker && ` · worker-${worker}`} · tail -f · {lines.length} lines
+            {isAggregate ? `全部项目（${projectsQ.data?.data.length ?? 0}）` : project}
+            {worker && ` · worker-${worker}`} · {isAggregate && mode === 'live' ? '5s 轮询' : 'tail -f'} · {lines.length} lines
             {paused && <span className="text-[var(--color-stuck)] ml-2 font-bold">⏸ PAUSED</span>}
           </p>
         </div>
         <div className="flex gap-3 items-center">
-          <ProjectPicker current={project} onChange={(n) => setParams({ project: n })} />
+          <select
+            className="nb-input"
+            style={{ padding: '4px 10px', fontSize: 12 }}
+            value={project ?? ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) setParams({}); // clear → 聚合
+              else setParams({ project: v });
+            }}
+            aria-label="筛选项目"
+          >
+            <option value="">全部项目</option>
+            {projectsQ.data?.data.map((p) => (
+              <option key={p.name} value={p.name}>{p.name}</option>
+            ))}
+          </select>
         </div>
       </header>
 
@@ -314,13 +327,23 @@ function LogLineItem({ line }: { line: LogLine }) {
     debug: '',
     trace: '',
   };
+  // v0.49.10：聚合模式下每行带 project 字段，加一列 project 标签
+  const hasProject = !!line.project;
   return (
     <div
-      className="grid grid-cols-[100px_60px_1fr] gap-2 px-2 py-0.5 rounded hover:bg-[var(--color-bg-cream)]"
+      className={[
+        'grid gap-2 px-2 py-0.5 rounded hover:bg-[var(--color-bg-cream)]',
+        hasProject ? 'grid-cols-[100px_90px_60px_1fr]' : 'grid-cols-[100px_60px_1fr]',
+      ].join(' ')}
     >
       <span className="text-[var(--color-text-subtle)] whitespace-nowrap">
         {line.ts ? line.ts.split('T')[1]?.replace('Z', '') ?? line.ts : '--'}
       </span>
+      {hasProject && (
+        <span className="truncate text-[var(--color-text-muted)] font-bold" title={line.project}>
+          {line.project}
+        </span>
+      )}
       <span
         className={`text-center font-bold ${levelColor[line.level] ?? ''}`}
         style={{
