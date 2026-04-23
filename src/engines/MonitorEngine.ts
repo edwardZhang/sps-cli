@@ -162,11 +162,16 @@ export class MonitorEngine {
       for (const card of cards) {
         if (!card.labels.includes('NEEDS-FIX')) continue;
         if (!card.labels.includes(completedLabel)) continue;
+        // v0.50.17：多一条判定——只有 EventHandler.onCompleted 打 RACE-CANDIDATE 的卡
+        // 才是真正的 race。onFailed 打的 NEEDS-FIX（真失败）不会有这个标记，不会被误
+        // 自愈。避免 #17 那种"先 race 后真失败"的组合被错误推进 Done。
+        if (!card.labels.includes('RACE-CANDIDATE')) continue;
 
         // race-recovery：按 onCompleted 成功路径处理
         try {
-          // 清瞬态 label —— NEEDS-FIX 是误判，CLAIMED/STARTED-<stage> 是运行时残留
+          // 清瞬态 label —— NEEDS-FIX / RACE-CANDIDATE 是误判，CLAIMED/STARTED-<stage> 是运行时残留
           await this.removeLabelSafe(card.seq, 'NEEDS-FIX');
+          await this.removeLabelSafe(card.seq, 'RACE-CANDIDATE');
           await this.removeLabelSafe(card.seq, 'CLAIMED');
           await this.removeLabelSafe(card.seq, `STARTED-${stage.name}`);
 

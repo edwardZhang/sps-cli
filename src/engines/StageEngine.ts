@@ -41,7 +41,8 @@ const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAIT
 // CLEANUP_LABELS: cleared when a card re-enters a stage (backlog prepare step).
 // ACK-TIMEOUT: left over when a dispatch failed; must be wiped before re-try.
 // Per-stage ACK-RETRIED-<stage> is wiped separately in cleanAuxiliaryLabels().
-const CLEANUP_LABELS: string[] = [...SKIP_LABELS, 'CLAIMED', 'ACK-TIMEOUT'];
+// v0.50.17：RACE-CANDIDATE 是 onCompleted 打的 race 标记，重新入 stage 要清
+const CLEANUP_LABELS: string[] = [...SKIP_LABELS, 'CLAIMED', 'ACK-TIMEOUT', 'RACE-CANDIDATE'];
 
 /**
  * StageEngine — generic engine that handles any pipeline stage.
@@ -862,25 +863,10 @@ export class StageEngine {
   }
 
   private loadSkillProfiles(card: Card): string {
-    // v0.50.9：读 frontmatter 的 skills 字段（v0.42+ 正道）。Console UI 存的就是这个。
-    // 老的 skill:* labels 早在 v0.42 hard-break 掉了，不再兼容。
-    let skills = Array.isArray(card.skills) ? card.skills.filter(Boolean) : [];
-
-    if (skills.length === 0 && this.stage.profile) {
-      skills = this.stage.profile.split(',').map(s => s.trim()).filter(Boolean);
-    }
-
-    if (skills.length === 0) {
-      const defaultSkills = this.ctx.config.raw.DEFAULT_WORKER_SKILLS;
-      if (defaultSkills) {
-        skills = defaultSkills.split(',').map(s => s.trim()).filter(Boolean);
-      }
-    }
-
+    const skills = resolveRequiredSkills(card, this.stage, this.ctx.config.raw.DEFAULT_WORKER_SKILLS);
     if (skills.length === 0) return '';
-
     this.log.ok(`Skills: ${skills.join(', ')}`);
-    return `# Required Skills\n\nThis task requires: ${skills.join(', ')}. Load the dev-worker skill and read the corresponding references before starting.`;
+    return formatSkillRequirement(skills);
   }
 
   // loadProjectKnowledge removed — replaced by memory system (buildMemoryContext)
@@ -1160,4 +1146,39 @@ export class StageEngine {
 
     return result;
   }
+}
+
+// ─── Exported pure helpers (for testing) ─────────────────────────────
+
+/**
+ * v0.50.17：skill 解析的纯函数版本。顺序：card.skills → stage.profile → DEFAULT_WORKER_SKILLS。
+ * 三条都空返空数组。
+ *
+ * 历史：v0.42 前读 `card.labels` 里 `skill:*` 前缀；v0.42 起改 frontmatter `skills` 字段；
+ * v0.50.9 修了 StageEngine 还在读 labels 的 bug；v0.50.17 抽成纯函数补上测试。
+ */
+export function resolveRequiredSkills(
+  card: { skills?: string[] },
+  stage: { profile?: string },
+  defaultWorkerSkills: string | undefined,
+): string[] {
+  const fromCard = Array.isArray(card.skills) ? card.skills.filter(Boolean) : [];
+  if (fromCard.length > 0) return fromCard;
+
+  if (stage.profile) {
+    const fromStage = stage.profile.split(',').map((s) => s.trim()).filter(Boolean);
+    if (fromStage.length > 0) return fromStage;
+  }
+
+  if (defaultWorkerSkills) {
+    const fromDefault = defaultWorkerSkills.split(',').map((s) => s.trim()).filter(Boolean);
+    if (fromDefault.length > 0) return fromDefault;
+  }
+
+  return [];
+}
+
+/** v0.50.17：skill 段模板，和 loadSkillProfiles 共用。 */
+export function formatSkillRequirement(skills: string[]): string {
+  return `# Required Skills\n\nThis task requires: ${skills.join(', ')}. Load the dev-worker skill and read the corresponding references before starting.`;
 }

@@ -154,6 +154,10 @@ export class SPSEventHandler {
     if (!hasCompletedLabel) {
       this.log(`seq ${taskId}: ACP completed but ${completedLabel} label missing — marking NEEDS-FIX`);
       await this.safeAction({ type: 'label', taskId, project: this.project, target: 'NEEDS-FIX' });
+      // v0.50.17：加 RACE-CANDIDATE 标记，区分 race 场景 vs 真失败（onFailed 走另
+      // 一条路径，不会打这个 label）。MonitorEngine.checkRaceRecovery 只自愈
+      // 带此标记的卡——避免误杀"先 race 后真失败"的 #17 这种组合。
+      await this.safeAction({ type: 'label', taskId, project: this.project, target: 'RACE-CANDIDATE' });
       await this.safeAction({
         type: 'comment',
         taskId,

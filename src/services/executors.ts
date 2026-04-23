@@ -176,6 +176,7 @@ export class DefaultPipelineExecutor implements PipelineExecutor {
     const { ProjectContext } = await import('../core/context.js');
     const { ProjectPipelineAdapter } = await import('../core/projectPipelineAdapter.js');
     const { RuntimeStore } = await import('../core/runtimeStore.js');
+    const { planOrphanRecovery, resetWorkerSlot } = await import('../core/orphanRecovery.js');
     const { createTaskBackend } = await import('../providers/registry.js');
 
     const ctx = ProjectContext.load(project);
@@ -199,87 +200,65 @@ export class DefaultPipelineExecutor implements PipelineExecutor {
     });
 
     const state = store.readState();
-    const orphans: Array<{ seq: string; slotName: string }> = [];
-    for (const [slotName, w] of Object.entries(state.workers)) {
-      if (w.status === 'idle' || w.seq == null) continue;
-      // active/resolving/merging —— 上次遗留
-      orphans.push({ seq: String(w.seq), slotName });
-    }
-
+    const { orphans, triggerState, transientLabels } = planOrphanRecovery(state, pipelineAdapter);
     if (orphans.length === 0) return 0;
-
-    const firstStage = pipelineAdapter.stages[0];
-    const triggerState = firstStage?.triggerState ?? pipelineAdapter.states.ready;
-
-    // 要清的瞬态 labels（所有 stage 的 STARTED-*/ACK-* 都要清）
-    const transientLabels = new Set<string>(['CLAIMED', 'STALE-RUNTIME', 'ACK-TIMEOUT']);
-    for (const stage of pipelineAdapter.stages) {
-      transientLabels.add(`STARTED-${stage.name}`);
-      transientLabels.add(`ACK-RETRIED-${stage.name}`);
-    }
 
     let recovered = 0;
     for (const { seq, slotName } of orphans) {
-      const card = await taskBackend.getBySeq(seq).catch(() => null);
+      const card = await taskBackend.getBySeq(seq).catch((err) => {
+        console.warn(`[recoverOrphans] getBySeq(${seq}) failed: ${err instanceof Error ? err.message : err}`);
+        return null;
+      });
+
       if (!card) {
-        // 只清 slot 状态
-        try {
-          store.updateState(`pipeline-recover-${slotName}`, (draft) => {
-            const w = draft.workers[slotName];
-            if (!w) return;
-            w.status = 'idle';
-            w.seq = null;
-            w.branch = null;
-            w.worktree = null;
-            w.claimedAt = null;
-            w.lastHeartbeat = null;
-            if ('pid' in w) w.pid = null;
-            if ('sessionId' in w) w.sessionId = null;
-          });
-        } catch { /* best effort */ }
+        // 卡片文件丢了/读不到——只清 slot 和 lease
+        await this.clearSlotAndLease(store, slotName, seq);
         continue;
       }
 
-      // 清 labels
+      // 清瞬态 label
       const toRemove = card.labels.filter((l) => transientLabels.has(l));
       for (const l of toRemove) {
-        try {
-          await taskBackend.removeLabel(seq, l);
-        } catch { /* best effort */ }
+        await taskBackend.removeLabel(seq, l).catch((err) => {
+          console.warn(`[recoverOrphans] removeLabel(${seq}, ${l}) failed: ${err instanceof Error ? err.message : err}`);
+        });
       }
 
       // 移回首阶段 trigger state（一般是 Todo）
-      try {
-        if (card.state !== triggerState) {
-          await taskBackend.move(seq, triggerState);
-        }
-      } catch { /* best effort */ }
-
-      // 清 slot 状态
-      try {
-        store.updateState(`pipeline-recover-${slotName}`, (draft) => {
-          const w = draft.workers[slotName];
-          if (w) {
-            w.status = 'idle';
-            w.seq = null;
-            w.branch = null;
-            w.worktree = null;
-            w.claimedAt = null;
-            w.lastHeartbeat = null;
-            if ('pid' in w) w.pid = null;
-            if ('sessionId' in w) w.sessionId = null;
-          }
-          // 清 lease
-          if (draft.leases?.[seq]) {
-            delete draft.leases[seq];
-          }
+      if (card.state !== triggerState) {
+        await taskBackend.move(seq, triggerState).catch((err) => {
+          console.warn(`[recoverOrphans] move(${seq}, ${triggerState}) failed: ${err instanceof Error ? err.message : err}`);
         });
-      } catch { /* best effort */ }
+      }
 
+      await this.clearSlotAndLease(store, slotName, seq);
       recovered++;
     }
 
     return recovered;
+  }
+
+  /**
+   * v0.50.17：slot + lease 清理共用 helper（原版重复 2 次）。
+   * 任何 update 异常降级为 console.warn（以前是静默 best-effort）。
+   */
+  private async clearSlotAndLease(
+    store: { updateState: (reason: string, mut: (draft: any) => void) => void },
+    slotName: string,
+    seq: string,
+  ): Promise<void> {
+    const { resetWorkerSlot } = await import('../core/orphanRecovery.js');
+    try {
+      store.updateState(`pipeline-recover-${slotName}`, (draft) => {
+        const w = draft.workers[slotName];
+        if (w) resetWorkerSlot(w);
+        if (draft.leases?.[seq]) {
+          delete draft.leases[seq];
+        }
+      });
+    } catch (err) {
+      console.warn(`[recoverOrphans] clear slot/lease (${slotName}/${seq}) failed: ${err instanceof Error ? err.message : err}`);
+    }
   }
 }
 

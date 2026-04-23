@@ -468,10 +468,10 @@ describe('MonitorEngine.checkRaceRecovery', () => {
     return { engine, moveMock, removeLabelMock };
   }
 
-  it('heals cards with both NEEDS-FIX and COMPLETED-<stage>', async () => {
+  it('heals cards with NEEDS-FIX + COMPLETED-<stage> + RACE-CANDIDATE (v0.50.17)', async () => {
     const { engine, moveMock, removeLabelMock } = makeRaceEngine({
       seq: '17',
-      labels: ['NEEDS-FIX', 'COMPLETED-develop', 'CLAIMED', 'STARTED-develop'],
+      labels: ['NEEDS-FIX', 'COMPLETED-develop', 'CLAIMED', 'STARTED-develop', 'RACE-CANDIDATE'],
       state: 'Inprogress',
     });
 
@@ -480,6 +480,7 @@ describe('MonitorEngine.checkRaceRecovery', () => {
     await (engine as any).checkRaceRecovery(checks, actions);
 
     expect(removeLabelMock).toHaveBeenCalledWith('17', 'NEEDS-FIX');
+    expect(removeLabelMock).toHaveBeenCalledWith('17', 'RACE-CANDIDATE');
     expect(removeLabelMock).toHaveBeenCalledWith('17', 'CLAIMED');
     expect(removeLabelMock).toHaveBeenCalledWith('17', 'STARTED-develop');
     expect(moveMock).toHaveBeenCalledWith('17', 'Done');
@@ -505,6 +506,22 @@ describe('MonitorEngine.checkRaceRecovery', () => {
     const { engine, moveMock, removeLabelMock } = makeRaceEngine({
       seq: '17',
       labels: ['COMPLETED-develop'],
+      state: 'Inprogress',
+    });
+
+    const checks: any[] = [];
+    const actions: any[] = [];
+    await (engine as any).checkRaceRecovery(checks, actions);
+
+    expect(removeLabelMock).not.toHaveBeenCalled();
+    expect(moveMock).not.toHaveBeenCalled();
+  });
+
+  // v0.50.17：这是 #17 的真实场景——先 race 后二次真失败，两个 label 都在但不该 heal。
+  it('does NOT heal card with NEEDS-FIX + COMPLETED-<stage> but no RACE-CANDIDATE (post-retry genuine failure)', async () => {
+    const { engine, moveMock, removeLabelMock } = makeRaceEngine({
+      seq: '17',
+      labels: ['NEEDS-FIX', 'COMPLETED-develop', 'CLAIMED', 'STARTED-develop'], // 没 RACE-CANDIDATE
       state: 'Inprogress',
     });
 

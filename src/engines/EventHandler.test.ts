@@ -155,6 +155,9 @@ describe('SPSEventHandler.onCompleted (label gating)', () => {
     await new Promise((r) => setTimeout(r, 100));
 
     expect(addLabel).toHaveBeenCalledWith('42', 'NEEDS-FIX');
+    // v0.50.17：打 NEEDS-FIX 同时要打 RACE-CANDIDATE，让 MonitorEngine.checkRaceRecovery
+    // 能区分"这是 race 留下的"和"真失败留下的"。
+    expect(addLabel).toHaveBeenCalledWith('42', 'RACE-CANDIDATE');
     expect(move).not.toHaveBeenCalledWith('42', 'QA');  // NOT moved to onCompleteState
   });
 
