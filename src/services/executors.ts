@@ -161,6 +161,126 @@ export class DefaultPipelineExecutor implements PipelineExecutor {
       throw new Error(result.stderr || `sps reset exited ${result.exitCode}`);
     }
   }
+
+  /**
+   * v0.50.8：启动前回收遗孤卡片。
+   *
+   * 场景：上一轮 pipeline 被 stop（或 crash），state.json 里 slot 还显示 active，
+   * 卡片停在 Inprogress 带 STARTED-<stage>。下一轮 start 后 MonitorEngine 会打
+   * STALE-RUNTIME（SKIP_LABEL），卡片永远跑不起来。
+   *
+   * 这里一次性清理：移回首阶段 trigger state（通常 Todo）+ 清全部瞬态 labels +
+   * reset slot 为 idle + 清 leases。下一轮 tick 就能重新 prepare + 派发。
+   */
+  async recoverOrphans(project: string): Promise<number> {
+    const { ProjectContext } = await import('../core/context.js');
+    const { ProjectPipelineAdapter } = await import('../core/projectPipelineAdapter.js');
+    const { RuntimeStore } = await import('../core/runtimeStore.js');
+    const { createTaskBackend } = await import('../providers/registry.js');
+
+    const ctx = ProjectContext.load(project);
+    const pipelineAdapter = new ProjectPipelineAdapter(ctx.config, ctx.paths.repoDir);
+    const allStateNames = [
+      ...new Set(
+        [
+          pipelineAdapter.states.planning,
+          pipelineAdapter.states.backlog,
+          pipelineAdapter.states.ready,
+          pipelineAdapter.states.done,
+          ...pipelineAdapter.stages.flatMap((s) => [s.triggerState, s.activeState, s.onCompleteState]),
+        ].filter(Boolean),
+      ),
+    ];
+    const taskBackend = createTaskBackend(ctx.config, allStateNames);
+    await taskBackend.bootstrap();
+    const store = new RuntimeStore({
+      paths: { stateFile: ctx.paths.stateFile },
+      maxWorkers: ctx.maxWorkers,
+    });
+
+    const state = store.readState();
+    const orphans: Array<{ seq: string; slotName: string }> = [];
+    for (const [slotName, w] of Object.entries(state.workers)) {
+      if (w.status === 'idle' || w.seq == null) continue;
+      // active/resolving/merging —— 上次遗留
+      orphans.push({ seq: String(w.seq), slotName });
+    }
+
+    if (orphans.length === 0) return 0;
+
+    const firstStage = pipelineAdapter.stages[0];
+    const triggerState = firstStage?.triggerState ?? pipelineAdapter.states.ready;
+
+    // 要清的瞬态 labels（所有 stage 的 STARTED-*/ACK-* 都要清）
+    const transientLabels = new Set<string>(['CLAIMED', 'STALE-RUNTIME', 'ACK-TIMEOUT']);
+    for (const stage of pipelineAdapter.stages) {
+      transientLabels.add(`STARTED-${stage.name}`);
+      transientLabels.add(`ACK-RETRIED-${stage.name}`);
+    }
+
+    let recovered = 0;
+    for (const { seq, slotName } of orphans) {
+      const card = await taskBackend.getBySeq(seq).catch(() => null);
+      if (!card) {
+        // 只清 slot 状态
+        try {
+          store.updateState(`pipeline-recover-${slotName}`, (draft) => {
+            const w = draft.workers[slotName];
+            if (!w) return;
+            w.status = 'idle';
+            w.seq = null;
+            w.branch = null;
+            w.worktree = null;
+            w.claimedAt = null;
+            w.lastHeartbeat = null;
+            if ('pid' in w) w.pid = null;
+            if ('sessionId' in w) w.sessionId = null;
+          });
+        } catch { /* best effort */ }
+        continue;
+      }
+
+      // 清 labels
+      const toRemove = card.labels.filter((l) => transientLabels.has(l));
+      for (const l of toRemove) {
+        try {
+          await taskBackend.removeLabel(seq, l);
+        } catch { /* best effort */ }
+      }
+
+      // 移回首阶段 trigger state（一般是 Todo）
+      try {
+        if (card.state !== triggerState) {
+          await taskBackend.move(seq, triggerState);
+        }
+      } catch { /* best effort */ }
+
+      // 清 slot 状态
+      try {
+        store.updateState(`pipeline-recover-${slotName}`, (draft) => {
+          const w = draft.workers[slotName];
+          if (w) {
+            w.status = 'idle';
+            w.seq = null;
+            w.branch = null;
+            w.worktree = null;
+            w.claimedAt = null;
+            w.lastHeartbeat = null;
+            if ('pid' in w) w.pid = null;
+            if ('sessionId' in w) w.sessionId = null;
+          }
+          // 清 lease
+          if (draft.leases?.[seq]) {
+            delete draft.leases[seq];
+          }
+        });
+      } catch { /* best effort */ }
+
+      recovered++;
+    }
+
+    return recovered;
+  }
 }
 
 // ─── ChatExecutor —— 直接用 DaemonClient ─────────────────────────────

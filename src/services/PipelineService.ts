@@ -64,6 +64,12 @@ export interface ResetPipelineOpts {
 export interface PipelineExecutor {
   stop(project: string): Promise<void>;
   reset(project: string, opts: ResetPipelineOpts): Promise<void>;
+  // v0.50.8：启动前回收上次遗留的 in-flight 卡片。
+  //   - 扫 state.json 里所有 active/merging/resolving 的 slot
+  //   - 对应卡片：清瞬态 label（STARTED-x / ACK-x / CLAIMED / STALE-RUNTIME）+ 移回首阶段 trigger state（Todo）
+  //   - 清 state.json 把 slot 置 idle + 清 lease
+  //   返回回收了多少张卡。
+  recoverOrphans(project: string): Promise<number>;
 }
 
 export interface PipelineServiceDeps {
@@ -89,6 +95,18 @@ export class PipelineService {
     }
     if (!this.deps.fs.exists(logsDir(project))) {
       this.deps.fs.mkdir(logsDir(project), { recursive: true });
+    }
+    // v0.50.8：启动前先回收遗孤卡片 —— 上一轮被 stop/crash 的卡，slot 还 active 但
+    // tick 进程没了，MonitorEngine 会把它打 STALE-RUNTIME，下一轮又被 SKIP，最后
+    // 链式升级到 ACK-TIMEOUT / NEEDS-FIX，卡在 Inprogress 永远跑不起来。
+    // 这里一次性清 label + 移回 Todo，让下一个 tick 能重新 prepare 派发。
+    // executor 缺失时跳过（单元测试场景），线上容器总会注入。
+    if (this.deps.executor) {
+      try {
+        await this.deps.executor.recoverOrphans(project);
+      } catch {
+        /* 回收失败不阻塞 start —— 坏情况也就退化到老行为 */
+      }
     }
     const date = this.deps.clock.nowIso().slice(0, 10);
     const logPath = resolve(logsDir(project), `console-tick-${date}.log`);

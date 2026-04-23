@@ -78,6 +78,9 @@ describe('PipelineService', () => {
           throw new Error('cli failed');
         },
         async reset() {},
+        async recoverOrphans() {
+          return 0;
+        },
       };
       const { svc } = newSvc({ executor });
       const r = await svc.stop('p');
@@ -85,7 +88,13 @@ describe('PipelineService', () => {
     });
 
     it('stop 成功 + emit pipeline.stopped', async () => {
-      const executor: PipelineExecutor = { async stop() {}, async reset() {} };
+      const executor: PipelineExecutor = {
+        async stop() {},
+        async reset() {},
+        async recoverOrphans() {
+          return 0;
+        },
+      };
       const { svc, events } = newSvc({ executor });
       const r = await svc.stop('p');
       expect(r.ok).toBe(true);
@@ -98,6 +107,9 @@ describe('PipelineService', () => {
         async stop() {},
         async reset(project, opts) {
           calls.push({ project, opts });
+        },
+        async recoverOrphans() {
+          return 0;
         },
       };
       const { svc } = newSvc({ executor });
