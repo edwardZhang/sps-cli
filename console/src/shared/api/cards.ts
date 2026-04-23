@@ -2,6 +2,18 @@ import { apiGet } from './client';
 
 export type CardState = 'Planning' | 'Backlog' | 'Inprogress' | 'Review' | 'Done' | 'Canceled';
 
+export interface ChecklistItem {
+  text: string;
+  done: boolean;
+}
+
+export interface ChecklistStats {
+  total: number;
+  done: number;
+  percent: number;
+  items: ChecklistItem[];
+}
+
 export interface Card {
   seq: number;
   title: string;
@@ -11,16 +23,12 @@ export interface Card {
   branch: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  /** v0.50.3+: 检查清单进度（worker 写入，UI 只读展示） */
+  checklist: ChecklistStats;
 }
 
 export interface CardDetail extends Card {
   body: string;
-  checklist: {
-    total: number;
-    done: number;
-    percent: number;
-    items: { text: string; done: boolean }[];
-  };
   activeWorkerSlot: number | null;
 }
 

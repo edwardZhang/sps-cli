@@ -248,36 +248,23 @@ export function BoardPage() {
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <ProjectPicker current={project} onChange={setProject} />
-          {/* v0.49.6: start 和 stop 始终并排显示，按当前状态互斥 disable */}
+          {/* v0.50.3：启停合并单按钮，按 pipeline 当前状态切换 */}
           <button
-            className="nb-btn nb-btn-primary"
-            onClick={() => startMutation.mutate()}
-            disabled={running || startMutation.isPending}
+            className={running ? 'nb-btn nb-btn-danger' : 'nb-btn nb-btn-primary'}
+            onClick={() => (running ? stopMutation.mutate() : startMutation.mutate())}
+            disabled={startMutation.isPending || stopMutation.isPending}
             type="button"
-            aria-label="启动 pipeline"
-            title={running ? 'pipeline 正在运行' : '启动 pipeline'}
+            aria-label={running ? '停止 pipeline' : '启动 pipeline'}
+            title={running ? '停止 pipeline' : '启动 pipeline'}
           >
-            {startMutation.isPending ? (
+            {startMutation.isPending || stopMutation.isPending ? (
               <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+            ) : running ? (
+              <Square size={14} strokeWidth={3} />
             ) : (
               <Play size={14} strokeWidth={3} />
             )}
-            启动
-          </button>
-          <button
-            className="nb-btn nb-btn-danger"
-            onClick={() => stopMutation.mutate()}
-            disabled={!running || stopMutation.isPending}
-            type="button"
-            aria-label="停止 pipeline"
-            title={running ? '停止 pipeline' : 'pipeline 未在运行'}
-          >
-            {stopMutation.isPending ? (
-              <Loader2 size={14} strokeWidth={3} className="animate-spin" />
-            ) : (
-              <Square size={14} strokeWidth={3} />
-            )}
-            停止
+            {running ? '停止' : '启动'}
           </button>
           <button
             className="nb-btn nb-btn-yellow"

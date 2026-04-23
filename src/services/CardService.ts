@@ -34,6 +34,8 @@ export interface CardSummary {
   readonly branch: string | null;
   readonly createdAt: string | null;
   readonly updatedAt: string | null;
+  /** 检查清单进度摘要（Kanban 卡片用）—— 无 checklist 的卡片该字段也存在，total=0 */
+  readonly checklist: ChecklistStats;
 }
 
 export interface CardDetail extends CardSummary {
@@ -371,6 +373,7 @@ function toCardSummary(card: Card): CardSummary {
     branch: (card.meta?.branch as string) ?? null,
     createdAt: (card.meta?.createdAt as string) ?? null,
     updatedAt: (card.meta?.updatedAt as string) ?? null,
+    checklist: card.checklist ?? { total: 0, done: 0, percent: 0, items: [] },
   };
 }
 

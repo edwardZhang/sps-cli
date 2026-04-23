@@ -12,8 +12,9 @@ import { listSkills } from '../../shared/api/skills';
 import { SkillBadge, LabelBadge } from '../../shared/components/Badges';
 import { useDialog } from '../../shared/components/DialogProvider';
 
-/** 抽出 body 里指定 "## <heading>" 段的内容。 */
-function extractSection(body: string, heading: string): string {
+/** 抽出 body 里指定 "## <heading>" 段的内容。body 缺失时返空串（不崩 UI）。 */
+function extractSection(body: string | null | undefined, heading: string): string {
+  if (!body) return '';
   const lines = body.split('\n');
   const re = new RegExp(`^##\\s+${heading}\\s*$`);
   const idx = lines.findIndex((l) => re.test(l));
@@ -25,7 +26,7 @@ function extractSection(body: string, heading: string): string {
   return lines.slice(idx + 1, nextIdx).join('\n').trim();
 }
 
-function extractDescription(body: string): string {
+function extractDescription(body: string | null | undefined): string {
   return extractSection(body, '描述');
 }
 
