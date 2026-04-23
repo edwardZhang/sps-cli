@@ -46,9 +46,9 @@ export async function buildTestApp(): Promise<TestAppHandle> {
       pipelines: services.pipelines,
     }),
   );
-  app.route('/api/projects', createWorkersRoute(services.workers));
+  app.route('/api/projects', createWorkersRoute(services.workers, services.logs));
   app.route('/api/projects', createPipelineRoute(services.pipelines));
-  app.route('/api/workers', createWorkersAggregateRoute(services.workers));
+  app.route('/api/workers', createWorkersAggregateRoute(services.workers, services.logs));
   app.route('/api/skills', createSkillsRoute(services.skills));
   app.route('/api/logs', createLogsRoute(services.logs));
   app.route('/api/system', createSystemRoute(services.system));

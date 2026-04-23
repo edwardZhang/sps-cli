@@ -55,6 +55,20 @@ export interface AggregateResult {
   readonly files: string[];
 }
 
+// v0.50.17：Worker 详情页的两个 tail——从 Delivery 层（routes/workers.ts）搬下来。
+
+export interface WorkerLogLine {
+  readonly ts: string | null;
+  readonly level: string;
+  readonly msg: string;
+}
+
+export interface AcpSessionLine {
+  readonly ts: string | null;
+  readonly kind: string; // assistant | tool:<kind> | tool_update | usage | raw
+  readonly text: string;
+}
+
 export interface LogServiceDeps {
   readonly fs: FileSystem;
 }
@@ -123,6 +137,126 @@ export class LogService {
       data: filtered.slice(-limit),
       files: picked.map((p) => rel(p.file)),
     });
+  }
+
+  /**
+   * v0.50.17：Worker 详情面板专用 tail——读 pipeline-<date>.log 里带 [worker-N] 标签
+   * 的行，结构化出来。原来在 `routes/workers.ts:readWorkerLogTail`，违反层级，搬到这。
+   */
+  async tailWorkerSupervisorLog(
+    project: string,
+    slot: number,
+    limit: number = 20,
+  ): Promise<WorkerLogLine[]> {
+    const dir = logsDir(project);
+    if (!this.deps.fs.exists(dir)) return [];
+    let entries;
+    try {
+      entries = this.deps.fs.readDir(dir);
+    } catch {
+      return [];
+    }
+    const candidates = entries
+      .filter((e) => e.isFile && e.name.endsWith('.log'))
+      .map((e) => ({
+        name: e.name,
+        full: resolve(dir, e.name),
+        mtime: this.deps.fs.stat(resolve(dir, e.name))?.mtimeMs ?? 0,
+      }))
+      .sort((a, b) => b.mtime - a.mtime);
+    const pipeline = candidates.find((c) => c.name.startsWith('pipeline-'));
+    const file = pipeline?.full ?? candidates[0]?.full;
+    if (!file) return [];
+
+    const slotTag = workerLogLineTag(slot);
+    const maxBytes = 4 * 1024 * 1024;
+    const matches: WorkerLogLine[] = [];
+    await streamLines(file, maxBytes, (raw) => {
+      if (!raw.includes(slotTag)) return;
+      const parsed = parseSupervisorLogLine(raw);
+      matches.push(parsed);
+      if (matches.length > limit * 3) matches.splice(0, matches.length - limit * 3);
+    });
+    return matches.slice(-limit);
+  }
+
+  /**
+   * v0.50.17：Claude 实际输出 tail——读 `sps-acp-<project>-worker-<N>-acp-<ts>.log`
+   * 里 SessionUpdateAccumulator.appendLog 写的结构化行。原来在 `routes/workers.ts:
+   * readAcpSessionLogTail`，搬到这。
+   */
+  async tailAcpSession(
+    project: string,
+    slot: number,
+    limit: number = 500,
+  ): Promise<AcpSessionLine[]> {
+    const dir = logsDir(project);
+    if (!this.deps.fs.exists(dir)) return [];
+    let entries;
+    try {
+      entries = this.deps.fs.readDir(dir);
+    } catch {
+      return [];
+    }
+    const prefix = `sps-acp-${project}-worker-${slot}-acp-`;
+    const files = entries
+      .filter((e) => e.isFile && e.name.startsWith(prefix) && e.name.endsWith('.log'))
+      .map((e) => ({
+        name: e.name,
+        full: resolve(dir, e.name),
+        mtime: this.deps.fs.stat(resolve(dir, e.name))?.mtimeMs ?? 0,
+      }))
+      .sort((a, b) => b.mtime - a.mtime);
+    const file = files[0]?.full;
+    if (!file) return [];
+
+    const maxBytes = 8 * 1024 * 1024;
+    const lines: AcpSessionLine[] = [];
+    await streamLines(file, maxBytes, (raw) => {
+      if (!raw) return;
+      lines.push(parseAcpSessionLine(raw));
+      if (lines.length > limit * 3) lines.splice(0, lines.length - limit * 3);
+    });
+    return lines.slice(-limit);
+  }
+
+  /**
+   * v0.50.17：聚合页单条 "lastLogLine"——找最近一条带 [worker-N] 标签的日志。
+   * 比 tailWorkerSupervisorLog 轻量，只要 1 条，扫描 512KB 尾部就够。
+   */
+  async latestWorkerLogLine(
+    project: string,
+    slot: number,
+  ): Promise<{ ts: string | null; msg: string } | null> {
+    const dir = logsDir(project);
+    if (!this.deps.fs.exists(dir)) return null;
+    let entries;
+    try {
+      entries = this.deps.fs.readDir(dir);
+    } catch {
+      return null;
+    }
+    const candidates = entries
+      .filter((e) => e.isFile && e.name.endsWith('.log'))
+      .map((e) => ({
+        name: e.name,
+        full: resolve(dir, e.name),
+        mtime: this.deps.fs.stat(resolve(dir, e.name))?.mtimeMs ?? 0,
+      }))
+      .sort((a, b) => b.mtime - a.mtime);
+    const pipeline = candidates.find((c) => c.name.startsWith('pipeline-'));
+    const file = pipeline?.full ?? candidates[0]?.full;
+    if (!file) return null;
+
+    const slotTag = workerLogLineTag(slot);
+    let latest: { ts: string | null; msg: string } | null = null;
+    await streamLines(file, 512 * 1024, (raw) => {
+      if (!raw.includes(slotTag)) return;
+      const cleaned = raw.replace(/\[[0-9;]*m/g, '');
+      const m = cleaned.match(/(\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?)\s*(?:\[[^\]]+\]\s*)?(.*)$/);
+      latest = { ts: m?.[1] ?? null, msg: (m?.[2] ?? cleaned).slice(0, 200) };
+    });
+    return latest;
   }
 
   // ─── 内部 ─────────────────────────────────────────────────────────
@@ -217,4 +351,41 @@ async function readTailLines(filePath: string, limit: number): Promise<LogLine[]
     rl.on('close', () => resolveP());
   });
   return lines.slice(-limit);
+}
+
+// v0.50.17：通用 tail 流——worker supervisor log + ACP session log 共用
+async function streamLines(
+  filePath: string,
+  maxBytes: number,
+  onLine: (raw: string) => void,
+): Promise<void> {
+  const stat = statSync(filePath);
+  const start = Math.max(0, stat.size - maxBytes);
+  await new Promise<void>((resolveP) => {
+    const stream = createReadStream(filePath, { start, encoding: 'utf-8' });
+    const rl = createInterface({ input: stream });
+    rl.on('line', onLine);
+    rl.on('close', () => resolveP());
+    rl.on('error', () => resolveP());
+  });
+}
+
+export function parseSupervisorLogLine(raw: string): WorkerLogLine {
+  const cleaned = raw.replace(/\[[0-9;]*m/g, '');
+  const m = cleaned.match(
+    /(\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?)\s*(?:\[)?(DEBUG|INFO|WARN|WARNING|ERROR|TRACE)\]?\s*(.*)$/i,
+  );
+  return {
+    ts: m?.[1] ?? null,
+    level: (m?.[2] ?? 'info').toLowerCase().replace('warning', 'warn'),
+    msg: m?.[3] ?? cleaned,
+  };
+}
+
+export function parseAcpSessionLine(raw: string): AcpSessionLine {
+  const m = raw.match(/^(\d{2}:\d{2}:\d{2}\.\d{3})\s+\[([^\]]+)\]\s?(.*)$/);
+  if (m) {
+    return { ts: m[1]!, kind: m[2]!, text: m[3] ?? '' };
+  }
+  return { ts: null, kind: 'raw', text: raw };
 }

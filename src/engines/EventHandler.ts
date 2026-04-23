@@ -138,9 +138,11 @@ export class SPSEventHandler {
     // didn't run, crashed mid-task, etc). Treat as NEEDS-FIX so the user sees the issue
     // instead of silently advancing a half-done card.
     //
-    // v0.50.12：Stop hook 是 Claude 侧异步跑的文件写，ACP session_completed 事件可能
-    // 先到达 SPS。直接读一次会踩 race——hook 还在跑，label 没写上就判 NEEDS-FIX。
-    // 改为最多轮询 5 秒（500ms 间隔），给 hook 合理缓冲。
+    // v0.50.12 / 17：Stop hook 是 Claude 异步文件写，ACP session_completed 事件可能先到。
+    // 两层防御：
+    //   [L1 预防] 这里 poll 5 秒等 label 到位（覆盖 99%）
+    //   [L2 兜底] MonitorEngine.checkRaceRecovery 处理慢 hook + 升级前遗留卡（<5s 之后的）
+    // 进了 NEEDS-FIX 分支的卡会带 RACE-CANDIDATE 标记，L2 据此和真失败区分。
     const stageName = stage?.name ?? 'develop';
     const completedLabel = `COMPLETED-${stageName}`;
     const card = await this.pollForCompletedLabel(

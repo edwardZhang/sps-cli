@@ -15,12 +15,6 @@ export interface EnvEntry {
   masked: boolean;
 }
 
-export interface DoctorReport {
-  project: string;
-  issues: string[];
-  ok: boolean;
-}
-
 // v0.50.14：per-project 真实 doctor
 export interface DoctorCheck {
   name: string;
@@ -42,10 +36,6 @@ export function getSystemInfo() {
 
 export function getEnv() {
   return apiGet<{ path: string; exists: boolean; entries: EnvEntry[] }>('/api/system/env');
-}
-
-export function runDoctor() {
-  return apiGet<{ data: DoctorReport[] }>('/api/system/doctor/all');
 }
 
 export interface EnvRaw {

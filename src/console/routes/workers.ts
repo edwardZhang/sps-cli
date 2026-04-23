@@ -1,23 +1,21 @@
 /**
  * @module        console/routes/workers
- * @description   Worker REST —— 全走 WorkerService
+ * @description   Worker REST —— 全走 WorkerService + LogService
  *
  * @layer         console
+ *
+ * v0.50.17：原版 readWorkerLogTail / readAcpSessionLogTail / readLatestLogLine 搬到
+ * LogService.tailWorkerSupervisorLog / tailAcpSession / (aggregate enrich) 里。
+ * 此文件现在只做 HTTP 适配，不再直接读 fs 或解析日志。
  */
-import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
+import type { LogService } from '../../services/LogService.js';
 import type { WorkerService } from '../../services/WorkerService.js';
-import {
-  home,
-  logsDir,
-  workerLogLineTag,
-  workerMarkerFile,
-} from '../../shared/runtimePaths.js';
+import { home, workerMarkerFile } from '../../shared/runtimePaths.js';
 import { sendResult } from '../lib/resultToJson.js';
 
-export function createWorkersRoute(workers: WorkerService): Hono {
+export function createWorkersRoute(workers: WorkerService, logs: LogService): Hono {
   const app = new Hono();
 
   app.get('/:project/workers', async (c) => {
@@ -36,13 +34,10 @@ export function createWorkersRoute(workers: WorkerService): Hono {
     try {
       markerData = JSON.parse(readFileSync(markerPath, 'utf-8'));
     } catch {
-      /* ignore */
+      /* marker 文件可选，丢了不阻塞 */
     }
-    const recentLogs = await readWorkerLogTail(project, slot, 20);
-    // v0.50.10：Claude code 实际输出走 sps-acp-<proj>-<slot>-acp-*.log
-    // （SessionUpdateAccumulator.appendLog 写入）。tick 的 pipeline-*.log 里
-    // 只有 supervisor 心跳，看不到 Claude 文本和工具调用。这里加一条独立 tail。
-    const recentOutput = await readAcpSessionLogTail(project, slot, 500);
+    const recentLogs = await logs.tailWorkerSupervisorLog(project, slot, 20);
+    const recentOutput = await logs.tailAcpSession(project, slot, 500);
     return c.json({
       ...r.value,
       markerPath: markerPath.replace(home(), '~'),
@@ -69,7 +64,7 @@ export function createWorkersRoute(workers: WorkerService): Hono {
   return app;
 }
 
-export function createWorkersAggregateRoute(workers: WorkerService): Hono {
+export function createWorkersAggregateRoute(workers: WorkerService, logs: LogService): Hono {
   const app = new Hono();
 
   app.get('/all', async (c) => {
@@ -80,7 +75,7 @@ export function createWorkersAggregateRoute(workers: WorkerService): Hono {
     ): Promise<Array<T & { lastLogLine: { ts: string | null; msg: string } | null }>> => {
       const out: Array<T & { lastLogLine: { ts: string | null; msg: string } | null }> = [];
       for (const w of list) {
-        out.push({ ...w, lastLogLine: await readLatestLogLine(w.project, w.slot) });
+        out.push({ ...w, lastLogLine: await logs.latestWorkerLogLine(w.project, w.slot) });
       }
       return out;
     };
@@ -92,131 +87,4 @@ export function createWorkersAggregateRoute(workers: WorkerService): Hono {
   });
 
   return app;
-}
-
-// ─── 日志 tail helpers（Delivery 专属） ──────────────────────────────
-
-async function readWorkerLogTail(
-  project: string,
-  slot: number,
-  limit: number,
-): Promise<Array<{ ts: string | null; level: string; msg: string }>> {
-  const dir = logsDir(project);
-  if (!existsSync(dir)) return [];
-  const candidates = readdirSync(dir)
-    .filter((f) => f.endsWith('.log'))
-    .map((f) => ({ f, full: resolve(dir, f), mtime: statSync(resolve(dir, f)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime);
-  const pipeline = candidates.find((c) => c.f.startsWith('pipeline-'));
-  const file = pipeline?.full ?? candidates[0]?.full;
-  if (!file) return [];
-
-  const MAX_BYTES = 4 * 1024 * 1024;
-  const stat = statSync(file);
-  const start = Math.max(0, stat.size - MAX_BYTES);
-  const matches: Array<{ ts: string | null; level: string; msg: string }> = [];
-  const slotTag = workerLogLineTag(slot);
-  await new Promise<void>((done) => {
-    const stream = createReadStream(file, { start, encoding: 'utf-8' });
-    const rl = createInterface({ input: stream });
-    rl.on('line', (raw) => {
-      if (!raw.includes(slotTag)) return;
-      const cleaned = raw.replace(/\[[0-9;]*m/g, '');
-      const m = cleaned.match(
-        /(\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?)\s*(?:\[)?(DEBUG|INFO|WARN|WARNING|ERROR|TRACE)\]?\s*(.*)$/i,
-      );
-      matches.push({
-        ts: m?.[1] ?? null,
-        level: (m?.[2] ?? 'info').toLowerCase().replace('warning', 'warn'),
-        msg: m?.[3] ?? cleaned,
-      });
-      if (matches.length > limit * 3) matches.splice(0, matches.length - limit * 3);
-    });
-    rl.on('close', () => done());
-    rl.on('error', () => done());
-  });
-  return matches.slice(-limit);
-}
-
-/**
- * v0.50.10：读 ACP session log 尾部 N 行 —— Claude Code 真正的输出流。
- *
- * 文件命名：sps-acp-<project>-<slot>-acp-<ts>.log（AcpSdkAdapter 写入，SessionUpdateAccumulator.appendLog）
- * 每行格式：`HH:mm:ss.SSS [assistant|tool:kind|tool_update|usage] <content>`
- *
- * 每次 run 会新建一个文件，所以列目录取当前 slot 匹配的最新一个。
- */
-async function readAcpSessionLogTail(
-  project: string,
-  slot: number,
-  limit: number,
-): Promise<Array<{ ts: string | null; kind: string; text: string }>> {
-  const dir = logsDir(project);
-  if (!existsSync(dir)) return [];
-  const prefix = `sps-acp-${project}-worker-${slot}-acp-`;
-  const files = readdirSync(dir)
-    .filter((f) => f.startsWith(prefix) && f.endsWith('.log'))
-    .map((f) => ({ f, full: resolve(dir, f), mtime: statSync(resolve(dir, f)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime);
-  const file = files[0]?.full;
-  if (!file) return [];
-
-  // 最多读尾部 8 MB（ACP session 可能很长）
-  const MAX_BYTES = 8 * 1024 * 1024;
-  const stat = statSync(file);
-  const start = Math.max(0, stat.size - MAX_BYTES);
-  const lines: Array<{ ts: string | null; kind: string; text: string }> = [];
-  await new Promise<void>((done) => {
-    const stream = createReadStream(file, { start, encoding: 'utf-8' });
-    const rl = createInterface({ input: stream });
-    rl.on('line', (raw) => {
-      if (!raw) return;
-      // 格式：`HH:mm:ss.SSS [kind...] rest`
-      const m = raw.match(/^(\d{2}:\d{2}:\d{2}\.\d{3})\s+\[([^\]]+)\]\s?(.*)$/);
-      if (m) {
-        lines.push({ ts: m[1], kind: m[2], text: m[3] });
-      } else {
-        // 不匹配就原样保留（比如 assistant 多行 content 被 \n 截断后的续行）
-        lines.push({ ts: null, kind: 'raw', text: raw });
-      }
-      if (lines.length > limit * 3) lines.splice(0, lines.length - limit * 3);
-    });
-    rl.on('close', () => done());
-    rl.on('error', () => done());
-  });
-  return lines.slice(-limit);
-}
-
-async function readLatestLogLine(
-  project: string,
-  slot: number,
-): Promise<{ ts: string | null; msg: string } | null> {
-  const dir = logsDir(project);
-  if (!existsSync(dir)) return null;
-  const candidates = readdirSync(dir)
-    .filter((f) => f.endsWith('.log'))
-    .map((f) => ({ f, full: resolve(dir, f), mtime: statSync(resolve(dir, f)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime);
-  const pipeline = candidates.find((c) => c.f.startsWith('pipeline-'));
-  const file = pipeline?.full ?? candidates[0]?.full;
-  if (!file) return null;
-
-  const MAX_BYTES = 512 * 1024;
-  const stat = statSync(file);
-  const start = Math.max(0, stat.size - MAX_BYTES);
-  const slotTag = workerLogLineTag(slot);
-  let latest: { ts: string | null; msg: string } | null = null;
-  await new Promise<void>((done) => {
-    const stream = createReadStream(file, { start, encoding: 'utf-8' });
-    const rl = createInterface({ input: stream });
-    rl.on('line', (raw) => {
-      if (!raw.includes(slotTag)) return;
-      const cleaned = raw.replace(/\[[0-9;]*m/g, '');
-      const m = cleaned.match(/(\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?)\s*(?:\[[^\]]+\]\s*)?(.*)$/);
-      latest = { ts: m?.[1] ?? null, msg: (m?.[2] ?? cleaned).slice(0, 200) };
-    });
-    rl.on('close', () => done());
-    rl.on('error', () => done());
-  });
-  return latest;
 }

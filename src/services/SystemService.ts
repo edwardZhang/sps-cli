@@ -4,7 +4,6 @@
  *
  * @layer         services
  */
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync } from 'node:fs';
 import type { Clock } from '../infra/clock.js';
@@ -14,13 +13,9 @@ import { domainError, type DomainError } from '../shared/errors.js';
 import { err, ok, type Result } from '../shared/result.js';
 import {
   globalEnvFile,
-  projectConfFile,
   projectsDir,
-  runtimeDir,
   supervisorPidFile,
-  WorkerMarkerFilenameRe,
 } from '../shared/runtimePaths.js';
-import { resolve } from 'node:path';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -65,12 +60,6 @@ export interface UpgradeResult {
   readonly installedVersion: string | null;
   /** 用户可以复制到终端自己跑的等价命令 */
   readonly command: string;
-}
-
-export interface DoctorReport {
-  readonly project: string;
-  readonly issues: string[];
-  readonly ok: boolean;
 }
 
 /** v0.50.14：单项目真实 doctor 输出（spawn `sps doctor <proj> --json`） */
@@ -198,63 +187,32 @@ export class SystemService {
   }
 
   async latestVersion(): Promise<Result<LatestVersion, DomainError>> {
-    // `spawner` is wired as ProcessSpawner for sps CLI; `npm view` is a different
-    // binary so we spawn it directly (still isolated to the service layer).
-    return new Promise((resolvePromise) => {
-      const child = spawn('npm', ['view', '@coralai/sps-cli', 'version'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      let stderr = '';
-      const timer = setTimeout(() => {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          /* noop */
-        }
-        resolvePromise(
-          err(
-            domainError('external', 'NPM_VIEW_TIMEOUT', 'npm view 超时 (10s)', {
-              details: { timeoutMs: 10_000 },
-            }),
-          ),
-        );
-      }, 10_000);
-      child.stdout?.on('data', (d: Buffer) => (stdout += d.toString()));
-      child.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
-      child.on('close', (code: number | null) => {
-        clearTimeout(timer);
-        if (code === 0) {
-          const latest = stdout.trim();
-          resolvePromise(
-            ok({
-              current: this.deps.version,
-              latest,
-              upToDate: this.deps.version === latest,
-            }),
-          );
-        } else {
-          resolvePromise(
-            err(
-              domainError('external', 'NPM_VIEW_FAIL', 'npm view 失败', {
-                details: { stderr: stderr.trim(), exitCode: code },
-              }),
-            ),
-          );
-        }
-      });
-      child.on('error', (e: Error) => {
-        clearTimeout(timer);
-        resolvePromise(
-          err(
-            domainError('external', 'NPM_VIEW_ERROR', 'npm view 出错', {
-              cause: e,
-              details: { message: e.message },
-            }),
-          ),
-        );
-      });
+    // v0.50.17：走 ProcessSpawner.runCommand，可被测试注入假返回。
+    const res = await this.deps.spawner.runCommand({
+      command: 'npm',
+      args: ['view', '@coralai/sps-cli', 'version'],
+      timeoutMs: 10_000,
     });
+    if (res.exitCode === 0) {
+      const latest = res.stdout.trim();
+      return ok({
+        current: this.deps.version,
+        latest,
+        upToDate: this.deps.version === latest,
+      });
+    }
+    if (res.exitCode === -1) {
+      return err(
+        domainError('external', 'NPM_VIEW_ERROR', 'npm view 出错', {
+          details: { stderr: res.stderr.trim() },
+        }),
+      );
+    }
+    return err(
+      domainError('external', 'NPM_VIEW_FAIL', 'npm view 失败', {
+        details: { stderr: res.stderr.trim(), exitCode: res.exitCode },
+      }),
+    );
   }
 
   /**
@@ -274,74 +232,44 @@ export class SystemService {
 
     const command = 'npm i -g @coralai/sps-cli@latest';
 
-    const runResult = await new Promise<{ code: number | null; output: string }>((resolvePromise) => {
-      const child = spawn('npm', ['i', '-g', '@coralai/sps-cli@latest'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let output = '';
-      const timer = setTimeout(() => {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          /* noop */
-        }
-        resolvePromise({ code: null, output: output + '\n[timeout 120s]' });
-      }, 120_000);
-      child.stdout?.on('data', (d: Buffer) => (output += d.toString()));
-      child.stderr?.on('data', (d: Buffer) => (output += d.toString()));
-      child.on('close', (code: number | null) => {
-        clearTimeout(timer);
-        resolvePromise({ code, output });
-      });
-      child.on('error', (e: Error) => {
-        clearTimeout(timer);
-        resolvePromise({ code: null, output: output + `\n[spawn error: ${e.message}]` });
-      });
+    // v0.50.17：走 ProcessSpawner.runCommand
+    const res = await this.deps.spawner.runCommand({
+      command: 'npm',
+      args: ['i', '-g', '@coralai/sps-cli@latest'],
+      timeoutMs: 120_000,
     });
+    const output =
+      res.exitCode === null
+        ? `${res.stdout}${res.stderr}\n[timeout 120s]`
+        : `${res.stdout}${res.stderr}`;
 
     // 验证：npm ls -g 真去读装了啥。比只看 exit code 可靠——npm 有时 code 0
     // 但实际没装（权限 / registry 缓存 / 静默失败）。
     const installedVersion = await this.readInstalledVersion();
-    const npmExitOk = runResult.code === 0;
+    const npmExitOk = res.exitCode === 0;
     const versionSane = installedVersion != null && installedVersion !== this.deps.version;
-    // 成功条件：npm exit 0 AND 装上的版本 != console 当前版本（证明真的换了）
-    // 注意：console 进程用的还是老版本代码，`this.deps.version` 是老的。
     return ok({
       ok: npmExitOk && versionSane,
-      output: runResult.output,
+      output,
       installedVersion,
       command,
     });
   }
 
-  /** 读全局安装的 sps-cli 真实版本（spawn `npm ls -g --json`）。 */
-  private readInstalledVersion(): Promise<string | null> {
-    return new Promise((resolvePromise) => {
-      const child = spawn('npm', ['ls', '-g', '--depth=0', '--json', '@coralai/sps-cli'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let out = '';
-      child.stdout?.on('data', (d: Buffer) => (out += d.toString()));
-      child.stderr?.on('data', () => { /* npm warnings ignored */ });
-      const timer = setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* noop */ }
-        resolvePromise(null);
-      }, 10_000);
-      child.on('close', () => {
-        clearTimeout(timer);
-        try {
-          const parsed = JSON.parse(out);
-          const v = parsed?.dependencies?.['@coralai/sps-cli']?.version;
-          resolvePromise(typeof v === 'string' ? v : null);
-        } catch {
-          resolvePromise(null);
-        }
-      });
-      child.on('error', () => {
-        clearTimeout(timer);
-        resolvePromise(null);
-      });
+  /** 读全局安装的 sps-cli 真实版本（走 ProcessSpawner.runCommand） */
+  private async readInstalledVersion(): Promise<string | null> {
+    const res = await this.deps.spawner.runCommand({
+      command: 'npm',
+      args: ['ls', '-g', '--depth=0', '--json', '@coralai/sps-cli'],
+      timeoutMs: 10_000,
     });
+    try {
+      const parsed = JSON.parse(res.stdout);
+      const v = parsed?.dependencies?.['@coralai/sps-cli']?.version;
+      return typeof v === 'string' ? v : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -391,48 +319,6 @@ export class SystemService {
         domainError('external', 'DOCTOR_SPAWN_FAIL', 'doctor 启动失败', { cause }),
       );
     }
-  }
-
-  async doctorAll(): Promise<Result<DoctorReport[], DomainError>> {
-    const root = projectsDir();
-    if (!this.deps.fs.exists(root)) {
-      return ok([]);
-    }
-    let names: string[];
-    try {
-      names = this.deps.fs.readDir(root).filter((e) => e.isDirectory).map((e) => e.name);
-    } catch (cause) {
-      return err(
-        domainError('internal', 'PROJECTS_READ_FAIL', 'projects 目录读取失败', { cause }),
-      );
-    }
-    const now = this.deps.clock.now();
-    const report: DoctorReport[] = [];
-    for (const name of names) {
-      const issues: string[] = [];
-      if (!this.deps.fs.exists(projectConfFile(name))) issues.push('missing conf');
-      const cardsDir = resolve(root, name, 'cards');
-      if (!this.deps.fs.exists(cardsDir)) issues.push('missing cards/');
-      const runtime = runtimeDir(name);
-      if (this.deps.fs.exists(runtime)) {
-        try {
-          const markers = this.deps.fs
-            .readDir(runtime)
-            .filter((e) => e.isFile && WorkerMarkerFilenameRe.test(e.name));
-          for (const mf of markers) {
-            const stat = this.deps.fs.stat(resolve(runtime, mf.name));
-            if (stat) {
-              const ageMin = Math.floor((now - stat.mtimeMs) / 60000);
-              if (ageMin > 60) issues.push(`stale marker ${mf.name} (${ageMin}m)`);
-            }
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-      report.push({ project: name, issues, ok: issues.length === 0 });
-    }
-    return ok(report);
   }
 
   /** 列出当前在跑 pipeline 的项目名 —— upgrade 前置检查用 */

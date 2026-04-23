@@ -19,13 +19,13 @@ import {
   getEnvRaw,
   getLatestVersion,
   getSystemInfo,
-  runDoctor,
   runProjectDoctor,
   updateEnv,
   upgradeSps,
   type DoctorCheck,
   type DoctorProjectResult,
 } from '../../shared/api/system';
+import { listProjects } from '../../shared/api/projects';
 import { useDialog } from '../../shared/components/DialogProvider';
 
 export function SystemPage() {
@@ -367,16 +367,17 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
   );
 }
 
-// v0.50.14：真实 doctor 替代原只做 fs 快速检查的 DoctorReport
+// v0.50.14：真实 doctor 替代原 shallow doctorAll
+// v0.50.17：warm-load 改走 /api/projects（不再有单独的 shallow doctor 路径）
 function DoctorSection() {
   const { alert } = useDialog();
-  const quickQ = useQuery({ queryKey: ['doctor-quick'], queryFn: runDoctor });
+  const projectsQ = useQuery({ queryKey: ['projects'], queryFn: listProjects });
   // 存每个项目的 detailed doctor 结果
   const [details, setDetails] = useState<Record<string, DoctorProjectResult>>({});
   const [loading, setLoading] = useState<Record<string, 'check' | 'fix' | null>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  const projects = quickQ.data?.data ?? [];
+  const projects = (projectsQ.data?.data ?? []).map((p) => ({ project: p.name }));
 
   const runCheck = async (project: string, fix: boolean): Promise<void> => {
     setLoading((l) => ({ ...l, [project]: fix ? 'fix' : 'check' }));
@@ -445,10 +446,8 @@ function DoctorSection() {
                       <CheckCircle size={16} className="text-[var(--color-running)] shrink-0" strokeWidth={2.5} />
                     ) : hasDet ? (
                       <AlertCircle size={16} className="text-[var(--color-stuck)] shrink-0" strokeWidth={2.5} />
-                    ) : p.ok ? (
-                      <CheckCircle size={16} className="text-[var(--color-text-subtle)] shrink-0" strokeWidth={2.5} />
                     ) : (
-                      <AlertCircle size={16} className="text-[var(--color-text-subtle)] shrink-0" strokeWidth={2.5} />
+                      <CheckCircle size={16} className="text-[var(--color-text-subtle)] shrink-0" strokeWidth={2.5} />
                     )}
                     {hasDet && (isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />)}
                     <span className="font-bold font-[family-name:var(--font-mono)]">{p.project}</span>
@@ -460,10 +459,6 @@ function DoctorSection() {
                           {failCount} fail · {warnCount} warn
                         </span>
                       )
-                    ) : p.issues.length > 0 ? (
-                      <span className="text-xs text-[var(--color-text-muted)] truncate">
-                        （快速检查）{p.issues.join('; ')}
-                      </span>
                     ) : (
                       <span className="text-xs text-[var(--color-text-muted)]">点 "检查" 运行 sps doctor</span>
                     )}

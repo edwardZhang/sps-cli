@@ -59,13 +59,8 @@ export function createSystemRoute(system: SystemService): Hono {
     return c.json(r.value);
   });
 
-  app.get('/doctor/all', async (c) => {
-    const r = await system.doctorAll();
-    if (!r.ok) return sendResult(c, r);
-    return c.json({ data: r.value });
-  });
-
-  // v0.50.14：单项目真实 doctor
+  // v0.50.17：删 shallow /doctor/all，只保留真实的单项目 doctor。
+  // warm-load 项目列表前端走 /api/projects。
   app.post('/doctor/:project', async (c) => {
     const project = c.req.param('project');
     const fix = c.req.query('fix') === '1' || c.req.query('fix') === 'true';

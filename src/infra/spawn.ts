@@ -34,6 +34,14 @@ export interface CliSyncResult {
   stderr: string;
 }
 
+/** v0.50.17：runCommand 用于非 sps 的外部 CLI（npm / git 等） */
+export interface CommandOptions {
+  command: string;
+  args: string[];
+  cwd?: string;
+  timeoutMs?: number;
+}
+
 export interface ProcessSpawner {
   /**
    * 启动一个 detached supervisor 进程，父退出后子继续跑。
@@ -46,6 +54,12 @@ export interface ProcessSpawner {
    * Console 路由禁止直接用，必须经过 service → executor → spawner 这条路径。
    */
   runCliSync(opts: CliSyncOptions): Promise<CliSyncResult>;
+
+  /**
+   * 通用外部命令执行（npm / git 等）。和 runCliSync 一样收集 stdout+stderr+exitCode，
+   * 不过不 prepend sps 入口。测试里走 FakeProcessSpawner 可注入任何输出。
+   */
+  runCommand(opts: CommandOptions): Promise<CliSyncResult>;
 }
 
 /**
@@ -84,32 +98,44 @@ export class NodeProcessSpawner implements ProcessSpawner {
 
   runCliSync(opts: CliSyncOptions): Promise<CliSyncResult> {
     const { node, entry } = cliEntry();
-    return new Promise((resolvePromise) => {
-      const child = spawn(node, [entry, ...opts.args], {
-        cwd: opts.cwd,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      let stderr = '';
-      child.stdout?.on('data', (d: Buffer) => {
-        stdout += d.toString();
-      });
-      child.stderr?.on('data', (d: Buffer) => {
-        stderr += d.toString();
-      });
-      const timer = opts.timeoutMs
-        ? setTimeout(() => child.kill('SIGTERM'), opts.timeoutMs)
-        : null;
-      child.on('close', (code) => {
-        if (timer) clearTimeout(timer);
-        resolvePromise({ exitCode: code, stdout, stderr });
-      });
-      child.on('error', (err) => {
-        if (timer) clearTimeout(timer);
-        resolvePromise({ exitCode: -1, stdout, stderr: stderr + String(err) });
-      });
-    });
+    return runCollected(node, [entry, ...opts.args], opts.cwd, opts.timeoutMs);
   }
+
+  runCommand(opts: CommandOptions): Promise<CliSyncResult> {
+    return runCollected(opts.command, opts.args, opts.cwd, opts.timeoutMs);
+  }
+}
+
+// v0.50.17：runCliSync / runCommand 共用的收集器
+function runCollected(
+  command: string,
+  args: string[],
+  cwd: string | undefined,
+  timeoutMs: number | undefined,
+): Promise<CliSyncResult> {
+  return new Promise((resolvePromise) => {
+    const child = spawn(command, args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      stderr += d.toString();
+    });
+    const timer = timeoutMs ? setTimeout(() => child.kill('SIGTERM'), timeoutMs) : null;
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      resolvePromise({ exitCode: code, stdout, stderr });
+    });
+    child.on('error', (err) => {
+      if (timer) clearTimeout(timer);
+      resolvePromise({ exitCode: -1, stdout, stderr: stderr + String(err) });
+    });
+  });
 }
 
 // ─── 测试用 fake ───────────────────────────────────────────────────
@@ -127,13 +153,22 @@ export interface FakeSpawnCall {
 export class FakeProcessSpawner implements ProcessSpawner {
   public calls: FakeSpawnCall[] = [];
   public syncCalls: Array<{ args: string[]; cwd?: string }> = [];
+  public commandCalls: Array<{ command: string; args: string[]; cwd?: string }> = [];
   /** 测试可以预设每次 runCliSync 的响应；缺省返 { exitCode: 0, stdout:'', stderr:'' } */
   public nextSyncResult: CliSyncResult | null = null;
+  /** v0.50.17：runCommand 的响应——key = `<command> <args[0]>` 头两段，值 = 预设响应 */
+  public commandResults = new Map<string, CliSyncResult>();
   private _pid = 100000;
 
   async runCliSync(opts: CliSyncOptions): Promise<CliSyncResult> {
     this.syncCalls.push({ args: opts.args, cwd: opts.cwd });
     return this.nextSyncResult ?? { exitCode: 0, stdout: '', stderr: '' };
+  }
+
+  async runCommand(opts: CommandOptions): Promise<CliSyncResult> {
+    this.commandCalls.push({ command: opts.command, args: opts.args, cwd: opts.cwd });
+    const key = `${opts.command} ${opts.args[0] ?? ''}`;
+    return this.commandResults.get(key) ?? { exitCode: 0, stdout: '', stderr: '' };
   }
 
   spawnSupervisor(opts: SupervisorSpawnOptions): ChildProcess {
