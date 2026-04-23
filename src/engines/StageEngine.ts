@@ -833,8 +833,13 @@ export class StageEngine {
     }
 
     // Memory system: inject user + project memories + write instructions
+    // v0.50.18：可通过 ENABLE_MEMORY=false 关闭。关闭时 instructions 不注入，但已有的
+    // memory content 仍然会注入（读已存内容不烧 prompt 预算）。
+    const memoryEnabled = this.ctx.config.raw.ENABLE_MEMORY !== 'false';
     const memoryContext = buildFullMemoryContext({ project: this.ctx.projectName, cardSeq: card.seq });
-    const memoryInstructions = buildMemoryWriteInstructions(this.ctx.projectName);
+    const memoryInstructions = memoryEnabled
+      ? buildMemoryWriteInstructions(this.ctx.projectName)
+      : '';
     const knowledge = [memoryContext, memoryInstructions].filter(Boolean).join('\n\n---\n\n');
 
     const promptCtx = {
@@ -850,6 +855,8 @@ export class StageEngine {
       skillContent,
       projectRules: projectRules || undefined,
       knowledge,
+      // v0.50.18：COMPLETION_SIGNAL env 覆盖默认 "done"
+      completionSignal: this.ctx.config.raw.COMPLETION_SIGNAL || undefined,
     };
 
     let prompt: string;

@@ -28,7 +28,12 @@ interface SharedPromptContext {
   skillContent?: string;
   projectRules?: string;
   knowledge?: string;
+  /** v0.50.18：完成信号词，默认 "done"。项目 YAML / env 可覆盖。 */
+  completionSignal?: string;
 }
+
+/** v0.50.18：Worker 完成信号的默认词——Stop hook 监听此词触发 COMPLETED 标签 */
+export const DEFAULT_COMPLETION_SIGNAL = 'done';
 
 interface PhasePromptContext extends SharedPromptContext {
   phase: WorkerTaskPhase;
@@ -76,11 +81,13 @@ ${ctx.taskDescription || '(no description)'}`;
 
 function buildPhaseInstructions(ctx: PhasePromptContext): string {
   // v0.50.9：大幅瘦身。只保留 SPS 框架不可回避的不变式：worktree 隔离、push、
-  // 报告 blocker、说 "done" 作为完成信号。其他项目级约定（CHANGELOG / DECISIONS /
+  // 报告 blocker、说 <signal> 作为完成信号。其他项目级约定（CHANGELOG / DECISIONS /
   // conventional commits）归 CLAUDE.md 管，projectRules 段会注入。
+  // v0.50.18：completion signal 参数化，默认 "done"。
+  const signal = ctx.completionSignal ?? DEFAULT_COMPLETION_SIGNAL;
   return `# How to Run
 
-Work inside \`${ctx.worktreePath}\`. Inspect the code, implement the task, commit, then \`git push\` to the current branch. Say "done" only after the push succeeds.
+Work inside \`${ctx.worktreePath}\`. Inspect the code, implement the task, commit, then \`git push\` to the current branch. Say "${signal}" only after the push succeeds.
 
 If blocked by missing permissions / unclear requirements / environment issues, report the exact blocker instead of guessing.`;
 }
@@ -116,9 +123,10 @@ Working directory: ${ctx.worktreePath}
 Description:
 ${ctx.taskDescription || '(no description)'}`);
 
+  const signal = ctx.completionSignal ?? DEFAULT_COMPLETION_SIGNAL;
   sections.push(`# How to Run
 
-Work inside \`${ctx.worktreePath}\`. Complete the task, validate the output, then say "done". Don't touch files outside this directory. If blocked, report the exact blocker.`);
+Work inside \`${ctx.worktreePath}\`. Complete the task, validate the output, then say "${signal}". Don't touch files outside this directory. If blocked, report the exact blocker.`);
 
   return sections.join('\n\n').trim() + '\n';
 }

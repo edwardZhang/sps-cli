@@ -397,47 +397,26 @@ async function runOneTick(
   const steps: StepResult[] = [];
   const opts = { dryRun };
 
-  // v0.50.16：在 halt-check 前先跑 race-recovery。否则假阳性 NEEDS-FIX
-  // （Stop hook race 残留，同时带 COMPLETED-<stage>）会把整条 pipeline halt，
-  // monitor.tick 里的 race-recovery 永远跑不到 → 卡片卡死。
-  try {
-    const healed = await runner.monitor.healRaceConditions();
-    if (healed > 0) {
-      log.info(`Race-recovery: healed ${healed} false-positive NEEDS-FIX card(s) before halt-check`);
-    }
-  } catch {
-    /* best effort —— race-recovery 失败不阻塞 tick */
+  // v0.50.18：race-recovery + halt-check 统一到 MonitorEngine.preFlightCheck，
+  // 不再让 tick.ts 知道 monitor 的内部执行顺序（封装）。
+  // TODO: halt 当前是全局；应该按 stage.halt 配置判
+  const preflight = await runner.monitor.preFlightCheck();
+  if (preflight.healed > 0) {
+    log.info(`Race-recovery: healed ${preflight.healed} false-positive NEEDS-FIX card(s) before halt-check`);
   }
-
-  // ── Failure halt: check for NEEDS-FIX cards before doing anything ──
-  // If any card has NEEDS-FIX, the pipeline is halted until resolved.
-  // TODO: This halts globally. Should only halt if the failed card's stage has halt: true.
-  {
-    const needsFixCards: string[] = [];
-    for (const cardState of pipelineAdapter.activeStates) {
-      try {
-        const cards = await runner.taskBackend.listByState(cardState as any);
-        for (const card of cards) {
-          if (card.labels.includes('NEEDS-FIX')) {
-            needsFixCards.push(`seq:${card.seq} (${card.title})`);
-          }
-        }
-      } catch { /* ignore */ }
-    }
-    if (needsFixCards.length > 0) {
-      log.warn(`Pipeline halted: ${needsFixCards.length} card(s) with NEEDS-FIX: ${needsFixCards.join(', ')}`);
-      log.info('Remove NEEDS-FIX label to resume. Or use: sps reset <project> <seq>');
-      return {
-        project,
-        component: 'tick',
-        status: 'halted' as any,
-        exitCode: 0,
-        steps: [],
-        actions: [],
-        recommendedActions: [],
-        details: { halted: true, needsFixCards },
-      };
-    }
+  if (preflight.halted) {
+    log.warn(`Pipeline halted: ${preflight.needsFixCards.length} card(s) with NEEDS-FIX: ${preflight.needsFixCards.join(', ')}`);
+    log.info('Remove NEEDS-FIX label to resume. Or use: sps reset <project> <seq>');
+    return {
+      project,
+      component: 'tick',
+      status: 'halted' as any,
+      exitCode: 0,
+      steps: [],
+      actions: [],
+      recommendedActions: [],
+      details: { halted: true, needsFixCards: preflight.needsFixCards },
+    };
   }
 
   // ── Recovery: reset orphaned Inprogress cards on tick startup ──

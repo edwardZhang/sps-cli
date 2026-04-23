@@ -114,13 +114,40 @@ export class MonitorEngine {
   }
 
   /**
-   * v0.50.16：public entry，供 tick.ts 在 halt-check 前显式跑一次 race-recovery。
+   * v0.50.18：tick 起步统一入口——race-recovery + halt detection 合在一起。
+   * 封装了 "race-recovery 必须在 halt-check 之前" 的语义，tick.ts 只需调这一个。
    *
-   * 背景：tick.ts 的 NEEDS-FIX halt check 在 monitor.tick() 前面，假阳性
-   * NEEDS-FIX（有 COMPLETED-<stage> 的 race 卡）会把整条 pipeline halt，
-   * 使 monitor.tick 里的 checkRaceRecovery 永远跑不到。
-   *
-   * 这里让 tick.ts 能在判 halt 前先自愈 race 卡——healed 的卡不会再触发 halt。
+   * 返回：
+   *   - halted=false → tick 继续
+   *   - halted=true + needsFixCards → tick 应该提前 return halt result
+   */
+  async preFlightCheck(): Promise<{
+    healed: number;
+    halted: boolean;
+    needsFixCards: string[];
+  }> {
+    const healed = await this.healRaceConditions();
+
+    const needsFixCards: string[] = [];
+    for (const cardState of this.pipelineAdapter.activeStates) {
+      try {
+        const cards = await this.taskBackend.listByState(cardState);
+        for (const card of cards) {
+          if (card.labels.includes('NEEDS-FIX')) {
+            needsFixCards.push(`seq:${card.seq} (${card.title})`);
+          }
+        }
+      } catch (err) {
+        this.log.warn(`preFlightCheck scan ${cardState} failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return { healed, halted: needsFixCards.length > 0, needsFixCards };
+  }
+
+  /**
+   * v0.50.16：供 tick.ts 在 halt-check 前显式跑一次 race-recovery 的兜底 API。
+   * v0.50.18：推荐用 preFlightCheck 统一入口；这个保留做细粒度控制。
    *
    * 返回被自愈的卡片数；失败不抛（best-effort）。
    */
@@ -893,7 +920,12 @@ export class MonitorEngine {
       // Kill any remaining supervisor handle so subsequent state is clean
       if (seq) {
         const workerId = `${this.ctx.projectName}:${slotName}:${seq}`;
-        try { await this.supervisor.kill(workerId); } catch { /* best effort */ }
+        try {
+          await this.supervisor.kill(workerId);
+        } catch (err) {
+          // v0.50.18：supervisor.kill 失败通常是 pid 已死——benign，但留痕便于诊断
+          this.log.warn(`supervisor.kill(${workerId}) failed (likely dead): ${err instanceof Error ? err.message : String(err)}`);
+        }
         await this.autoRetry(seq, slotName, actions, `ACP shim died (pid ${session.pid})`);
       } else {
         // No active seq on this slot — just release it
@@ -1018,7 +1050,10 @@ export class MonitorEngine {
           seq,
           `Auto-retry limit reached (${restartLimit}). Last failure: ${reason}. Needs manual intervention.`,
         );
-      } catch { /* best effort */ }
+      } catch (err) {
+        // v0.50.18：move / comment 失败记日志，不然 retry 上限到了但卡片看起来没变化
+        this.log.warn(`seq ${seq}: final BLOCKED move/comment failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
 
       this.log.error(`seq ${seq}: Retry limit reached (${restartLimit}), marked BLOCKED`);
       await this.notifySafe(`❌ [${this.ctx.projectName}] seq:${seq} retry limit reached (${restartLimit}x) — marked BLOCKED, needs manual review`);
@@ -1062,7 +1097,10 @@ export class MonitorEngine {
   private async removeLabelSafe(seq: string, label: string): Promise<void> {
     try {
       await this.taskBackend.removeLabel(seq, label);
-    } catch { /* best effort */ }
+    } catch (err) {
+      // v0.50.18：removeLabel 失败记日志（此前是静默吞）
+      this.log.warn(`removeLabel(${seq}, ${label}) failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   private async notifySafe(message: string): Promise<void> {
