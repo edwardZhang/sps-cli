@@ -77,6 +77,21 @@ describe('E2E /api/projects/:project/cards', () => {
     expect(body.checklist.total).toBe(1);
   });
 
+  /**
+   * v0.50.2 回归防线：detail.body 必须含全部 section（描述 / 检查清单 / 日志），
+   * 不能只是 `## 描述` 段。v0.50.0 Phase 3 曾把 body 错映射成 card.desc，前端
+   * 看板卡片详情的"日志"和"检查清单"两框就失效了。
+   */
+  it('GET /cards/:seq body 返回完整 markdown（含所有 section）', async () => {
+    const seq = await seedCard(fx, 'full body', 'my desc');
+    const res = await app.req(`/api/projects/board-test/cards/${seq}`);
+    const body = (await res.json()) as { body: string };
+    expect(body.body).toContain('## 描述');
+    expect(body.body).toContain('my desc');
+    expect(body.body).toContain('## 检查清单');
+    expect(body.body).toContain('## 日志');
+  });
+
   it('GET /cards/:seq 404 seq 不存在', async () => {
     const res = await app.req('/api/projects/board-test/cards/99999');
     expect(res.status).toBe(404);

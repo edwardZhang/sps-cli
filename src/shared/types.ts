@@ -26,7 +26,15 @@ export interface Card {
   seq: string;
   /** Card title — user-visible task name. v0.42.0 renamed from `name`. */
   title: string;
+  /** Parsed `## 描述` section content (or whole description on non-markdown backends). */
   desc: string;
+  /**
+   * Raw markdown body (all sections) for markdown backends.
+   * Populated by `MarkdownTaskBackend.readCard` (v0.50.2+) so UI can render per-section
+   * blocks (`## 描述` / `## 检查清单` / `## 日志`) without re-reading the file.
+   * Non-markdown backends leave undefined.
+   */
+  body?: string;
   state: CardState;
   labels: string[];
   /** Business metadata: skills required for this task (v0.42.0+). */

@@ -420,6 +420,7 @@ export class MarkdownTaskBackend implements TaskBackend {
       seq: String(frontmatter.seq),
       title,
       desc,
+      body, // v0.50.2：完整 markdown，UI 需按 section 渲染时用
       state,
       labels: (frontmatter.labels as string[]) || [],
       ...(skills ? { skills } : {}),

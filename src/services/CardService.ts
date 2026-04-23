@@ -377,9 +377,11 @@ function toCardSummary(card: Card): CardSummary {
 function toCardDetail(card: Card): CardDetail {
   return {
     ...toCardSummary(card),
-    body: card.desc ?? '',
+    // v0.50.2：markdown backend 写入 `card.body`（完整 body 含所有 section）；
+    // 非 markdown backend 只有 desc —— fallback 用 desc 当 body
+    body: card.body ?? card.desc ?? '',
     checklist: card.checklist ?? { total: 0, done: 0, percent: 0, items: [] },
-    activeWorkerSlot: null, // 组合 WorkerService 时再填
+    activeWorkerSlot: null,
   };
 }
 
