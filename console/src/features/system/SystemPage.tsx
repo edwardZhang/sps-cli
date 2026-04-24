@@ -480,25 +480,31 @@ function DoctorSection() {
                     )}
                     检查
                   </button>
-                  {hasDet && !det.ok && (
-                    <button
-                      className="nb-btn nb-btn-primary"
-                      style={{ padding: '4px 10px', fontSize: 11 }}
-                      onClick={() => {
-                        void runCheck(p.project, true);
-                      }}
-                      disabled={!!isLoading}
-                      type="button"
-                      aria-label="自动修复"
-                    >
-                      {isLoading === 'fix' ? (
-                        <Loader2 size={11} strokeWidth={3} className="animate-spin" />
-                      ) : (
-                        <Wrench size={11} strokeWidth={2.5} />
-                      )}
-                      修复
-                    </button>
-                  )}
+                  {/* v0.50.22：修复按钮总是可见——老项目从没 check 过也能直接修。
+                      sps doctor --fix 是幂等的：没问题时 noop，有问题才动手。
+                      仅在已经 check 过且完全 OK 时禁用（显性提示无事可做）。 */}
+                  <button
+                    className="nb-btn nb-btn-primary"
+                    style={{ padding: '4px 10px', fontSize: 11 }}
+                    onClick={() => {
+                      void runCheck(p.project, true);
+                    }}
+                    disabled={!!isLoading || (hasDet && det.ok)}
+                    type="button"
+                    aria-label="自动修复"
+                    title={
+                      hasDet && det.ok
+                        ? '已无可修问题'
+                        : '调 sps doctor <proj> --fix：自动创建 .claude/hooks/stop.sh、state.json 等'
+                    }
+                  >
+                    {isLoading === 'fix' ? (
+                      <Loader2 size={11} strokeWidth={3} className="animate-spin" />
+                    ) : (
+                      <Wrench size={11} strokeWidth={2.5} />
+                    )}
+                    修复
+                  </button>
                 </div>
                 {isExpanded && hasDet && (
                   <div className="border-t-2 border-dashed border-[var(--color-text)] px-3 py-2">
