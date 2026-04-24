@@ -143,13 +143,25 @@
     transform: translate(2px, 2px);
     box-shadow: 1px 1px 0 var(--color-text);
   }
+  /* v0.50.20：disabled 统一视觉（原来没定义，各处按钮 disabled 后仍和正常态一样）*/
+  .nb-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: 2px 2px 0 var(--color-text);
+  }
+  .nb-btn:disabled:hover {
+    transform: none;
+    box-shadow: 2px 2px 0 var(--color-text);
+  }
   .nb-btn-primary  { background: var(--color-cta); }
   .nb-btn-mint     { background: var(--color-accent-mint); }
   .nb-btn-peach    { background: var(--color-primary); }
   .nb-btn-blue     { background: var(--color-secondary); }
   .nb-btn-yellow   { background: var(--color-accent-yellow); }
   .nb-btn-purple   { background: var(--color-accent-purple); }
-  .nb-btn-danger   { background: var(--color-crashed); }
+  /* v0.50.20：深红底配白字（原来默认继承 --color-text 是黑色，在红底上读不清） */
+  .nb-btn-danger   { background: var(--color-crashed); color: #fff; }
 
   /* Input */
   .nb-input {

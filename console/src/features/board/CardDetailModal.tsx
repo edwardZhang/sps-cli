@@ -8,6 +8,7 @@ import {
   resetCard,
   updateCard,
 } from '../../shared/api/cards';
+import { listProjects } from '../../shared/api/projects';
 import { listSkills } from '../../shared/api/skills';
 import { SkillBadge, LabelBadge } from '../../shared/components/Badges';
 import { useDialog } from '../../shared/components/DialogProvider';
@@ -60,6 +61,15 @@ export function CardDetailModal({
     queryFn: () => listSkills(project),
     enabled: editing, // 只在编辑时才拉
   });
+
+  // v0.50.20：检测 pipeline 是否在跑——如果在跑，supervisor 自己会 dispatch，
+  // 单卡手动启动 worker 容易撞车（两个 worker 抢同一张卡 / slot），应该禁用。
+  const projectsQ = useQuery({
+    queryKey: ['projects'],
+    queryFn: listProjects,
+    refetchInterval: 10_000,
+  });
+  const pipelineRunning = projectsQ.data?.data.find((p) => p.name === project)?.pipelineStatus === 'running';
 
   // Hydrate drafts from server data whenever we enter edit mode or data changes while editing
   useEffect(() => {
@@ -344,32 +354,36 @@ export function CardDetailModal({
                   </pre>
                 </div>
 
-                {/* 检查清单 */}
-                {((data.checklist?.total) ?? 0) > 0 && (
-                  <div>
-                    <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                      检查清单 <span className="text-[var(--color-text-muted)] normal-case tracking-normal">{((data.checklist?.done) ?? 0)}/{((data.checklist?.total) ?? 0)}</span>
-                    </h3>
-                    <div className="nb-card bg-[var(--color-bg-cream)] p-3">
-                      <div className="flex items-center justify-end mb-2">
-                        <div className="w-24 h-2 bg-[var(--color-bg)] border-2 border-[var(--color-text)] rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-[var(--color-cta)]"
-                            style={{ width: `${((data.checklist?.percent) ?? 0)}%` }}
-                          />
+                {/* 检查清单 —— v0.50.20：即使为空也渲染框，保持布局一致 */}
+                <div>
+                  <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
+                    检查清单 <span className="text-[var(--color-text-muted)] normal-case tracking-normal">{((data.checklist?.done) ?? 0)}/{((data.checklist?.total) ?? 0)}</span>
+                  </h3>
+                  <div className="nb-card bg-[var(--color-bg-cream)] p-3">
+                    {((data.checklist?.total) ?? 0) > 0 ? (
+                      <>
+                        <div className="flex items-center justify-end mb-2">
+                          <div className="w-24 h-2 bg-[var(--color-bg)] border-2 border-[var(--color-text)] rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-[var(--color-cta)]"
+                              style={{ width: `${((data.checklist?.percent) ?? 0)}%` }}
+                            />
+                          </div>
                         </div>
-                      </div>
-                      <ul className="text-sm space-y-1">
-                        {((data.checklist?.items) ?? []).map((item, i) => (
-                          <li key={i} className={`flex items-start gap-2 ${item.done ? 'opacity-60 line-through' : ''}`}>
-                            <span>{item.done ? '✓' : '○'}</span>
-                            <span>{item.text}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                        <ul className="text-sm space-y-1">
+                          {((data.checklist?.items) ?? []).map((item, i) => (
+                            <li key={i} className={`flex items-start gap-2 ${item.done ? 'opacity-60 line-through' : ''}`}>
+                              <span>{item.done ? '✓' : '○'}</span>
+                              <span>{item.text}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <p className="text-xs text-[var(--color-text-muted)] italic">暂无清单项。在描述里用 <code className="font-[family-name:var(--font-mono)]">- [ ] 项</code> 语法添加。</p>
+                    )}
                   </div>
-                )}
+                </div>
 
                 {/* 日志 */}
                 <div>
@@ -424,9 +438,21 @@ export function CardDetailModal({
             <div className="flex gap-2 pt-2 border-t-2 border-[var(--color-border-light)] justify-end flex-wrap">
               {!editing ? (
                 <>
+                  {/* v0.50.20：
+                      - Done 列不能启动（已完成，重跑需先拖回 Todo）
+                      - pipeline 在跑时不能手动单卡启动（supervisor 自己会 dispatch，
+                        手动 launch 会和 supervisor 的 scheduler 抢 slot） */}
                   <button
                     className="nb-btn nb-btn-primary"
                     type="button"
+                    disabled={data.state === 'Done' || pipelineRunning}
+                    title={
+                      data.state === 'Done'
+                        ? '卡片已完成；先拖回 Todo 再启动'
+                        : pipelineRunning
+                          ? 'Pipeline 正在跑——supervisor 会自动 dispatch，无需手动启动'
+                          : undefined
+                    }
                     onClick={async () => {
                       try {
                         await launchCard(project, seq);
