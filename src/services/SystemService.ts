@@ -307,9 +307,14 @@ export class SystemService {
       }
       const checks = parsed?.details?.checks ?? [];
       const fixes = parsed?.details?.fixes ?? [];
+      // v0.50.23：warn 也算 not-ok。doctor 对 "缺 .claude/settings.json"、
+      // "缺 state.json" 这类 `use --fix to create` 的场景打的是 warn，不是 fail。
+      // 如果只看 fail，缺 worker-rules 的老项目会显示 ok=true，修复按钮被置灰，
+      // 用户无法触发。统一按 pass/info/skip = ok 判定。
+      const notOkStatuses: Array<string> = ['fail', 'warn'];
       return ok({
         project,
-        ok: !checks.some((c) => c.status === 'fail'),
+        ok: !checks.some((c) => notOkStatuses.includes(c.status)),
         checks,
         fixes,
         log: res.stderr,
