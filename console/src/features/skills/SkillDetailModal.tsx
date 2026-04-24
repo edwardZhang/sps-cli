@@ -25,7 +25,7 @@ export function SkillDetailModal({
   onClose: () => void;
   onChange: () => void;
 }) {
-  const { confirm } = useDialog();
+  const { confirm, alert } = useDialog();
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['skill', name],
     queryFn: () => getSkill(name),
@@ -39,11 +39,24 @@ export function SkillDetailModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const handleLink = async (project: string): Promise<void> => {
-    await linkSkill(name, project);
-    refetch();
-    onChange();
+  // v0.50.21：所有操作包 try/catch + alert，否则 async onClick 抛错会被 React 吞，
+  // 用户看到的效果就是"点了没反应"。
+  const runAction = async (label: string, fn: () => Promise<unknown>): Promise<void> => {
+    try {
+      await fn();
+      await refetch();
+      onChange();
+    } catch (err) {
+      void alert({
+        title: `${label}失败`,
+        body: err instanceof Error ? err.message : String(err),
+      });
+    }
   };
+
+  const handleLink = (project: string): Promise<void> =>
+    runAction('link', () => linkSkill(name, project));
+
   const handleUnlink = async (project: string): Promise<void> => {
     const ok = await confirm({
       title: `从 ${project} 移除 ${name}`,
@@ -52,15 +65,12 @@ export function SkillDetailModal({
       danger: true,
     });
     if (!ok) return;
-    await unlinkSkill(name, project);
-    refetch();
-    onChange();
+    await runAction('unlink', () => unlinkSkill(name, project));
   };
-  const handleFreeze = async (project: string): Promise<void> => {
-    await freezeSkill(name, project);
-    refetch();
-    onChange();
-  };
+
+  const handleFreeze = (project: string): Promise<void> =>
+    runAction('freeze', () => freezeSkill(name, project));
+
   const handleUnfreeze = async (project: string): Promise<void> => {
     const ok = await confirm({
       title: `解冻 ${name} @ ${project}`,
@@ -69,9 +79,7 @@ export function SkillDetailModal({
       danger: true,
     });
     if (!ok) return;
-    await unfreezeSkill(name, project);
-    refetch();
-    onChange();
+    await runAction('unfreeze', () => unfreezeSkill(name, project));
   };
 
   const stateMap = new Map((data?.linkedProjects ?? []).map((p) => [p.project, p.state]));

@@ -31,10 +31,14 @@ export interface SkillSummary {
   readonly stateInProject?: SkillLinkState;
 }
 
-export interface SkillDetail extends SkillSummary {
+export interface SkillDetail extends Omit<SkillSummary, 'linkedProjects'> {
   readonly body: string;
   readonly references: Array<{ name: string; lines: number }>;
-  readonly linkedProjects: string[];
+  /**
+   * v0.50.21：detail 返回 enriched shape（state 标明 linked vs frozen）。
+   * 之前返的是 string[]，导致前端 stateMap 全部读不到状态，所有项目显示 absent。
+   */
+  readonly linkedProjects: Array<{ project: string; state: 'linked' | 'frozen' }>;
 }
 
 export interface SkillServiceDeps {
@@ -96,7 +100,8 @@ export class SkillService {
       origin: fm.origin,
       body,
       references,
-      linkedProjects: collectLinkedProjects(name).map((p) => p.project),
+      // v0.50.21：返回 enriched shape，前端才能正确渲染 linked/frozen 状态
+      linkedProjects: collectLinkedProjects(name),
     });
   }
 
