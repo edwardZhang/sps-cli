@@ -161,6 +161,10 @@ export interface ProjectInitOpts {
   gitlabProject?: string;
   gitlabProjectId?: string;
   matrixRoomId?: string;
+  /** v0.50.24：是否启用 git；false → conf 跳过 GITLAB_*，project.yaml 写 git:false */
+  enableGit?: boolean;
+  /** v0.50.24：ACK 超时秒数（默认 300） */
+  ackTimeoutS?: number;
 }
 
 export async function executeProjectInit(
@@ -201,6 +205,10 @@ export async function executeProjectInit(
     }
   }
 
+  // v0.50.24：enableGit 要传给 project.yaml 生成（在 conf block 外），提到函数作用域。
+  // 默认 true，保向后兼容。
+  let enableGit = nonInteractive?.enableGit !== false;
+
   // Generate conf — interactive if new (and no nonInteractive opts), skip if exists
   const confDst = resolve(instanceDir, 'conf');
   if (!existsSync(confDst) || flags.force) {
@@ -210,6 +218,8 @@ export async function executeProjectInit(
     let gitlabProject: string;
     let gitlabProjectId: string;
     let matrixRoomId: string;
+    // v0.50.24：默认 ACK 5 分钟
+    let ackTimeoutS = 300;
 
     if (nonInteractive) {
       projectDir = nonInteractive.projectDir;
@@ -218,6 +228,10 @@ export async function executeProjectInit(
       gitlabProject = nonInteractive.gitlabProject ?? '';
       gitlabProjectId = nonInteractive.gitlabProjectId ?? '';
       matrixRoomId = nonInteractive.matrixRoomId ?? '';
+      // enableGit 已在函数顶部从 nonInteractive 读取
+      if (typeof nonInteractive.ackTimeoutS === 'number' && nonInteractive.ackTimeoutS > 0) {
+        ackTimeoutS = nonInteractive.ackTimeoutS;
+      }
     } else {
       const rl = createInterface({ input: process.stdin, output: process.stdout });
       const ask = (question: string, defaultValue?: string): Promise<string> => {
@@ -259,10 +273,13 @@ export async function executeProjectInit(
       `export PROJECT_DIR="${projectDir}"`,
       '',
     ];
-    if (gitlabProject) confLines.push(`export GITLAB_PROJECT="${gitlabProject}"`);
-    if (gitlabProjectId) confLines.push(`export GITLAB_PROJECT_ID="${gitlabProjectId}"`);
-    confLines.push(`export GITLAB_MERGE_BRANCH="${mergeBranch}"`);
-    confLines.push('');
+    // v0.50.24：enableGit=false 时不写 GITLAB_* 到 conf，相关字段在 worker 侧走 git: false 分支
+    if (enableGit) {
+      if (gitlabProject) confLines.push(`export GITLAB_PROJECT="${gitlabProject}"`);
+      if (gitlabProjectId) confLines.push(`export GITLAB_PROJECT_ID="${gitlabProjectId}"`);
+      confLines.push(`export GITLAB_MERGE_BRANCH="${mergeBranch}"`);
+      confLines.push('');
+    }
     // v0.42.0: PM_TOOL is always markdown (Plane/Trello removed)
     confLines.push(`export PM_TOOL="markdown"`);
     confLines.push('export PIPELINE_LABEL="AI-PIPELINE"');
@@ -273,6 +290,7 @@ export async function executeProjectInit(
     confLines.push('export MAX_ACTIONS_PER_TICK=3');
     confLines.push('');
     confLines.push('export INPROGRESS_TIMEOUT_HOURS=2');
+    confLines.push(`export WORKER_ACK_TIMEOUT_S=${ackTimeoutS}`);
     confLines.push('export MONITOR_AUTO_QA=true');
     confLines.push('export CONFLICT_DEFAULT="serial"');
     if (matrixRoomId) {
@@ -355,9 +373,9 @@ export INPROGRESS_TIMEOUT_HOURS=2
 # WORKER_ACK_TIMEOUT_S: ACK probe timeout (seconds)
 #   After dispatch, if no STARTED-<stage> label appears within this window,
 #   MonitorEngine flags ACK-TIMEOUT (Claude never acknowledged the prompt via
-#   its UserPromptSubmit hook). Default 60s (= 2 tick intervals). Raise if your
-#   PM backend is slow (network-heavy Plane/Trello).
-# export WORKER_ACK_TIMEOUT_S=60
+#   its UserPromptSubmit hook). Default 300s (5min, v0.50.24+). Raise if Claude
+#   cold-start reads many skill/memory files before first tool call.
+# export WORKER_ACK_TIMEOUT_S=300
 # WORKER_ACK_MAX_RETRIES: Max ACK retry attempts before escalating to NEEDS-FIX
 #   On ACK-TIMEOUT, StageEngine kills the worker and re-dispatches this many
 #   times (with a fresh claude-agent-acp session). Default 1.
@@ -457,14 +475,16 @@ stages:
     log.ok(`Created pipelines/ with sample template`);
 
     // v0.49.2: 默认 project.yaml（精简版，无注释），让 init 完立即可跑
+    // v0.50.24: enableGit=false 时写 `git: false`，worker 走非 git 提示词模板
     // 不覆盖已存在的（用户可能手动改过）
     const projectYamlPath = resolve(pipelinesDir, 'project.yaml');
     if (!existsSync(projectYamlPath)) {
+      const gitLine = !enableGit ? 'git: false\n' : '';
       writeFileSync(
         projectYamlPath,
-        `mode: project\n\nstages:\n  - name: develop\n    on_complete: "move_card Done"\n    on_fail:\n      action: "label NEEDS-FIX"\n      halt: true\n`,
+        `mode: project\n${gitLine}\nstages:\n  - name: develop\n    on_complete: "move_card Done"\n    on_fail:\n      action: "label NEEDS-FIX"\n      halt: true\n`,
       );
-      log.ok('Created default project.yaml (1 stage, ready to tick)');
+      log.ok(`Created default project.yaml (1 stage, git=${enableGit})`);
     }
   }
 

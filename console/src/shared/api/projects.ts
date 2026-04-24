@@ -14,11 +14,15 @@ export interface ProjectSummary {
 export interface CreateProjectInput {
   name: string;
   projectDir: string;
+  /** v0.50.24：是否启用 git。false 时 worker 不会 commit/push，conf 里跳过 GITLAB_* */
+  enableGit?: boolean;
   mergeBranch?: string;
   maxWorkers?: string;
   gitlabProject?: string;
   gitlabProjectId?: string;
   matrixRoomId?: string;
+  /** v0.50.24：ACK 超时分钟数（默认 5）。Claude 收到 prompt 后要在这时间内打 STARTED-<stage> */
+  ackTimeoutMin?: string;
 }
 
 export interface ConfResponse {

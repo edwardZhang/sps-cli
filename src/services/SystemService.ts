@@ -78,13 +78,16 @@ export interface DoctorProjectResult {
   readonly log: string;
 }
 
+// v0.50.24：Plane / Trello 已在 v0.42 移除，清理 SECRET_KEY 前缀列表
+// 注意：GITLAB_ 不加进来——GITLAB_URL / GITLAB_SSH_HOST 不是 secret，这些通过后缀
+// 规则 (_TOKEN$ / _PASSWORD$) 足够覆盖 GITLAB_TOKEN 这类真 secret。
 const SECRET_KEY_PATTERNS = [
   /_TOKEN$/,
   /_KEY$/,
   /_SECRET$/,
   /_PASSWORD$/,
   /_PASS$/,
-  /^(ANTHROPIC|OPENAI|CLAUDE|PLANE|TRELLO|MATRIX)_/,
+  /^(ANTHROPIC|OPENAI|CLAUDE|MATRIX)_/,
 ];
 
 // ─── Service ──────────────────────────────────────────────────────

@@ -41,7 +41,7 @@ if (typeof globalThis.fetch === 'undefined') {
   } catch {
     process.stderr.write(
       'Warning: fetch is not available. Upgrade to Node.js >= 18.13 or install undici.\n' +
-      'Some features (Plane, Trello, GitLab API, Matrix) will not work.\n',
+      'GitLab API and Matrix notifications will not work.\n',
     );
   }
 }

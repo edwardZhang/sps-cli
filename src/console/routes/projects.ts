@@ -33,11 +33,13 @@ export function createProjectsRoute(deps: ProjectsRouteDeps): Hono {
       | {
           name?: string;
           projectDir?: string;
+          enableGit?: boolean;
           mergeBranch?: string;
           maxWorkers?: string;
           gitlabProject?: string;
           gitlabProjectId?: string;
           matrixRoomId?: string;
+          ackTimeoutMin?: string;
         }
       | null;
     if (!body?.name || !/^[a-zA-Z0-9_-]+$/.test(body.name)) {
@@ -49,14 +51,19 @@ export function createProjectsRoute(deps: ProjectsRouteDeps): Hono {
     if (!body.projectDir) {
       return c.json({ type: 'validation', title: 'projectDir required', status: 422 }, 422);
     }
+    // v0.50.24：ackTimeoutMin (分钟) → ackTimeoutS (秒)
+    const ackMin = Number.parseInt(body.ackTimeoutMin ?? '5', 10);
+    const ackTimeoutS = Number.isFinite(ackMin) && ackMin > 0 ? ackMin * 60 : 300;
     const r = await deps.projects.create({
       name: body.name,
       projectDir: body.projectDir,
+      enableGit: body.enableGit !== false, // 默认 true
       mergeBranch: body.mergeBranch || 'main',
       maxWorkers: body.maxWorkers || '1',
       gitlabProject: body.gitlabProject,
       gitlabProjectId: body.gitlabProjectId,
       matrixRoomId: body.matrixRoomId,
+      ackTimeoutS,
     });
     if (!r.ok) return c.json(toProblemJson(r.error), toHttpStatus(r.error) as 400);
     return c.json(r.value, 201);

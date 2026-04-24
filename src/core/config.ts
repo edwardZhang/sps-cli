@@ -65,7 +65,7 @@ export interface ProjectConfig {
   // Paths (overridable)
   WORKTREE_DIR?: string;
 
-  // Raw values (for PM-specific fields like TRELLO_BOARD_ID, PLANE_STATE_*, etc.)
+  // Raw values（保留原始字符串 map，供 adapter 按需读取非 ProjectConfig 明确字段的 env）
   raw: RawConfig;
 }
 
@@ -104,7 +104,7 @@ export function loadProjectConf(projectName: string): ProjectConfig {
   }
 
   // Source global env + project conf together in one bash context
-  // so that conf can reference variables from ~/.coral/env (e.g., ${PLANE_URL})
+  // so that conf can reference variables from ~/.coral/env (e.g., ${GITLAB_TOKEN})
   const envPath = resolve(process.env.HOME || '~', '.coral', 'env');
   const raw = sourceCombinedConfImpl([envPath, confPath]);
 
@@ -141,7 +141,8 @@ export function loadProjectConf(projectName: string): ProjectConfig {
     CONFLICT_DEFAULT: (raw.CONFLICT_DEFAULT as 'serial' | 'parallel') || 'serial',
     TICK_LOCK_TIMEOUT_MINUTES: parseInt(raw.TICK_LOCK_TIMEOUT_MINUTES || '30', 10),
 
-    WORKER_ACK_TIMEOUT_S: parseInt(raw.WORKER_ACK_TIMEOUT_S || '60', 10),
+    // v0.50.24：默认 60s 太短（Claude cold-start 读 skill/memory 经常 >60s），提到 300s
+    WORKER_ACK_TIMEOUT_S: parseInt(raw.WORKER_ACK_TIMEOUT_S || '300', 10),
     WORKER_ACK_MAX_RETRIES: parseInt(raw.WORKER_ACK_MAX_RETRIES || '1', 10),
 
     WORKTREE_DIR: raw.WORKTREE_DIR,

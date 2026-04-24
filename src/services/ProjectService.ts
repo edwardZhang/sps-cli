@@ -68,6 +68,10 @@ export interface ProjectInitOpts {
   gitlabProject?: string;
   gitlabProjectId?: string;
   matrixRoomId?: string;
+  /** v0.50.24：是否启用 git（false 时不写 GITLAB_* 到 conf，project.yaml 写 git: false） */
+  enableGit?: boolean;
+  /** v0.50.24：ACK 超时秒数（默认 300 = 5 分钟） */
+  ackTimeoutS?: number;
 }
 
 export interface CreateProjectInput extends ProjectInitOpts {

@@ -6,11 +6,12 @@ import { createProject, type CreateProjectInput } from '../../shared/api/project
 import { useDialog } from '../../shared/components/DialogProvider';
 
 /**
- * /projects/new — create-project wizard, single form page.
+ * /projects/new — 新建项目表单
  *
- * 字段对齐 `sps project init` 非交互入参：
- *   name (required) / projectDir (required) / mergeBranch / maxWorkers
- *   gitlabProject (optional) / gitlabProjectId (optional) / matrixRoomId (optional)
+ * v0.50.24：
+ *   - Git 支持开关（默认 ON）—— OFF 时隐藏合并分支和远程路径
+ *   - "Git 仓库路径" → "项目目录"（本机绝对路径，和是否 git 无关）
+ *   - ACK 超时分钟数加入配置（默认 5 分钟）
  */
 export function NewProjectPage() {
   const nav = useNavigate();
@@ -20,8 +21,10 @@ export function NewProjectPage() {
   const [form, setForm] = useState<CreateProjectInput>({
     name: '',
     projectDir: '',
+    enableGit: true,
     mergeBranch: 'main',
     maxWorkers: '1',
+    ackTimeoutMin: '5',
   });
 
   const mutation = useMutation({
@@ -88,7 +91,7 @@ export function NewProjectPage() {
             )}
           </Field>
 
-          <Field label="Git 仓库路径" hint="本机绝对路径，如 /home/coral/code/acme">
+          <Field label="项目目录" hint="本机绝对路径（代码或文档都可）。和是否启用 git 无关。">
             <input
               type="text"
               className="nb-input w-full font-[family-name:var(--font-mono)]"
@@ -100,14 +103,6 @@ export function NewProjectPage() {
           </Field>
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="合并分支">
-              <input
-                type="text"
-                className="nb-input w-full font-[family-name:var(--font-mono)]"
-                value={form.mergeBranch}
-                onChange={(e) => setForm({ ...form, mergeBranch: e.target.value })}
-              />
-            </Field>
             <Field label="最大 Worker 数">
               <input
                 type="number"
@@ -118,43 +113,81 @@ export function NewProjectPage() {
                 onChange={(e) => setForm({ ...form, maxWorkers: e.target.value })}
               />
             </Field>
+            <Field label="ACK 超时（分钟）" hint="Worker 启动后多久没 ACK 视为失败">
+              <input
+                type="number"
+                min="1"
+                max="30"
+                className="nb-input w-full font-[family-name:var(--font-mono)]"
+                value={form.ackTimeoutMin ?? '5'}
+                onChange={(e) => setForm({ ...form, ackTimeoutMin: e.target.value })}
+              />
+            </Field>
           </div>
 
-          <div className="pt-2 border-t-2 border-[var(--color-text)] border-dashed">
-            <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider mb-3 text-[var(--color-text-muted)]">
-              可选配置
-            </h3>
-            <div className="flex flex-col gap-4">
-              <Field label="Git 远程项目路径" hint="如 user/repo，空则跳过 Git API">
-                <input
-                  type="text"
-                  className="nb-input w-full font-[family-name:var(--font-mono)]"
-                  placeholder="user/repo"
-                  value={form.gitlabProject ?? ''}
-                  onChange={(e) => setForm({ ...form, gitlabProject: e.target.value })}
-                />
-              </Field>
-              {form.gitlabProject && (
-                <Field label="GitLab 项目 ID" hint="数字，GitHub 用户可留空">
+          {/* Git 开关 + 相关字段 */}
+          <div className="pt-3 border-t-2 border-[var(--color-text)] border-dashed">
+            <label className="flex items-center gap-3 mb-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.enableGit ?? true}
+                onChange={(e) => setForm({ ...form, enableGit: e.target.checked })}
+                className="w-4 h-4 cursor-pointer"
+              />
+              <span className="text-sm font-bold">启用 Git（Worker 自动 commit + push）</span>
+            </label>
+            <p className="text-xs text-[var(--color-text-muted)] mb-3">
+              关闭后 Worker 只做任务、不做版本控制；适合文档/数据处理等非代码项目。
+            </p>
+
+            {form.enableGit !== false && (
+              <div className="flex flex-col gap-4 bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4">
+                <Field label="合并分支">
                   <input
                     type="text"
                     className="nb-input w-full font-[family-name:var(--font-mono)]"
-                    placeholder="42"
-                    value={form.gitlabProjectId ?? ''}
-                    onChange={(e) => setForm({ ...form, gitlabProjectId: e.target.value })}
+                    value={form.mergeBranch ?? 'main'}
+                    onChange={(e) => setForm({ ...form, mergeBranch: e.target.value })}
                   />
                 </Field>
-              )}
-              <Field label="Matrix 房间 ID" hint="空则使用全局配置">
-                <input
-                  type="text"
-                  className="nb-input w-full font-[family-name:var(--font-mono)]"
-                  placeholder="!abc:matrix.example.com"
-                  value={form.matrixRoomId ?? ''}
-                  onChange={(e) => setForm({ ...form, matrixRoomId: e.target.value })}
-                />
-              </Field>
-            </div>
+                <Field label="Git 远程项目路径" hint="如 user/repo，空则跳过远程 API（只本地 commit/push）">
+                  <input
+                    type="text"
+                    className="nb-input w-full font-[family-name:var(--font-mono)]"
+                    placeholder="user/repo"
+                    value={form.gitlabProject ?? ''}
+                    onChange={(e) => setForm({ ...form, gitlabProject: e.target.value })}
+                  />
+                </Field>
+                {form.gitlabProject && (
+                  <Field label="GitLab 项目 ID" hint="数字；GitHub 用户留空">
+                    <input
+                      type="text"
+                      className="nb-input w-full font-[family-name:var(--font-mono)]"
+                      placeholder="42"
+                      value={form.gitlabProjectId ?? ''}
+                      onChange={(e) => setForm({ ...form, gitlabProjectId: e.target.value })}
+                    />
+                  </Field>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 通知 */}
+          <div className="pt-3 border-t-2 border-[var(--color-text)] border-dashed">
+            <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider mb-3 text-[var(--color-text-muted)]">
+              通知
+            </h3>
+            <Field label="Matrix 房间 ID" hint="空则使用全局配置；不填 = 不通知">
+              <input
+                type="text"
+                className="nb-input w-full font-[family-name:var(--font-mono)]"
+                placeholder="!abc:matrix.example.com"
+                value={form.matrixRoomId ?? ''}
+                onChange={(e) => setForm({ ...form, matrixRoomId: e.target.value })}
+              />
+            </Field>
           </div>
 
           <div className="flex gap-3 justify-end pt-3">
