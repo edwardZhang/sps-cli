@@ -34,6 +34,7 @@ export function createProjectsRoute(deps: ProjectsRouteDeps): Hono {
           name?: string;
           projectDir?: string;
           enableGit?: boolean;
+          enableWiki?: boolean;
           mergeBranch?: string;
           maxWorkers?: string;
           gitlabProject?: string;
@@ -58,6 +59,7 @@ export function createProjectsRoute(deps: ProjectsRouteDeps): Hono {
       name: body.name,
       projectDir: body.projectDir,
       enableGit: body.enableGit !== false, // 默认 true
+      enableWiki: body.enableWiki === true, // 默认 false（v0.51.0）
       mergeBranch: body.mergeBranch || 'main',
       maxWorkers: body.maxWorkers || '1',
       gitlabProject: body.gitlabProject,

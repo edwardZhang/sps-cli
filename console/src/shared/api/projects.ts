@@ -16,6 +16,8 @@ export interface CreateProjectInput {
   projectDir: string;
   /** v0.50.24：是否启用 git。false 时 worker 不会 commit/push，conf 里跳过 GITLAB_* */
   enableGit?: boolean;
+  /** v0.51.0：是否启用 wiki/。true → 自动 scaffold + 写 WIKI_ENABLED=true 到 conf */
+  enableWiki?: boolean;
   mergeBranch?: string;
   maxWorkers?: string;
   gitlabProject?: string;

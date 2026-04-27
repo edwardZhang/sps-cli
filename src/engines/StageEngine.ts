@@ -28,6 +28,7 @@ import { readQueue } from '../core/queue.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import type { RuntimeState, TaskLease, WorkerSlotState } from '../core/state.js';
 import { buildPhasePrompt, buildTaskPrompt } from '../core/taskPrompts.js';
+import { formatWikiContext, wikiRead } from '../core/wiki/reader.js';
 import type { Notifier } from '../interfaces/Notifier.js';
 import type { RepoBackend } from '../interfaces/RepoBackend.js';
 import type { TaskBackend } from '../interfaces/TaskBackend.js';
@@ -38,6 +39,43 @@ import type { ActionRecord, AuxiliaryState, Card, CommandResult, RecommendedActi
 // branchPushed/branchCommitsAhead removed — no worktree/branch management
 
 const SKIP_LABELS: AuxiliaryState[] = ['BLOCKED', 'NEEDS-FIX', 'CONFLICT', 'WAITING-CONFIRMATION', 'STALE-RUNTIME'];
+
+/**
+ * v0.51.0: trailing block appended to Worker prompt when WIKI_ENABLED=true.
+ * Points to the `wiki-update` skill so Worker knows the SOP without us inlining it.
+ */
+function WIKI_UPDATE_REMINDER(projectName: string): string {
+  return `# Wiki Update Reminder
+
+After completing this card, follow the **wiki-update** skill if any of these apply:
+
+- A module changed → update \`wiki/modules/<Name>.md\`
+- A non-trivial decision was made → write \`wiki/decisions/<Name>.md\`
+- A bug or gotcha surfaced → write \`wiki/lessons/<Name>.md\`
+- A reusable pattern emerged → write \`wiki/concepts/<Name>.md\`
+
+Workflow:
+1. \`sps wiki update ${projectName}\` — see what source files changed.
+2. Apply the wiki-update skill to write/update pages (TL;DR + frontmatter + cross-links).
+3. \`sps wiki check ${projectName}\` — verify lint passes (must clear errors).
+4. \`sps wiki update ${projectName} --finalize\` — flush manifest.
+
+If none of the four conditions hit, append a one-line entry to \`wiki/.log.md\` and move on. Empty wiki growth is worse than no growth.`;
+}
+
+/**
+ * v0.51.0: pull pinned wiki page ids from card frontmatter `meta.wiki_pages`
+ * (string[] or comma-separated string). Tolerates both shapes.
+ *
+ * Exported for unit testing.
+ */
+export function extractPinnedPages(card: Card): string[] {
+  const raw = card.meta?.wiki_pages;
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.filter((s): s is string => typeof s === 'string');
+  if (typeof raw === 'string') return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return [];
+}
 // CLEANUP_LABELS: cleared when a card re-enters a stage (backlog prepare step).
 // ACK-TIMEOUT: left over when a dispatch failed; must be wiped before re-try.
 // Per-stage ACK-RETRIED-<stage> is wiped separately in cleanAuxiliaryLabels().
@@ -842,6 +880,9 @@ export class StageEngine {
       : '';
     const knowledge = [memoryContext, memoryInstructions].filter(Boolean).join('\n\n---\n\n');
 
+    // v0.51.0：Wiki 注入（仅 WIKI_ENABLED=true 启用）。失败/缺 wiki 时安静退化。
+    const { wikiContext, wikiUpdateReminder } = this.buildWikiSections(card, worktreePath);
+
     const promptCtx = {
       taskSeq: card.seq,
       taskTitle: card.title,
@@ -855,6 +896,8 @@ export class StageEngine {
       skillContent,
       projectRules: projectRules || undefined,
       knowledge,
+      wikiContext,
+      wikiUpdateReminder,
       // v0.50.18：COMPLETION_SIGNAL env 覆盖默认 "done"
       completionSignal: this.ctx.config.raw.COMPLETION_SIGNAL || undefined,
     };
@@ -867,6 +910,53 @@ export class StageEngine {
     }
 
     return prompt;
+  }
+
+  /**
+   * v0.51.0: build the wiki injection (`wikiContext`) and the trailing
+   * wiki-update reminder (`wikiUpdateReminder`) for the current card.
+   *
+   * Disabled when `WIKI_ENABLED` is not 'true' or the project has no
+   * `wiki/WIKI.md`. Failures degrade silently — wiki notes are best-effort
+   * context and shouldn't block a card.
+   */
+  private buildWikiSections(
+    card: Card,
+    worktreePath: string,
+  ): { wikiContext?: string; wikiUpdateReminder?: string } {
+    if (this.ctx.config.raw.WIKI_ENABLED !== 'true') return {};
+
+    const repoDir = this.ctx.paths.repoDir;
+    const wikiMeta = resolve(repoDir, 'wiki', 'WIKI.md');
+    if (!existsSync(wikiMeta)) {
+      // Wiki opted in via conf but never initialized — log once + silently skip.
+      this.log.warn('WIKI_ENABLED=true but wiki/WIKI.md is missing; skipping wiki injection');
+      return {};
+    }
+
+    let wikiContext: string | undefined;
+    try {
+      const ctx = wikiRead({
+        repoDir,
+        cardTitle: card.title,
+        cardDesc: card.desc ?? '',
+        cardSkills: card.skills ?? [],
+        cardLabels: card.labels,
+        pinnedPages: extractPinnedPages(card),
+      });
+      const formatted = formatWikiContext(ctx);
+      wikiContext = formatted.trim() || undefined;
+    } catch (err) {
+      this.log.warn(`wiki injection skipped: ${err instanceof Error ? err.message : String(err)}`);
+      wikiContext = undefined;
+    }
+
+    return {
+      wikiContext,
+      wikiUpdateReminder: WIKI_UPDATE_REMINDER(this.ctx.projectName),
+    };
+    // worktreePath unused for now — kept in signature for future wikilink resolution.
+    void worktreePath;
   }
 
   private loadSkillProfiles(card: Card): string {

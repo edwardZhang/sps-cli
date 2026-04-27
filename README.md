@@ -4,13 +4,30 @@
 
 > **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
 
-**v0.45.0**
+**v0.51.0**
 
 SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Three modes:
 
 - **Harness mode** (`sps agent`): Zero-config agent interaction — one-shot, multi-turn chat, persistent sessions
 - **Pipeline mode** (`sps pipeline`): Fully automated card-driven development workflow with YAML-configurable stages
 - **Console mode** (`sps console`, **v0.44+**): Local web dashboard — project list, kanban, workers, logs, skills management in one UI
+
+**v0.51.0 — Wiki Knowledge Base** ([doc-28](../../docs/design/28-wiki-system.md), opt-in per project):
+
+```bash
+sps wiki init <project>             # scaffold wiki/ + WIKI.md + .gitignore
+sps wiki update <project>           # source diff (--finalize writes manifest)
+sps wiki read <project> "<query>"   # 5-layer retrieval → prompt-injection markdown
+sps wiki check <project>            # lint: orphan / dead-link / fm-gap / stale
+sps wiki list/get/add/status        # helpers
+```
+
+When `WIKI_ENABLED=true` is set, StageEngine auto-injects the 5-layer wiki context
+into Worker prompts (hot.md + index summary + relevant pages, ranked
+lesson/decision > concept > module/source) and appends a wiki-update reminder.
+The Worker then follows `skills/wiki-update/SKILL.md` to write/update pages.
+Inspired by [claude-obsidian](https://github.com/kepano/claude-obsidian) (MIT) +
+Karpathy's "LLM Wiki" pattern; see [`ATTRIBUTION.md`](./ATTRIBUTION.md).
 
 ```bash
 # Harness mode — talk to Claude Code instantly

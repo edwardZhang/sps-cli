@@ -28,6 +28,18 @@ interface SharedPromptContext {
   skillContent?: string;
   projectRules?: string;
   knowledge?: string;
+  /**
+   * v0.51.0: pre-rendered wiki context (hot.md + index summary + relevant pages).
+   * Produced by `wikiRead → formatWikiContext`. Inserted between `knowledge` and `# Task`.
+   * When WIKI_ENABLED=false, callers leave this undefined so nothing is appended.
+   */
+  wikiContext?: string;
+  /**
+   * v0.51.0: trailing reminder block pointing to the `wiki-update` skill. Worker
+   * sees it after `# How to Run` so it's the last thing read before deciding what
+   * to write.
+   */
+  wikiUpdateReminder?: string;
   /** v0.50.18：完成信号词，默认 "done"。项目 YAML / env 可覆盖。 */
   completionSignal?: string;
 }
@@ -57,8 +69,17 @@ export function buildPhasePrompt(ctx: PhasePromptContext): string {
     sections.push('---');
   }
 
+  if (ctx.wikiContext?.trim()) {
+    sections.push(ctx.wikiContext.trim());
+    sections.push('---');
+  }
+
   sections.push(buildTaskSection(ctx));
   sections.push(buildPhaseInstructions(ctx));
+
+  if (ctx.wikiUpdateReminder?.trim()) {
+    sections.push(ctx.wikiUpdateReminder.trim());
+  }
 
   return sections.join('\n\n').trim() + '\n';
 }
@@ -114,6 +135,11 @@ export function buildTaskPrompt(ctx: SharedPromptContext): string {
     sections.push('---');
   }
 
+  if (ctx.wikiContext?.trim()) {
+    sections.push(ctx.wikiContext.trim());
+    sections.push('---');
+  }
+
   sections.push(`# Task
 
 ${ctx.taskTitle} (seq ${ctx.taskSeq})
@@ -127,6 +153,10 @@ ${ctx.taskDescription || '(no description)'}`);
   sections.push(`# How to Run
 
 Work inside \`${ctx.worktreePath}\`. Complete the task, validate the output, then say "${signal}". Don't touch files outside this directory. If blocked, report the exact blocker.`);
+
+  if (ctx.wikiUpdateReminder?.trim()) {
+    sections.push(ctx.wikiUpdateReminder.trim());
+  }
 
   return sections.join('\n\n').trim() + '\n';
 }

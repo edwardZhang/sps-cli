@@ -165,6 +165,11 @@ export interface ProjectInitOpts {
   enableGit?: boolean;
   /** v0.50.24：ACK 超时秒数（默认 300） */
   ackTimeoutS?: number;
+  /**
+   * v0.51.0：是否启用 Wiki 知识库。true → conf 写 WIKI_ENABLED=true 并
+   * 调用 initWiki() 在 PROJECT_DIR 下建 wiki/ 骨架（含 .gitignore 维护）。
+   */
+  enableWiki?: boolean;
 }
 
 export async function executeProjectInit(
@@ -208,6 +213,8 @@ export async function executeProjectInit(
   // v0.50.24：enableGit 要传给 project.yaml 生成（在 conf block 外），提到函数作用域。
   // 默认 true，保向后兼容。
   let enableGit = nonInteractive?.enableGit !== false;
+  // v0.51.0：enableWiki —— 默认 false（不破坏现有项目），用户在 console 勾选后才 true。
+  let enableWiki = nonInteractive?.enableWiki === true;
 
   // Generate conf — interactive if new (and no nonInteractive opts), skip if exists
   const confDst = resolve(instanceDir, 'conf');
@@ -296,6 +303,11 @@ export async function executeProjectInit(
     if (matrixRoomId) {
       confLines.push('');
       confLines.push(`export MATRIX_ROOM_ID="${matrixRoomId}"`);
+    }
+    // v0.51.0：Wiki opt-in。仅写 true 一行，不写 false（false 是默认值，省掉减噪）。
+    if (enableWiki) {
+      confLines.push('');
+      confLines.push('export WIKI_ENABLED=true');
     }
     confLines.push('');
 
@@ -394,6 +406,13 @@ export CONFLICT_DEFAULT="serial"
 # ── Notifications ────────────────────────────────────────────────
 # MATRIX_ROOM_ID: Matrix notification room (project-level override; blank uses ~/.coral/env global)
 # export MATRIX_ROOM_ID="!roomid:server.com"
+
+# ── Wiki Knowledge Base (v0.51.0+, doc-28) ──────────────────────
+# WIKI_ENABLED: Enable per-project wiki (default: unset = disabled)
+#   When true, StageEngine injects wiki/ context into Worker prompts
+#   (hot.md + index summary + relevant pages) and appends a wiki-update
+#   reminder. Run \`sps wiki init <project>\` to scaffold the structure.
+# export WIKI_ENABLED=true
 
 # ── Path Overrides (usually no need to change) ──────────────────
 # WORKTREE_DIR: Worker worktree root (default: ~/.coral/worktrees/<project>/)
@@ -527,16 +546,55 @@ stages:
   // Install Claude preset into the target project repo (if it exists).
   // Read PROJECT_DIR from the generated conf (covers both interactive and
   // existing-conf paths; no need to thread projectDir through local scope).
+  let resolvedProjectDir: string | undefined;
   try {
     const confContent = readFileSync(confDst, 'utf-8');
     const match = confContent.match(/export\s+PROJECT_DIR=["']?([^"'\n]+)/);
-    const projectDir = match?.[1]?.trim();
-    if (projectDir) {
-      installClaudePreset(projectDir, project, log);
+    resolvedProjectDir = match?.[1]?.trim();
+    if (resolvedProjectDir) {
+      installClaudePreset(resolvedProjectDir, project, log);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`Could not install Claude preset (non-fatal): ${msg}`);
+  }
+
+  // v0.51.0: scaffold wiki/ if user opted in.
+  // Reads WIKI_ENABLED from the just-written conf so re-runs (with --force) honor the setting.
+  try {
+    const confContent = readFileSync(confDst, 'utf-8');
+    const wikiOn = /export\s+WIKI_ENABLED=["']?true/i.test(confContent);
+    if (wikiOn && resolvedProjectDir && existsSync(resolvedProjectDir)) {
+      const { initWiki } = await import('../core/wiki/scaffold.js');
+      const report = initWiki(resolvedProjectDir, { projectName: project });
+      log.ok(`Wiki scaffolded at ${report.wikiDir}`);
+      if (report.created.length > 0) {
+        log.info(`  ${report.created.length} dir(s) created`);
+      }
+      if (report.gitignoreUpdated) {
+        log.info('  Updated .gitignore with wiki/ drift entries');
+      }
+      // Append wiki rules to CLAUDE.md so Worker knows the SOP
+      try {
+        appendWikiClaudeRules(resolvedProjectDir, project);
+        log.ok('Updated CLAUDE.md with Wiki rules');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`Could not append wiki rules to CLAUDE.md (non-fatal): ${msg}`);
+      }
+      // Drop ATTRIBUTION.md if missing
+      try {
+        ensureAttributionFile(resolvedProjectDir);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`Could not write ATTRIBUTION.md (non-fatal): ${msg}`);
+      }
+    } else if (wikiOn && (!resolvedProjectDir || !existsSync(resolvedProjectDir))) {
+      log.warn(`WIKI_ENABLED=true but PROJECT_DIR not found; run "sps wiki init ${project}" later.`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`Wiki scaffold failed (non-fatal): ${msg}`);
   }
 
   log.ok(`Project ${project} initialized at ${instanceDir}`);
@@ -553,4 +611,140 @@ stages:
   console.log('');
   console.log(`  Optional: sps doctor ${project} --fix  (generate CLAUDE.md in repo)`);
   console.log('');
+}
+
+// ─── v0.51.0 wiki rules + attribution helpers ──────────────────────
+
+/**
+ * Marker used to detect (and idempotently skip) the wiki block in CLAUDE.md.
+ * Anything above the marker is user-edited; we only re-write our own block.
+ */
+const WIKI_BLOCK_BEGIN = '<!-- BEGIN: SPS WIKI RULES (v0.51.0) -->';
+const WIKI_BLOCK_END = '<!-- END: SPS WIKI RULES -->';
+
+function wikiClaudeRules(projectName: string): string {
+  return `${WIKI_BLOCK_BEGIN}
+
+## Wiki Knowledge Base (per-project)
+
+This project has Wiki enabled. Worker prompts are auto-injected with the
+5-layer wiki context (\`hot.md\` + index + relevant pages). When you finish a
+card, follow the **\`wiki-update\` skill** if any of these apply:
+
+- A module changed → \`wiki/modules/<Name>.md\`
+- A non-trivial decision was made → \`wiki/decisions/<Name>.md\`
+- A bug or gotcha surfaced → \`wiki/lessons/<Name>.md\`
+- A reusable pattern emerged → \`wiki/concepts/<Name>.md\`
+
+Hard rules:
+
+- **Before saying "done"**, run \`sps wiki check ${projectName}\` and clear
+  any errors. Warnings (orphans, missing TL;DR) can be deferred but errors
+  must not ship.
+- Never edit \`wiki/.manifest.json\` by hand. Use
+  \`sps wiki update ${projectName} --finalize\` to flush it.
+- Never edit files under \`wiki/.raw/\` — they are immutable sources.
+- The SOP for writing wiki pages lives in \`skills/wiki-update/SKILL.md\`.
+  CLAUDE.md only points there; don't duplicate the rules here.
+
+CLI cheatsheet:
+
+\`\`\`bash
+sps wiki update ${projectName}             # see source diff
+sps wiki check ${projectName}              # lint
+sps wiki read ${projectName} "<query>"     # 5-layer retrieval (also auto-injected)
+sps wiki list ${projectName} --type lesson # filter pages
+\`\`\`
+
+${WIKI_BLOCK_END}`;
+}
+
+/**
+ * Append (or refresh) the wiki rules block in `<repo>/.claude/CLAUDE.md`.
+ *
+ * Idempotent: existing block is replaced in place, leaving user content above
+ * and below intact. If CLAUDE.md is missing entirely, this is a no-op (we
+ * don't want to silently create a fresh CLAUDE.md without the user opting in
+ * via project init / doctor).
+ */
+export function appendWikiClaudeRules(repoDir: string, projectName: string): void {
+  const claudePath = resolve(repoDir, '.claude', 'CLAUDE.md');
+  if (!existsSync(claudePath)) return;
+
+  const existing = readFileSync(claudePath, 'utf-8');
+  const block = wikiClaudeRules(projectName);
+
+  let next: string;
+  if (existing.includes(WIKI_BLOCK_BEGIN)) {
+    // Replace existing block (idempotent refresh on doctor --fix re-run)
+    const beginIdx = existing.indexOf(WIKI_BLOCK_BEGIN);
+    const endIdx = existing.indexOf(WIKI_BLOCK_END);
+    if (endIdx === -1) {
+      // Begin marker without end — file is corrupt; replace from begin to EOF
+      next = existing.slice(0, beginIdx) + block + '\n';
+    } else {
+      const afterEnd = existing.slice(endIdx + WIKI_BLOCK_END.length);
+      next = existing.slice(0, beginIdx) + block + afterEnd;
+    }
+  } else {
+    // Append at end with separator
+    const sep = existing.endsWith('\n') ? '\n' : '\n\n';
+    next = existing + sep + block + '\n';
+  }
+  if (next !== existing) {
+    writeFileSync(claudePath, next, { encoding: 'utf-8', mode: 0o644 });
+  }
+}
+
+const ATTRIBUTION_TEMPLATE = `# Attribution
+
+This project's Wiki Knowledge Base implementation borrows from open-source
+prior art. We acknowledge the following sources.
+
+## claude-obsidian (MIT)
+
+The Wiki SOP (\`skills/wiki-update/SKILL.md\`) is ~70% adapted from
+[claude-obsidian](https://github.com/kepano/claude-obsidian) by **kepano**.
+
+Borrowed concepts:
+- Three-layer architecture (\`.raw/\` immutable sources / \`wiki/\` LLM-generated /
+  rule layer)
+- Manifest-based delta tracking
+- Hot cache (\`hot.md\`) for recent context priming
+- Single-source ingest 8-step flow
+- Context-window discipline rules
+- Contradiction callouts
+- Wikilink-everything convention
+
+Modifications for SPS:
+- 5 page types (module / concept / decision / lesson / source) instead of
+  claude-obsidian's entities/concepts/sources/domains/comparisons
+- 4-question entry filter mapped to SPS pipeline events
+- \`sources:\` field uses \`{ card: N | commit: hash | path }\` for SPS card
+  traceability
+- 5-layer reader for prompt injection (instead of MCP-driven on-demand reads)
+- \`sps wiki check\` exit gate replaces \`wiki-lint\` skill
+- Plural type directories (\`modules/\`, \`lessons/\`, …) instead of mixed
+  conventions
+
+License: MIT (see \`LICENSE\`)
+
+## Karpathy LLM Wiki
+
+The mental model — atomic, dense, cross-linked pages that the LLM populates
+via a structured workflow — comes from
+[Andrej Karpathy's "LLM Wiki" gist](https://gist.github.com/karpathy)
+(2024). The implementation diverges in details (BM25F retrieval, manifest
+diffs, SPS card lifecycle integration) but the spirit is the same.
+
+## Conventions
+
+If you fork this project and reuse the Wiki system, please retain this
+ATTRIBUTION.md and the references in \`skills/wiki-update/SKILL.md\`.
+`;
+
+export function ensureAttributionFile(repoDir: string): void {
+  const path = resolve(repoDir, 'ATTRIBUTION.md');
+  if (existsSync(path)) return;
+  writeFileSync(path, ATTRIBUTION_TEMPLATE, { encoding: 'utf-8', mode: 0o644 });
 }

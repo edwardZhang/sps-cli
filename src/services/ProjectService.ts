@@ -72,6 +72,8 @@ export interface ProjectInitOpts {
   enableGit?: boolean;
   /** v0.50.24：ACK 超时秒数（默认 300 = 5 分钟） */
   ackTimeoutS?: number;
+  /** v0.51.0：启用 wiki/ 知识库（默认 false）。true → conf 写 WIKI_ENABLED=true 并自动 scaffold。 */
+  enableWiki?: boolean;
 }
 
 export interface CreateProjectInput extends ProjectInitOpts {

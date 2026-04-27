@@ -172,6 +172,25 @@ const COMMANDS: Record<string, CommandInfo> = {
     stop: '标记当前卡片完成（COMPLETED-<stage> 标签）',
     'user-prompt-submit': '若卡片有 skill:* 标签，注入 skill 提示到 prompt',
   }, examples: ['sps hook stop', 'sps hook user-prompt-submit'] },
+  wiki:      { desc: 'Wiki 知识库（per-project，doc-28 §7+§10）', usage: 'sps wiki <子命令> <project> [args]', subs: {
+    init: '建 wiki/ 骨架（subdirs + WIKI.md + .gitignore）',
+    update: '扫源文件 → diff manifest → 输出 ingest 计划（--finalize 写 manifest）',
+    read: '5 层确定性检索 → 渲染 prompt 注入 markdown',
+    check: 'Lint：orphan / dead-link / fm-gap / stale',
+    add: '复制外部源到 wiki/.raw/<category>/',
+    list: '按 type/tag 过滤列页',
+    get: '取单页全文（frontmatter + body）',
+    status: 'Source ↔ manifest ↔ pages 当前差异概览',
+  }, examples: [
+    'sps wiki init my-project',
+    'sps wiki update my-project',
+    'sps wiki read my-project "pipeline race"',
+    'sps wiki check my-project',
+    'sps wiki add my-project ~/notes.md --category transcripts',
+    'sps wiki list my-project --type lesson --tag pipeline',
+    'sps wiki get my-project lessons/Stop-Hook-Race',
+    'sps wiki status my-project',
+  ] },
 };
 
 function printHelp() {
@@ -231,7 +250,7 @@ interface ParsedArgs {
 }
 
 // Commands that always have subcommands
-const SUBCOMMAND_COMMANDS = new Set(['scheduler', 'pipeline', 'worker', 'acp', 'pm', 'qa', 'monitor', 'project', 'card', 'skill', 'memory', 'hook']);
+const SUBCOMMAND_COMMANDS = new Set(['scheduler', 'pipeline', 'worker', 'acp', 'pm', 'qa', 'monitor', 'project', 'card', 'skill', 'memory', 'hook', 'wiki']);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const flags: Record<string, boolean> = {};
@@ -804,6 +823,64 @@ async function main() {
       await executeCardMarkStarted(args.project, args.positionals, args.flags as unknown as Record<string, unknown>);
       return;
     }
+  }
+
+  // ─── wiki ────────────────────────────────────────────────────
+  if (args.command === 'wiki') {
+    if (!args.subcommand) {
+      console.error('Usage: sps wiki <init|update|read> <project> [args]');
+      process.exit(2);
+    }
+    if (!args.project) {
+      console.error(`Usage: sps wiki ${args.subcommand} <project> [args]`);
+      process.exit(2);
+    }
+    const { executeWikiCommand } = await import('./commands/wikiCommand.js');
+    // Parse list-valued flags from raw argv (boolean flag parser doesn't keep these).
+    const rawSkillsIdx = process.argv.indexOf('--skills');
+    const skills = rawSkillsIdx >= 0 && rawSkillsIdx + 1 < process.argv.length
+      ? process.argv[rawSkillsIdx + 1]!.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    const rawPinnedIdx = process.argv.indexOf('--pinned');
+    const pinned = rawPinnedIdx >= 0 && rawPinnedIdx + 1 < process.argv.length
+      ? process.argv[rawPinnedIdx + 1]!.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    const rawBudgetIdx = process.argv.indexOf('--budget');
+    const budgetTokens = rawBudgetIdx >= 0 && rawBudgetIdx + 1 < process.argv.length
+      ? parseInt(process.argv[rawBudgetIdx + 1] || '0', 10) || undefined
+      : undefined;
+    const rawTypeIdx = process.argv.indexOf('--type');
+    const typeFilter = rawTypeIdx >= 0 && rawTypeIdx + 1 < process.argv.length
+      ? process.argv[rawTypeIdx + 1]
+      : undefined;
+    const rawTagIdx = process.argv.indexOf('--tag');
+    const tagFilter = rawTagIdx >= 0 && rawTagIdx + 1 < process.argv.length
+      ? process.argv[rawTagIdx + 1]
+      : undefined;
+    const rawCategoryIdx = process.argv.indexOf('--category');
+    const category = rawCategoryIdx >= 0 && rawCategoryIdx + 1 < process.argv.length
+      ? process.argv[rawCategoryIdx + 1]
+      : undefined;
+    try {
+      executeWikiCommand({
+        subcommand: args.subcommand,
+        project: args.project,
+        positionals: args.positionals,
+        flags: args.flags,
+        skills,
+        pinned,
+        budgetTokens,
+        type: typeFilter,
+        tag: tagFilter,
+        category,
+      });
+    } catch (err) {
+      // LintFailure has a structured exit; preserve message but exit 1
+      const isLintFail = err instanceof Error && err.name === 'LintFailure';
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(isLintFail ? 1 : 2);
+    }
+    return;
   }
 
   // ─── Unknown or not-yet-implemented ──────────────────────────

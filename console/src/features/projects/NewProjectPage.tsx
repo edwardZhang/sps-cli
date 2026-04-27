@@ -174,6 +174,22 @@ export function NewProjectPage() {
             )}
           </div>
 
+          {/* Wiki 知识库开关 (v0.51.0) */}
+          <div className="pt-3 border-t-2 border-[var(--color-text)] border-dashed">
+            <label className="flex items-center gap-3 mb-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.enableWiki === true}
+                onChange={(e) => setForm({ ...form, enableWiki: e.target.checked })}
+                className="w-4 h-4 cursor-pointer"
+              />
+              <span className="text-sm font-bold">启用 Wiki 知识库（per-project，doc-28）</span>
+            </label>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              开启后自动 scaffold <code className="font-mono">wiki/</code> 目录，并向 Worker prompt 注入 5 层检索上下文与 wiki-update 提示。可后续 <code className="font-mono">sps wiki init</code> 补办。
+            </p>
+          </div>
+
           {/* 通知 */}
           <div className="pt-3 border-t-2 border-[var(--color-text)] border-dashed">
             <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider mb-3 text-[var(--color-text-muted)]">
