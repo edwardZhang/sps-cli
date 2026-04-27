@@ -4,7 +4,7 @@ import { StatusBar } from './StatusBar';
 
 export function AppShell() {
   return (
-    <div className="grid grid-cols-[240px_1fr] grid-rows-[1fr_40px] min-h-screen">
+    <div className="grid grid-cols-[240px_1fr] grid-rows-[1fr_40px] h-screen">
       <aside className="row-span-1 row-start-1 border-r-[3px] border-[var(--color-text)] bg-[var(--color-bg)] p-4 flex flex-col">
         <Sidebar />
       </aside>

@@ -21,7 +21,7 @@ export function KanbanColumn({
   return (
     <div
       className={[
-        'flex flex-col gap-2 p-3 rounded-2xl border-[3px] min-h-[340px]',
+        'flex flex-col p-3 rounded-2xl border-[3px] min-h-[280px] h-full min-h-0 overflow-hidden',
         'transition-all',
         isDragOver
           ? 'border-[var(--color-cta)] shadow-[4px_4px_0_var(--color-cta)]'
@@ -48,7 +48,7 @@ export function KanbanColumn({
         }
       }}
     >
-      <div className="flex items-center justify-between px-1 pb-2 border-b-2 border-[var(--color-text)]">
+      <div className="flex items-center justify-between px-1 pb-2 mb-2 border-b-2 border-[var(--color-text)] shrink-0">
         <span className="font-[family-name:var(--font-heading)] font-bold text-sm uppercase tracking-wider">
           {label}
         </span>
@@ -56,7 +56,11 @@ export function KanbanColumn({
           {cards.length}
         </span>
       </div>
-      <div className="flex flex-col gap-2">
+      <div
+        className="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto pr-1 -mr-1"
+        // 滚动条样式：Pastel Neubrutalism — 浅 track + 深拇指
+        style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--color-text) transparent' }}
+      >
         {cards.length === 0 && (
           <div className="text-xs text-[var(--color-text-muted)] text-center py-6 italic">
             — 空 —

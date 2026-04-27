@@ -238,8 +238,8 @@ export function BoardPage() {
   const running = projectSummary?.pipelineStatus === 'running';
 
   return (
-    <div className="flex flex-col gap-4 max-w-full">
-      <header className="flex items-center justify-between flex-wrap gap-3">
+    <div className="flex flex-col gap-4 max-w-full flex-1 min-h-0">
+      <header className="flex items-center justify-between flex-wrap gap-3 shrink-0">
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold tracking-tight">
             看板 ✨
@@ -308,7 +308,7 @@ export function BoardPage() {
         </div>
       </header>
 
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex items-center gap-3 flex-wrap shrink-0">
         <div className="relative flex-1 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)]" />
           <input
@@ -363,7 +363,7 @@ export function BoardPage() {
       )}
 
       {!cardsQ.isError && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 auto-rows-fr gap-3 flex-1 min-h-0">
           {COLUMNS.map((col) => (
             <KanbanColumn
               key={col.state}
