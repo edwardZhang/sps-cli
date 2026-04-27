@@ -1,1482 +1,539 @@
 # SPS CLI — AI Agent Harness & Development Pipeline
 
-[![npm](https://img.shields.io/npm/v/@coralai/sps-cli)](https://www.npmjs.com/package/@coralai/sps-cli)
+[![npm](https://img.shields.io/npm/v/@coralai/sps-cli)](https://www.npmjs.com/package/@coralai/sps-cli) [![license](https://img.shields.io/npm/l/@coralai/sps-cli)](../../LICENSE)
 
-> **中文文档**: See `README-CN.md` in the source repository for Chinese documentation.
+> **中文文档**：[README-CN.md](./README-CN.md)
 
-**v0.51.0**
+**v0.51.3**
 
-SPS (Smart Pipeline System) is an AI Agent harness and automated development pipeline. Three modes:
+SPS (Smart Pipeline System) drives a Claude Code worker through task cards — code, commit, push, QA, merge, all automated. Three modes:
 
-- **Harness mode** (`sps agent`): Zero-config agent interaction — one-shot, multi-turn chat, persistent sessions
-- **Pipeline mode** (`sps pipeline`): Fully automated card-driven development workflow with YAML-configurable stages
-- **Console mode** (`sps console`, **v0.44+**): Local web dashboard — project list, kanban, workers, logs, skills management in one UI
+| Mode | Command | When |
+|---|---|---|
+| **Harness** | `sps agent` | Zero-config — one-shot or multi-turn chat with Claude. No project, no PM. |
+| **Pipeline** | `sps tick <project>` | Automated card-driven workflow with YAML-configurable stages. |
+| **Console** | `sps console` | Web UI — kanban, logs, workers, projects, chat (since v0.44). |
 
-**v0.51.0 — Wiki Knowledge Base** ([doc-28](../../docs/design/28-wiki-system.md), opt-in per project):
+The headline feature in v0.51 is the **Wiki Knowledge Base** — opt-in per project, structured cross-linked pages (modules / concepts / decisions / lessons / sources), 5-layer retrieval auto-injected into worker prompts. See [doc-28](../../docs/design/28-wiki-system.md) and [`ATTRIBUTION.md`](./ATTRIBUTION.md).
+
+---
+
+## Table of contents
+
+- [Install & setup](#install--setup)
+- [Harness mode (`sps agent`)](#harness-mode-sps-agent)
+- [Console mode (`sps console`)](#console-mode-sps-console)
+- [Pipeline mode (`sps tick`)](#pipeline-mode-sps-tick)
+- [Card lifecycle](#card-lifecycle)
+- [Memory + Wiki](#memory--wiki)
+- [Skills](#skills)
+- [Command reference](#command-reference)
+- [Project config (conf)](#project-config-conf)
+- [Project layout](#project-layout)
+- [Architecture](#architecture)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Install & setup
 
 ```bash
-sps wiki init <project>             # scaffold wiki/ + WIKI.md + .gitignore
-sps wiki update <project>           # source diff (--finalize writes manifest)
-sps wiki read <project> "<query>"   # 5-layer retrieval → prompt-injection markdown
-sps wiki check <project>            # lint: orphan / dead-link / fm-gap / stale
-sps wiki list/get/add/status        # helpers
+npm install -g @coralai/sps-cli      # latest 0.51.x
+sps setup                            # interactive wizard (must run once)
 ```
 
-When `WIKI_ENABLED=true` is set, StageEngine auto-injects the 5-layer wiki context
-into Worker prompts (hot.md + index summary + relevant pages, ranked
-lesson/decision > concept > module/source) and appends a wiki-update reminder.
-The Worker then follows `skills/wiki-update/SKILL.md` to write/update pages.
-Inspired by [claude-obsidian](https://github.com/kepano/claude-obsidian) (MIT) +
-Karpathy's "LLM Wiki" pattern; see [`ATTRIBUTION.md`](./ATTRIBUTION.md).
+`sps setup`:
+1. Creates `~/.coral/` directory tree (`projects/`, `memory/{user,agents}/`).
+2. Copies bundled skills → `~/.coral/skills/`.
+3. Asks for `GITLAB_URL` / `GITLAB_TOKEN` / `MATRIX_*` (optional) → writes `~/.coral/env`.
+4. Symlinks user skills → `~/.claude/skills/`.
+5. Installs `@agentclientprotocol/claude-agent-acp` globally.
+
+Re-run safe with `sps setup --force` (keeps existing values as defaults). After upgrading sps-cli later, run **`sps skill sync --force`** to pull updated skill SOPs (default sync is non-destructive — won't overwrite existing skills).
+
+**Prerequisites**: Node ≥ 18; an Anthropic API key (or Claude Pro / Max subscription); `claude` CLI in PATH.
+
+---
+
+## Harness mode (`sps agent`)
+
+Direct one-shot or multi-turn chat with Claude. No project, no PM, no Git.
 
 ```bash
-# Harness mode — talk to Claude Code instantly
+# One-shot
 sps agent "Explain this repo"
-sps agent --chat                              # multi-turn REPL (daemon-backed)
-sps agent --profile reviewer --context src/auth.ts "Review this module"
-sps agent --verbose --output report.md "Security audit"
+sps agent --output summary.md "Summarize the architecture"
 
-# Pipeline mode — automated development workflow
-sps pipeline start my-project                 # or: sps tick my-project
-sps pipeline workers my-project               # worker dashboard
-sps pipeline board my-project                 # card board
+# Multi-turn (daemon-backed, persistent sessions)
+sps agent --chat                              # interactive REPL
+sps agent --chat --name reviewer              # named session, resume later
+sps agent status                              # list active sessions
+sps agent close --name reviewer
+
+# Profile + context files
+sps agent --profile reviewer "Review this module" --context src/auth.ts --context src/auth.test.ts
+sps agent --system "You are a release engineer" "Plan the v0.52 cut"
+
+# Verbose
+sps agent --verbose "Why did this build fail?"
 ```
 
-## Harness Mode (`sps agent`)
+**`--profile <name>`**: looks up `~/.coral/skills/dev-worker/references/<name>.md`, injects as system prompt. (Different from `sps skill add` — that's for project-level skill linking.)
 
-Zero-config direct agent interaction. No project setup, PM tools, or Git required.
+**Built-in agent**: `claude` only (Codex / Gemini support removed in v0.38). Workers communicate via ACP JSON-RPC over stdio with `claude-agent-acp`.
 
-### One-shot
+**Agent skills auto-loaded by Claude Code**: `~/.claude/skills/` is scanned by `claude` itself — including `sps-pipeline`, `sps-memory`, `wiki-update`, and the 24 dev/persona skills. Skill descriptions trigger lazy load; no SPS prompt injection needed for harness mode.
+
+**Daemon cwd caveat**: `sps console` and `sps agent --chat` start a session daemon (`~/.coral/sessions/daemon.sock`) that captures `process.cwd()` at startup and uses it as the default working directory for all chat workers. To switch the chat's working directory, restart the daemon: `sps agent daemon stop && sps agent daemon start` from the desired cwd.
+
+---
+
+## Console mode (`sps console`)
+
+Local web UI bundled into the binary. Single-instance guard via `~/.coral/console.lock`.
 
 ```bash
-sps agent "What does this codebase do?"
-sps agent --output summary.md "Summarize this repo"
+sps console                          # opens http://127.0.0.1:4311
+sps console --port 5000
+sps console --no-open                # don't auto-open browser
+sps console --kill                   # stop running console
+sps console --dev                    # vite dev server (development)
 ```
 
-### Multi-turn Chat (Persistent)
+Pages:
 
-Sessions survive terminal closures via background daemon:
+| Path | Purpose |
+|---|---|
+| `/projects` | List all projects with status |
+| `/projects/new` | Create project (form has Wiki toggle, v0.51+) |
+| `/projects/<n>` | Pipeline editor + conf editor + delete |
+| `/board` | Kanban (per-column scrolling, v0.51.1+) |
+| `/workers` | Aggregate worker dashboard across projects |
+| `/logs` | Live SSE log viewer |
+| `/skills` | User-level skill management |
+| `/system` | Global settings + daemon status |
+| `/chat` | Agent chat (multi-session, persistent) |
+
+Tech: Hono server on `127.0.0.1:4311`, chokidar watchers pushing SSE to React 19 + Vite + Tailwind v4 + shadcn/ui frontend. Design system: Pastel Neubrutalism, locked in [`console/DESIGN.md`](./console/DESIGN.md).
+
+---
+
+## Pipeline mode (`sps tick`)
+
+Fully automated card-driven workflow. **One worker, one card at a time, serial.** Each card walks one or more YAML-defined stages (e.g. `develop → review → Done`); failure halts pipeline until you remove the `NEEDS-FIX` label.
+
+### Create a project
 
 ```bash
-sps agent --chat                          # start chat (daemon auto-starts)
-> Analyze the auth module
-> Now refactor it to use bcrypt
-> /exit                                   # detach (session stays alive)
-
-sps agent --chat                          # reconnect — agent remembers context
-> What did we do last time?
+sps project init my-app
+# or use Console /projects/new — has a Wiki toggle (v0.51+)
 ```
 
-### Advanced Flags
+Asks for: project dir, merge branch, max workers, ACK timeout, optional GitLab remote, optional Matrix room.
 
-Claude is the only supported CLI as of v0.38.0; there is no `--tool` flag.
+Generates:
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--chat` | Multi-turn REPL mode | `sps agent --chat` |
-| `--name <name>` | Named session (persistent) | `--name backend` |
-| `--verbose` / `-v` | Show tool calls | Shows Read, Edit, Bash in yellow |
-| `--context <file>` | Attach file content | `--context src/main.ts` (multiple OK) |
-| `--system "<text>"` | System instruction | `--system "Reply in Chinese"` |
-| `--profile <name>` | Load role profile | `--profile reviewer`, `--profile security` |
-| `--output <file>` | Save output to file | `--output report.md` |
-| `--json` | JSON output for scripting | `sps agent --json "2+2"` |
-| `--hook <cmd>` | Post-prompt feedback loop | `--hook "npm test"` (multiple OK) |
-| `--mcp <server>` | Attach MCP server | `--mcp postgres`, `--mcp github` |
-| `--attach` | Read-only session viewer | `--attach --name backend` |
+```
+~/.coral/projects/my-app/
+├── conf                              # mode 600 — your active config
+├── conf.example                      # full reference (read-only docs)
+├── pipelines/
+│   ├── project.yaml                  # default 1-stage pipeline (develop → Done)
+│   └── sample.yaml.example           # heavily-commented YAML reference
+└── pipeline_order.json               # active pipeline pointer
+```
 
-### Hook Feedback Loop
+In the target repo (PROJECT_DIR):
 
-Agent completes → hooks run → if any fail → failure fed back to agent → agent fixes → retry (max 5):
+```
+.claude/CLAUDE.md                     # worker rules (auto-installed)
+.claude/skills/                       # symlinked from ~/.coral/skills/
+.claude/settings.local.json           # Claude Code local config
+wiki/                                 # if WIKI_ENABLED — see doc-28
+ATTRIBUTION.md                        # if WIKI_ENABLED
+```
+
+### Run
 
 ```bash
-# Auto-fix until tests pass
-sps agent --hook "npm test" "Fix the failing auth test"
-
-# Multi-hook: lint + typecheck
-sps agent --hook "npm run lint" --hook "npm run typecheck" "Refactor utils"
-
-# Multi-agent: writer + reviewer loop
-sps agent --hook "sps agent --json --profile reviewer 'Review. Reply PASS or FAIL.'" "Write auth module"
+sps tick my-app                      # foreground tick loop
+sps pipeline start my-app            # alias
+sps pipeline stop my-app             # graceful stop (alias: sps stop my-app)
+sps stop --all                       # stop all running ticks
+sps status                           # all projects
 ```
 
-### MCP Server Integration
+### Pipeline YAML
 
-Attach MCP servers to give the agent additional tools:
-
-```bash
-sps agent --mcp postgres "Show all tables and row counts"
-sps agent --mcp github "List open issues in this repo"
-sps agent --mcp filesystem --mcp fetch "Download the API spec and save it locally"
-```
-
-Built-in: `filesystem`, `postgres`, `sqlite`, `github`, `memory`, `fetch`. Custom: any command path.
-
-### Session Management
-
-```bash
-sps agent status                  # list active sessions
-sps agent close --name backend    # close a session
-sps agent --attach --name backend # read-only view of session output
-sps agent daemon start            # start background daemon manually
-sps agent daemon stop             # stop daemon (kills all sessions)
-sps agent daemon status           # check daemon status
-```
-
-### Cross-Server Remote Sessions
-
-Access a remote server's daemon via SSH tunnel:
-
-```bash
-# Remote server: start daemon
-sps agent daemon start
-
-# Remote server: bridge socket to TCP (run once)
-node -e "
-const net = require('net');
-const server = net.createServer(c => {
-  const d = net.createConnection('/home/user/.coral/sessions/daemon.sock');
-  c.pipe(d); d.pipe(c);
-  c.on('error', () => d.destroy()); d.on('error', () => c.destroy());
-});
-server.listen(19876, '127.0.0.1', () => console.log('Bridge ready'));
-" &
-
-# Local machine: SSH tunnel
-ssh -L 19876:127.0.0.1:19876 user@server -N &
-
-# Local machine: bridge TCP back to socket
-node -e "
-const net = require('net');
-try { require('fs').unlinkSync('/tmp/sps-remote.sock'); } catch {}
-const server = net.createServer(c => {
-  const r = net.createConnection(19876, '127.0.0.1');
-  c.pipe(r); r.pipe(c);
-  c.on('error', () => r.destroy()); r.on('error', () => c.destroy());
-});
-server.listen('/tmp/sps-remote.sock', () => console.log('Local bridge ready'));
-" &
-
-# Local machine: use remote daemon
-SPS_DAEMON_SOCKET=/tmp/sps-remote.sock sps agent --name work "Analyze the codebase"
-```
-
-### Agents
-
-Built-in agent: `claude` only (as of v0.38.0). Codex and Gemini support have been removed.
-
-## Pipeline Mode (`sps pipeline`)
-
-Fully automated card-driven development workflow. Requires project configuration.
-
-```bash
-sps pipeline start my-project     # start continuous pipeline (= sps tick)
-sps pipeline stop my-project      # stop pipeline
-sps pipeline status               # show all projects
-sps pipeline reset my-project     # reset cards for re-execution
-sps pipeline workers my-project   # worker dashboard
-sps pipeline board my-project     # card board
-sps pipeline logs my-project      # log viewer
-```
-
-All old commands still work as aliases: `sps tick`, `sps stop`, `sps status`, `sps reset`, `sps logs`, `sps worker dashboard`, `sps card dashboard`.
-
-### Pipeline YAML Configuration
-
-Create `.sps/pipelines/<name>.yaml` in your project to customize the pipeline:
+`~/.coral/projects/<n>/pipelines/project.yaml` — single source of truth for stages.
 
 ```yaml
 mode: project
-
-pm:
-  card_states:
-    planning: Planning
-    backlog: Backlog
-    ready: Todo
-    active: Inprogress
-    review: QA
-    done: Done
-
+git: true                            # false = non-code project, no git ops
 stages:
   - name: develop
-    trigger: "card_enters 'Todo'"
-    card_state: Inprogress
-    profile: phaser,typescript # skill profiles to load
-    completion: git-evidence   # git-evidence | fast-forward-merge | exit-code
-    on_complete: "move_card QA"
-    on_fail:
-      action: "label NEEDS-FIX"
-      comment: "Development failed."
-
-  - name: integrate
-    trigger: "card_enters 'QA'"
-    card_state: QA
-    completion: fast-forward-merge
+    profile: fullstack
+    on_complete: "move_card Review"
+    on_fail: { action: "label NEEDS-FIX", halt: true }
+  - name: review
+    profile: reviewer
     on_complete: "move_card Done"
-    queue: fifo
+    on_fail: { action: "label REVIEW-FAILED", halt: true }
 ```
 
-Switch between multiple pipelines:
+Critical rules:
+1. `mode: project` for state-machine pipelines; `mode: steps` for one-shot custom (use `sps pipeline run <name>`).
+2. Each stage's `on_complete` must point to the **next** stage's target state.
+3. Last stage's `on_complete: "move_card Done"`.
+4. Don't write `agent:` field — it's silently ignored (v0.38+ Claude is the only worker).
+5. `trigger` and `card_state` are auto-derived per stage.
 
-```bash
-sps pipeline use my-project develop   # activate develop.yaml
-sps pipeline use my-project docs      # switch to docs.yaml
-```
+Field reference: see `~/.coral/projects/<n>/pipelines/sample.yaml.example` (auto-generated, comment-rich) or [doc-17](../../docs/design/17-pipeline-configuration-design.md).
 
-### Worker Management
-
-```bash
-sps worker ps my-project              # show worker status, pid, runtime
-sps worker kill my-project 42         # kill specific worker by seq
-```
-
-### Console Mode (`sps console`, v0.44+)
-
-Local web dashboard — a Pastel Neubrutalism UI over all SPS data. One command:
-
-```bash
-sps console                # starts server, opens browser at http://localhost:4311
-sps console --port 5000    # custom port
-sps console --no-open      # don't auto-open browser
-sps console --dev          # dev mode (proxy to Vite HMR server)
-sps console --kill         # stop running console
-```
-
-What you get:
-- **Project list** — all `~/.coral/projects/*` at a glance, with card/worker stats
-- **Kanban board** — cards by state, per-project, SSE live updates (M2)
-- **Workers** — 4-slot table with running/stuck/crashed/idle, log tail per slot (M3)
-- **Logs** — live tail with level filter, search (M3)
-- **Skills** — link/freeze/unfreeze, category-colored grid (M4)
-- **System** — version, env config, doctor (M4)
-- **Chat** — `sps agent` daemon sessions, streamed (M5)
-
-Under the hood: Node + Hono on `127.0.0.1:4311`, chokidar watchers pushing SSE to a React 19 + Vite + Tailwind v4 + shadcn/ui frontend. Design system locked in `console/DESIGN.md`.
-
-### Skill Management
-
-SPS ships 27 bundled skills (23 developer skills + 4 worker profiles). Three-tier
-distribution:
-
-```
-npm package                           user level                    project level
-workflow-cli/skills/    ──cpSync──▶   ~/.coral/skills/   ──symlink──▶   <project>/.claude/skills/
-(bundled)                              (stable path)                    (gitignored)
-```
-
-Bundled skills cover languages (`python`, `typescript`, `golang`, `rust`, `kotlin`,
-`swift`, `java`), ends (`frontend`, `backend`, `mobile`, `database`, `devops`),
-personas (`backend-architect`, `code-reviewer`, `qa-tester`, ...), and workflows
-(`coding-standards`, `git-workflow`, `architecture-decision-records`,
-`debugging-workflow`). Card frontmatter references them by name:
-
-```yaml
 ---
-title: "Implement login API"
-skills: [backend, python, security-engineer]
+
+## Card lifecycle
+
+```
+Planning → Backlog → Todo → Inprogress → [QA / Review] → Done
+                                  ↓ fail
+                            NEEDS-FIX (halt)
+```
+
+Default states (configurable via YAML `pm.card_states`).
+
+```bash
+sps card add <p> "Title" "Description"
+sps card add <p> "T" "D" --skills python,backend --labels feature
+
+sps card dashboard <p>               # CLI table
+                                     # console: /board?project=<n>
+
+sps card mark-started <p> <seq>      # called by Claude Code UserPromptSubmit hook
+sps card mark-complete <p> <seq>     # called by Claude Code Stop hook
+
+sps reset <p>                        # reset all non-Done cards
+sps reset <p> --card 5,6,7
+sps reset <p> --all                  # full reset incl. Done + worktrees + branches
+```
+
+### Card label vocabulary
+
+| Label | Meaning | Set by |
+|---|---|---|
+| `AI-PIPELINE` | Required to enter pipeline | User on creation |
+| `STARTED-<stage>` | ACK signal — Claude received the prompt | UserPromptSubmit hook |
+| `COMPLETED-<stage>` | Worker finished a stage | Stop hook |
+| `CLAIMED` | StageEngine reserved a worker slot | Engine |
+| `NEEDS-FIX` | Worker failed; pipeline halted | Engine |
+| `BLOCKED` | External dep; pipeline skips | User |
+| `WAITING-CONFIRMATION` | Worker waiting on user input | Engine |
+| `STALE-RUNTIME` | Inprogress > timeout | MonitorEngine |
+| `ACK-TIMEOUT` | Claude never ACK'd within `WORKER_ACK_TIMEOUT_S` | MonitorEngine |
+| `skill:<name>` | Force-load specific skill | User |
+| `conflict:<domain>` | Serial-with-others-in-same-domain | User |
+
+The active stage writes a per-slot marker file at `~/.coral/projects/<p>/runtime/worker-<slot>-current.json` (v0.50.21+). Stop hook reads it to detect which card the worker just finished.
+
 ---
-```
 
-Command family:
+## Memory + Wiki
 
-```bash
-sps skill list                        # list user-level skills + project link state
-sps skill add python                  # symlink into current project's .claude/skills/
-sps skill remove python               # remove the link (user-level source untouched)
-sps skill freeze backend              # symlink → real copy (allow project-level customization)
-sps skill unfreeze backend            # real copy → symlink (drop local edits, re-follow global)
-sps skill sync                        # (1) bundled → user, (2) user → ~/.claude/skills/
-```
+Two complementary persistence systems, both auto-injected into worker prompts.
 
-`add` uses `symlinkSync` (with `cpSync` fallback). First run auto-appends
-`.claude/skills/` to the project's `.gitignore` — per-user symlinks shouldn't
-go into the repo.
+| | **Memory** | **Wiki** (v0.51+) |
+|---|---|---|
+| Path | `~/.coral/memory/{user,agents,projects/<p>}/` | `<repo>/wiki/` (per-project, in repo) |
+| Format | Flat markdown + YAML frontmatter | 5 page types with zod-validated frontmatter |
+| Cross-link | None (flat index) | `[[type/Title]]` wikilinks |
+| Auto-inject | `knowledge` section of prompt | `wikiContext` section (5-layer retrieval) |
+| Opt-in | Always on (toggle via `ENABLE_MEMORY=false`) | Per-project (`WIKI_ENABLED=true`) |
+| Best for | Personal prefs, ad-hoc decisions, gotchas | Structured project knowledge: modules, concepts, decisions, lessons |
 
-### Memory System
-
-Three-layer persistent memory at `~/.coral/memory/`:
-
-```
-~/.coral/memory/
-├── user/                    # Cross-project user preferences
-├── agents/<id>/             # Per-daemon instance experience
-└── projects/<name>/         # Project-specific knowledge
-```
+### Memory CLI
 
 ```bash
-sps memory context my-project                  # generate prompt injection (user + project)
-sps memory context my-project --agent daemon-1 # include agent memory
-sps memory list my-project                     # show all memory indexes
-sps memory list my-project --agent daemon-1    # include agent layer
-sps memory add my-project --type convention --name "API naming" --body "Use camelCase"
+sps memory list <p>                            # show project memory index
+sps memory list                                # global view (user + agents)
+sps memory context <p> --card <seq>            # preview prompt injection
+
+sps memory add <p> --type convention --name "API uses camelCase" \
+  --description "REST endpoints use camelCase" --body "..."
 ```
 
-Memory types: `convention` (no decay), `decision` (slow decay), `lesson` (30-day decay), `reference` (no decay).
+Types: `convention` (no decay), `decision` (slow), `lesson` (30 days), `reference` (no decay).
 
-Workers receive memory in their prompt and can write new memories directly to the filesystem. Frontmatter format: `name`, `description`, `type`. Each directory has a `MEMORY.md` index file.
+### Wiki CLI (when `WIKI_ENABLED=true`)
 
-### Global Configuration
+```bash
+sps wiki init <p>                              # scaffold wiki/ (auto on project init if toggled on)
+sps wiki update <p>                            # show source diff
+sps wiki update <p> --finalize                 # flush manifest after worker writes pages
+sps wiki check <p>                             # lint: orphan / dead-link / fm-gap / stale
+sps wiki list <p> --type lesson --tag pipeline
+sps wiki get <p> lessons/Stop-Hook-Race
+sps wiki status <p>                            # source ↔ manifest ↔ pages diff
+sps wiki add <p> ~/notes.md --category transcripts
+sps wiki read <p> "<query>"                    # preview the 5-layer retrieval
+```
 
-`~/.coral/env` holds shared credentials (GitLab, PM backends, Matrix). No agent selector — claude is the only supported CLI.
+The 5-layer retrieval: hot.md / index summary / pinned / skill-tag / BM25F keyword. Type priority: lesson = 3, decision = 3, concept = 2, module = 1, source = 1. Token budget capped at ~2000.
+
+Worker SOP: [`skills/wiki-update/SKILL.md`](./skills/wiki-update/SKILL.md) (300 lines, single source of truth).
+
+---
+
+## Skills
+
+User-level skills live in `~/.coral/skills/` (28 bundled, copied from npm package on `sps setup`). Symlinked into `~/.claude/skills/` so Claude Code auto-loads them.
+
+```bash
+sps skill list                                 # what's available + project status
+sps skill add <name> --project <p>             # symlink into <repo>/.claude/skills/
+sps skill remove <name> --project <p>
+sps skill freeze <name> --project <p>          # symlink → real copy (allow project edits)
+sps skill unfreeze <name> --project <p>        # back to symlink
+sps skill sync                                 # ① bundled (npm pkg) → ~/.coral/skills/
+                                               # ② ~/.coral/skills/ → ~/.claude/skills/
+sps skill sync --force                         # ⭐ overwrite existing user skills (after sps-cli upgrade)
+```
+
+Bundled skills (v0.51.3):
+
+- **Dev (23)**: `frontend`, `frontend-developer`, `backend`, `backend-architect`, `typescript`, `golang`, `rust`, `python`, `java`, `kotlin`, `swift`, `mobile`, `database`, `database-optimizer`, `qa-tester`, `security-engineer`, `architecture-decision-records`, `coding-standards`, `debugging-workflow`, `devops`, `devops-automator`, `git-workflow`, `code-reviewer`
+- **Worker profiles (3)**: `dev-worker`, `tax-worker`, `reviewer` (referenced via `--profile`)
+- **SPS-specific (5)**: `sps-pipeline`, `sps-memory`, `wiki-update`
+
+---
+
+## Command reference
+
+```bash
+# Setup & projects
+sps setup [--force]
+sps project init <name>
+sps project doctor <name> [--fix] [--json] [--reset-state] [--skip-remote]
+sps doctor <name> --fix              # alias
+
+# Pipeline
+sps tick <project> [--json]
+sps pipeline start|stop|status|reset|workers|board|card|logs|list|run|use [project] [args]
+sps pipeline run <name> "<prompt>"   # for mode: steps pipelines
+sps pipeline tick <project>          # one-off StageEngine pass
+sps scheduler tick <project>         # Planning → Backlog promotion
+sps qa tick <project>                # QA → Done finalization
+sps monitor tick <project>           # health probe (ACK timeout, stale)
+sps pm scan <project>                # rebuild card index from disk
+
+# Cards
+sps card add <p> "title" ["description"] [--skills a,b] [--labels x,y]
+sps card dashboard <p>
+sps card mark-started <p> [seq] [--stage <name>]
+sps card mark-complete <p> <seq> [--stage <name>]
+
+# Worker
+sps worker ps <project>
+sps worker dashboard <project>
+sps worker kill <project> <seq>
+sps worker launch <project> <seq>
+
+# Status / logs
+sps status [--json]
+sps stop <project> [--all]
+sps reset <project> [--all] [--card N,N,N]
+sps logs [project] [--err] [--lines N] [--no-follow]
+
+# Memory
+sps memory list [project] [--agent <id>]
+sps memory context <project> [--card <seq>] [--agent <id>]
+sps memory add <project> --type <T> --name "title" [--body "content"]
+
+# Wiki (v0.51+)
+sps wiki init <p>
+sps wiki update <p> [--finalize] [--json]
+sps wiki read <p> "<query>" [--skills a,b] [--pinned id1,id2] [--budget N]
+sps wiki check <p> [--json] [--fix]
+sps wiki add <p> <file> [--category <name>] [--no-ingest]
+sps wiki list <p> [--type T] [--tag T] [--json]
+sps wiki get <p> <pageId> [--json]
+sps wiki status <p> [--json]
+
+# Skill
+sps skill list [--project <p>]
+sps skill add <name> [--project <p>]
+sps skill remove <name> [--project <p>]
+sps skill freeze <name> [--project <p>]
+sps skill unfreeze <name> [--project <p>]
+sps skill sync [--force]
+
+# Console
+sps console [--port N] [--host H] [--no-open] [--dev] [--kill]
+
+# Agent
+sps agent "<prompt>" [--profile <p>] [--system "..."] [--context file] [--output file] [--verbose]
+sps agent --chat [--name <session>]
+sps agent status|close|list|add [args]
+sps agent daemon start|stop|status
+
+# Hooks (called by Claude Code, not by users)
+sps hook stop
+sps hook user-prompt-submit
+
+# ACP control (for advanced debugging)
+sps acp <ensure|run|prompt|status|stop|pending|respond> <project> [args]
+```
+
+Add `--help` after any command to see its specific usage. Add `--json` for structured output where supported.
+
+---
+
+## Project config (conf)
+
+Live at `~/.coral/projects/<name>/conf` (shell `export VAR="value"` syntax, mode 600). Full field reference (with comments) auto-generated at `~/.coral/projects/<name>/conf.example`.
+
+| Field | Default | Notes |
+|---|---|---|
+| `PROJECT_NAME` | (required) | Internal id |
+| `PROJECT_DIR` | (required) | Absolute path to repo |
+| `GITLAB_PROJECT` | — | `user/repo` (optional, for GitLab API) |
+| `GITLAB_PROJECT_ID` | — | Numeric ID (GitLab only; auto-resolved from path on first MR) |
+| `GITLAB_MERGE_BRANCH` | `main` | Worker pushes here |
+| `PM_TOOL` | `markdown` | **Only `markdown` supported as of v0.42**. Cards live in `~/.coral/projects/<n>/cards/<state>/<seq>.md` |
+| `PIPELINE_LABEL` | `AI-PIPELINE` | Required label on cards to enter pipeline |
+| `MR_MODE` | `none` | `none` (push direct) / `create` (open MR; needs `GITLAB_PROJECT_ID`) |
+| `WORKER_TRANSPORT` | `acp-sdk` | Fixed; do not change |
+| `MAX_CONCURRENT_WORKERS` | `1` | Slot count; cards still serial within a project |
+| `MAX_ACTIONS_PER_TICK` | `3` | New tasks claimable per tick |
+| `INPROGRESS_TIMEOUT_HOURS` | `2` | After this, MonitorEngine flags STALE-RUNTIME |
+| `WORKER_ACK_TIMEOUT_S` | `300` | Wait for STARTED-<stage> label after dispatch (5min, raised in v0.50.24) |
+| `WORKER_ACK_MAX_RETRIES` | `1` | ACK timeout retry count |
+| `MONITOR_AUTO_QA` | `true` | Auto-advance to QA on stale runtime |
+| `CONFLICT_DEFAULT` | `serial` | Fallback for cards without `conflict:` label |
+| `MATRIX_ROOM_ID` | — | Project-level Matrix override |
+| `WORKTREE_DIR` | `~/.coral/worktrees/<p>` | Worker scratch space |
+| `DEFAULT_WORKER_SKILLS` | — | Comma-separated; fallback when no `profile:` and no `card.skills` |
+| `ENABLE_MEMORY` | `true` | `false` skips memory write instructions in prompt |
+| **`WIKI_ENABLED`** | unset (off) | **v0.51+**: `true` enables wiki context injection + reminder |
+| `COMPLETION_SIGNAL` | `done` | Word the Stop hook listens for |
+
+Global credentials at `~/.coral/env`: `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_SSH_HOST`, `GITLAB_SSH_PORT`, `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, `MATRIX_ROOM_ID`. Set via `sps setup` or `vim`.
+
+---
+
+## Project layout
+
+```
+~/.coral/                              # User-global state
+├── env                                # Global credentials (mode 600)
+├── skills/                            # User-level skills (synced from npm)
+├── memory/{user,agents,projects}/     # 3-layer memory store
+├── projects/<name>/                   # Per-project state
+│   ├── conf                           # Project config (mode 600)
+│   ├── conf.example                   # Field reference (auto-generated)
+│   ├── pipelines/{project,*}.yaml     # Pipeline definitions
+│   ├── pipeline_order.json            # Active pipeline pointer
+│   ├── runtime/state.json             # Worker slot + active card state
+│   ├── runtime/worker-<slot>-current.json   # Per-slot card marker (v0.50.21+)
+│   ├── runtime/tick.lock              # Tick lock
+│   ├── runtime/acp-state.json         # ACP session state
+│   ├── cards/<state>/<seq>.md         # Card files (markdown PM backend)
+│   ├── cards/seq.txt                  # Sequence counter
+│   ├── logs/                          # Per-tick logs
+│   └── pm_meta/                       # Card index
+├── sessions/                          # Agent daemon (chat sessions)
+│   ├── daemon.sock daemon.pid
+│   └── chat-sessions/<id>.json        # Persisted chat sessions
+├── console.lock                       # Single-instance guard for console
+└── worktrees/<project>/<seq>/         # Worker worktree per active card
+```
+
+In the target repo (PROJECT_DIR):
+
+```
+.claude/
+├── CLAUDE.md                          # Worker rules (project-specific + SPS-injected)
+├── settings.local.json                # Claude Code local config
+├── skills/                            # Symlinked from ~/.coral/skills/
+└── hooks/{start,stop}.sh              # Lifecycle hooks (call into sps)
+wiki/                                  # If WIKI_ENABLED — see docs/design/28-wiki-system.md
+ATTRIBUTION.md                         # If WIKI_ENABLED
+```
+
+---
 
 ## Architecture
 
+4-layer service architecture (v0.50+):
+
 ```
-SPS CLI
-├── Harness Mode (sps agent)
-│   ├── SessionDaemon (Unix socket, background persistent)
-│   ├── DaemonClient (NDJSON RPC)
-│   └── AcpSdkAdapter
-│        └── claude-agent-acp (ACP community shim for Claude Code)
-│
-├── Pipeline Mode (sps pipeline)
-│   ├── WorkerManager + CompletionJudge
-│   ├── 3-Layer Engine: Scheduler → StageEngine × N → Monitor
-│   └── AcpSdkAdapter (shared with harness)
-│
-└── Memory System (~/.coral/memory/)
-    ├── user/          (cross-project preferences)
-    ├── agents/<id>/   (per-daemon experience)
-    └── projects/<name>/ (conventions, decisions, lessons, references)
+Delivery (commands/, console/routes/)        Thin parameter parsing + I/O orchestration
+  ↓
+Service (services/)                          ProjectService / ChatService / PipelineService /
+                                             SkillService / WikiService — Result<T> + DomainEvent
+  ↓
+Domain (engines/)                            SchedulerEngine / StageEngine / MonitorEngine /
+                                             CloseoutEngine / EventHandler — pipeline logic
+  ↓
+Infrastructure                               WorkerManager (single worker), ACPWorkerRuntime,
+  (manager/, providers/, daemon/)            sessionDaemon, TaskBackend, RepoBackend
 ```
 
-ACP SDK transport: structured JSON-RPC over stdio. No terminal scraping. Deterministic state detection via protocol events.
+Engines:
 
-## Table of Contents
+- **SchedulerEngine** — promotes Planning → Backlog when `AI-PIPELINE` label present.
+- **StageEngine** — drives card through stages; builds prompt (skill + projectRules + memory + **wikiContext** + task description + **wikiUpdateReminder**); kicks worker via ACP.
+- **MonitorEngine** — ACK timeout detection, stale runtime, auto-QA promotion.
+- **CloseoutEngine** + **EventHandler** — finalize completed cards.
 
-- [Installation](#installation)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Harness Mode](#harness-mode-sps-agent)
-- [Pipeline Mode](#pipeline-mode-sps-pipeline)
-- [Architecture](#architecture)
-- [State Machine](#state-machine)
-- [Command Reference](#command-reference)
-- [Worker Rule Files](#worker-rule-files)
-- [Project Configuration](#project-configuration)
-- [Multi-Project Parallel Execution](#multi-project-parallel-execution)
-- [Architecture Overview](#architecture-overview)
-- [Directory Structure](#directory-structure)
+**Single-worker is intentional**: v0.37.2 deleted multi-worker concurrency code. Don't propose "add a parallel mode" — the architecture relies on serial execution for state coherence. For higher throughput, run multiple projects in parallel.
+
+For deep dives:
+- [doc-27: Service Layer Architecture](../../docs/design/27-service-layer-architecture.md) — current architecture
+- [doc-26: Console Architecture](../../docs/design/26-console-architecture.md) — console internals
+- [doc-28: Wiki System](../../docs/design/28-wiki-system.md) — wiki design
+- [doc-13: Development Guardrails](../../docs/design/13-development-guardrails.md) — hard rules for contributors
+- [doc-17: Pipeline Configuration](../../docs/design/17-pipeline-configuration-design.md) — YAML field semantics
+- [docs/design/](../../docs/design/) — full design tree (most v0.15-v0.32 docs are marked HISTORICAL)
 
 ---
 
-## Installation
+## Troubleshooting
 
 ```bash
-npm install -g @coralai/sps-cli
+sps doctor <project> --fix           # ★ first thing to try
+sps logs <project> --err             # stderr / errors only
+sps reset <project> --card <seq>     # nuke a stuck card
+sps reset <project> --all            # full project reset
+
+# Worker / daemon issues
+sps worker ps <project>
+sps agent daemon status              # is the chat daemon up?
+sps agent daemon stop && sps agent daemon start    # restart (clears stale cwd)
+
+# Wiki issues
+sps wiki check <project>
+sps wiki status <project>
 ```
 
-Local development:
+Common issues:
 
-```bash
-cd coding-work-flow/workflow-cli
-npm run build
-# Or run directly with tsx
-npx tsx src/main.ts --help
-```
-
-## Prerequisites
-
-| Dependency | Minimum Version | Description |
-|------------|----------------|-------------|
-| Node.js | 18+ | CLI runtime |
-| git | 2.x | Branch and worktree management |
-| Claude Code CLI or Codex CLI | Latest | AI Worker |
-| tmux | 3.x | No longer required (legacy dependency removed in v0.26.1) |
-
-## Quick Start
-
-```bash
-# 1. Global environment initialization (first-time setup, configure GitLab/PM/notification credentials)
-sps setup
-
-# 2. Clone your project repository (prerequisite)
-git clone git@gitlab.example.com:team/my-project.git ~/projects/my-project
-
-# 3. Initialize SPS project management directory
-sps project init my-project
-
-# 4. Edit project configuration
-vim ~/.coral/projects/my-project/conf
-
-# 5. Health check + auto-fix (generates CLAUDE.md, AGENTS.md, initializes state.json, etc.)
-sps doctor my-project --fix
-
-# 6. (Optional) Edit Worker rules to add project-specific coding standards
-vim ~/projects/my-project/CLAUDE.md
-
-# 7. Create task cards
-sps card add my-project "Implement user login" "JWT authentication endpoint"
-sps card add my-project "Implement order system" "CRUD API + pagination"
-
-# 8. Start pipeline (fully automated, exits when all cards are complete)
-sps tick my-project
-
-# 9. (Optional) Monitor Worker status in real time
-sps worker dashboard
-
-# 10. (Optional) Monitor task cards in board view
-sps card dashboard my-project
-```
+| Symptom | Cause / fix |
+|---|---|
+| Pipeline halted with `NEEDS-FIX` | Open the failed card, fix the issue, remove the label. Console makes this 2 clicks. |
+| Worker not starting | `sps worker ps`, then `sps logs --err`. Often Claude API key missing or `claude-agent-acp` adapter not installed (`sps setup` reinstalls). |
+| Cards stuck in Planning | Need `AI-PIPELINE` label. `sps card add` applies it automatically; if added externally, add manually. |
+| ACK timeout on every card | Claude cold-start is slow with many skill / memory files. Raise `WORKER_ACK_TIMEOUT_S` (default 300s as of v0.50.24). |
+| Console shows stale data | SSE may have dropped; reload page; if persistent, `sps console --kill && sps console`. |
+| Wiki context not injecting | Verify `WIKI_ENABLED=true` in conf and `wiki/WIKI.md` exists. StageEngine logs a warning if conf says yes but scaffold is missing. |
+| New skill SOP not pulling after upgrade | `sps skill sync --force` (default sync skips existing skills). |
+| Daemon chat using wrong cwd | Daemon captures cwd at startup. `sps agent daemon stop && cd <repo> && sps agent daemon start`. |
 
 ---
 
-## State Machine
+## License & attribution
 
-Each task card progresses through the following state machine, fully driven by SPS:
+MIT, see [`LICENSE`](../../LICENSE).
 
-### MR_MODE=none (Default, Recommended)
+The Wiki system (v0.51+) borrows ~70% from [claude-obsidian](https://github.com/kepano/claude-obsidian) (MIT) — three-layer architecture, manifest delta tracking, hot cache, ingest workflow, contradiction callouts, wikilinks. SPS-specific 30%: 5 page types, `sources={card,commit,path}`, 5-layer reader, `sps wiki check` exit gate. Mental model from Karpathy's "LLM Wiki" gist.
 
-The main path is now a worker-owned two-phase flow:
-
-```
-Planning -> Backlog -> Todo -> Inprogress -> QA -> Done
-```
-
-| Phase | Trigger Engine | Action |
-|-------|---------------|--------|
-| Planning -> Backlog | SchedulerEngine | Select card for queue, check admission criteria |
-| Backlog -> Todo | ExecutionEngine | Create branch, create worktree, generate phase prompts |
-| Todo -> Inprogress | ExecutionEngine | Assign Worker slot, launch development worker |
-| Inprogress -> QA | PostActions | Detect development completion, release slot, move card to QA |
-| QA -> Done | CloseoutEngine | Launch/resume integration worker, verify merge evidence, release resources, clean up worktree |
-
-In this model, the development worker stops at “implementation complete and committed on the task branch”. The QA worker owns integration: it must inspect the current worktree, rebase/merge the task branch back into the target branch, resolve conflicts, and finish the integration. If a development worker merges early anyway, SPS absorbs that as an exception from git evidence and closes the task directly instead of forcing an extra QA run. See `docs/design/10-acp-worker-runtime-design.md` for the persistent Agent transport model, the full worker state breakdown, and the local same-user OAuth reuse boundary. See `docs/design/11-runtime-state-authority-and-recovery-redesign.md` for the redesign that demotes `state.json` / `acp-state.json` to projections and re-centers recovery around PM state plus worktree/git evidence. See `docs/design/12-unified-runtime-state-machine.md` for the current unified state-machine model. See `docs/design/13-development-guardrails.md` for the non-negotiable development rules that prevent future features from reintroducing old state, merge, or prompt-model drift.
-
-The autonomous main path uses ACP SDK transport (`WORKER_TRANSPORT=acp-sdk`). Workers communicate with Claude Code via structured ACP JSON-RPC over stdio. `sps acp` commands provide diagnostic and manual-control capabilities.
-
-### MR_MODE=create (Optional)
-
-After completing coding, the Worker creates an MR. The task is then considered complete. MR review is handled by subsequent processes (under development):
-
-```
-Planning -> Backlog -> Todo -> Inprogress -> Done (MR created)
-```
-
-| Phase | Trigger Engine | Action |
-|-------|---------------|--------|
-| Inprogress -> Done | ExecutionEngine | Detect Worker completion (MR created), release resources, clean up worktree |
-
-### Auxiliary Status Labels
-
-Cards may be tagged with the following labels, indicating special handling is needed:
-
-| Label | Meaning | Handling |
-|-------|---------|----------|
-| `BLOCKED` | Blocked by external dependency | Skipped, awaiting manual intervention |
-| `NEEDS-FIX` | Worker failure or CI failure | Auto-fix or manual intervention |
-| `WAITING-CONFIRMATION` | Worker awaiting destructive operation confirmation | Notify for manual confirmation |
-| `CONFLICT` | Merge conflict | Worker auto-resolves or manual handling |
-| `STALE-RUNTIME` | Worker runtime anomaly | MonitorEngine cleanup |
-
----
-
-## Command Reference
-
-### Global Options
-
-All commands support:
-
-| Option | Description |
-|--------|-------------|
-| `--json` | Output structured JSON (for script/cron consumption) |
-| `--dry-run` | Preview actions without executing |
-| `--help` | Show help |
-| `--version` | Show version number |
-
-### Exit Codes
-
-| Exit Code | Meaning |
-|-----------|---------|
-| `0` | Success |
-| `1` | Business failure / validation failure |
-| `2` | Argument error |
-| `3` | External dependency unavailable (GitLab / PM / Worker) |
-
----
-
-### sps setup
-
-Global environment initialization wizard for configuring external system credentials. Preserves existing values by showing current configuration as defaults -- press Enter to keep the current value.
-
-```bash
-sps setup [--force]
-```
-
-**Interactive configuration items:**
-
-- GitLab: `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_SSH_HOST`, `GITLAB_SSH_PORT`
-- Plane: `PLANE_URL`, `PLANE_API_KEY`, `PLANE_WORKSPACE_SLUG`
-- Trello: `TRELLO_API_KEY`, `TRELLO_TOKEN`
-- Matrix: `MATRIX_HOMESERVER`, `MATRIX_TOKEN`, `MATRIX_ROOM_ID`
-
-Credentials are stored in `~/.coral/env` (permissions 0600), shared across all projects.
-
-| Option | Description |
-|--------|-------------|
-| `--force` | Overwrite existing `~/.coral/env` |
-
----
-
-### sps project init
-
-Initialize an SPS project management directory.
-
-```bash
-sps project init <project> [--force]
-```
-
-**Created directory structure:**
-
-SPS management directory (`~/.coral/projects/<project>/`):
-```
-~/.coral/projects/<project>/
-├── conf                    # Project configuration file (generated from template)
-├── logs/                   # Log directory
-├── pm_meta/                # PM metadata cache
-├── runtime/                # Runtime state
-├── pipeline_order.json     # Card execution order
-├── batch_scheduler.sh      # cron-compatible entry script
-└── deploy.sh               # Deployment script template
-```
-
-Target project repo (`<PROJECT_DIR>/.claude/`, installed when the repo path exists):
-```
-<PROJECT_DIR>/.claude/
-├── settings.json                 # Stop + UserPromptSubmit hooks (committed)
-├── settings.local.json           # autoMemoryDirectory (gitignored)
-├── CLAUDE.md                     # Project rules skeleton
-├── hooks/
-│   └── stop.sh                   # Default Stop hook script (marks COMPLETED-<stage>)
-├── skills/                       # Empty; add project-specific skills here
-└── rules/                        # Empty; add path-scoped rules here
-```
-
-| Option | Description |
-|--------|-------------|
-| `--force` | Overwrite template files (conf will not be overwritten; `.claude/` files are preserved) |
-
-**Example:**
-
-```bash
-sps project init accounting-agent
-# -> Creates ~/.coral/projects/accounting-agent/
-# -> Next step: edit conf to fill in configuration values
-```
-
----
-
-### sps doctor
-
-Project health check and auto-repair.
-
-```bash
-sps doctor <project> [--fix] [--json] [--skip-remote]
-```
-
-Equivalent to `sps project doctor <project>`.
-
-**Checks:**
-
-| Check | Description | --fix |
-|-------|-------------|-------|
-| global-env | Whether `~/.coral/env` exists | -- |
-| global-env-vars | Whether GITLAB_URL / GITLAB_TOKEN are loaded | -- |
-| conf-load | Whether configuration file can be loaded | -- |
-| conf-fields | Whether all required fields are present | -- |
-| instance-dir / logs-dir / runtime-dir / pm-meta-dir | Directory structure | Create missing directories |
-| repo-dir | Whether project repo exists and is a git repository | -- |
-| gitignore-sps | Whether `.sps/` is in .gitignore | Append |
-| worker-rules | Whether CLAUDE.md / AGENTS.md exist in repo root | Generate and commit (including .gitignore) |
-| skill-profiles | Whether profile files specified by DEFAULT_WORKER_SKILLS exist | -- |
-| state-json | Whether runtime state file is valid | Initialize |
-| pipeline-order | Whether execution order file exists | Create empty |
-| conf-cli-fields | Whether CLI-required Provider field mappings are complete (Plane only) | Append mappings |
-| gitlab | GitLab API connectivity | -- |
-| plane | Plane API connectivity (PM_TOOL=plane only) | -- |
-| pm-states / pm-lists | Whether PM state/list UUIDs are valid | Auto-create + write to conf |
-| worker-tool | Whether Claude Code / Codex CLI is in PATH | -- |
-| acp-runtime | Whether ACP agent binaries are available | -- |
-
-| Option | Description |
-|--------|-------------|
-| `--fix` | Auto-fix repairable issues (create directories, generate files, initialize state) |
-| `--json` | Output check results in JSON format |
-| `--skip-remote` | Skip remote connectivity checks (GitLab/Plane) |
-
-**Example:**
-
-```bash
-# Check + auto-fix
-sps doctor my-project --fix
-#   ok  global-env        /home/user/.coral/env
-#   ok  global-env-vars   GITLAB_URL and GITLAB_TOKEN set
-#   ok  conf-load         Loaded ~/.coral/projects/my-project/conf
-#   ok  conf-fields       All required fields present
-#   ok  repo-dir          /home/user/projects/my-project
-#   ok  gitignore-sps     .sps/ in .gitignore
-#   ok  worker-rules      Generated and committed: CLAUDE.md, AGENTS.md
-#   ok  skill-profiles    DEFAULT_WORKER_SKILLS="senior" -- all profiles found
-#   ok  state-json        Initialized with 3 worker slots
-#   ok  acp-runtime       claude-agent-acp available
-
-# JSON output
-sps doctor my-project --json
-```
-
----
-
-### sps card add
-
-Create a task card.
-
-```bash
-sps card add <project> "<title>" ["description"]
-```
-
-Cards are created in the Planning state, automatically tagged with `AI-PIPELINE`, and appended to `pipeline_order.json`.
-
-After creation, add a `skill:` label to specify the Worker's expertise (see label descriptions below).
-
-| Option | Description |
-|--------|-------------|
-| `--json` | Output creation result in JSON format |
-
-**Example:**
-
-```bash
-# Create cards + add skill labels
-sps card add my-project "Implement user login" "JWT authentication endpoint"
-sps pm addLabel my-project 1 "skill:backend"
-
-sps card add my-project "Implement order list" "CRUD API + pagination"
-sps pm addLabel my-project 2 "skill:backend"
-
-sps card add my-project "Write API documentation" "User and order endpoint docs"
-sps pm addLabel my-project 3 "skill:writer"
-```
-
-### sps card dashboard
-
-Kanban-style dashboard for task cards. Single-project mode renders a full board, while multi-project mode renders compact mini boards side by side.
-
-```bash
-sps card dashboard [project1] [project2] ... [--once] [--json]
-```
-
-| Option | Description |
-|--------|-------------|
-| (no arguments) | Auto-discovers all projects under `~/.coral/projects/` and renders compact multi-project panels |
-| `<project>` | Render a full single-project board with `Planning / Backlog / Todo / In Progress / QA / Done` columns |
-| `--once` | Output one snapshot and exit |
-| `--json` | Output structured card/board snapshots for scripting |
-
-Single-project mode shows:
-- Project title and live counts
-- Six workflow columns
-- Compact task cards with title, label summary, worker/runtime state, and conflict/waiting badges
-
-Multi-project mode shows:
-- One panel per project
-- Compact per-state counts
-- Hot cards summary for running / waiting / conflict items
-
-**Example:**
-
-```bash
-# Full board for one project
-sps card dashboard my-project
-
-# Compact board snapshots for all projects
-sps card dashboard
-
-# Single JSON snapshot
-sps card dashboard my-project --json
-```
-
-#### Skill Labels
-
-Each card should have **one** `skill:` label. The Pipeline automatically loads the corresponding Worker skill profile and injects it into the prompt:
-
-| Label | Worker Role | Deliverables |
-|-------|------------|--------------|
-| `skill:architect` | Architecture design | ADR, design docs, directory structure |
-| `skill:frontend` | Frontend development | Components, pages, frontend tests |
-| `skill:backend` | Backend development | API, DB migration, backend tests |
-| `skill:fullstack` | Full-stack development | Frontend + backend + DB integrated |
-| `skill:prototyper` | Rapid prototyping | Runnable MVP |
-| `skill:reviewer` | Code review | Review report + fix commits |
-| `skill:security` | Security audit | Audit report + vulnerability fixes |
-| `skill:writer` | Technical writing | README, API docs, PRD |
-| `skill:optimizer` | Performance optimization | Benchmark report + optimization commits |
-| `skill:senior` | General purpose (fallback) | High-quality general implementation |
-
-Profile files are located at `~/.coral/profiles/<name>.md`. When no label is present, it falls back to the project conf's `DEFAULT_WORKER_SKILLS`.
-
----
-
-### sps tick
-
-Unified main loop -- orchestrates all engines, executing scheduler -> qa -> pipeline -> monitor in sequence.
-
-```bash
-sps tick <project> [project2] [project3] ... [--json] [--dry-run]
-```
-
-**Execution order (per tick cycle):**
-
-1. **scheduler tick** -- Planning -> Backlog (select cards for queue)
-2. **qa tick** -- QA -> integration worker -> Done (prioritize finishing branch integration and freeing Worker slots)
-3. **pipeline tick** -- Backlog -> Todo -> Inprogress (prepare environment + launch Worker)
-4. **monitor tick** -- Anomaly inspection and alignment
-
-**Run modes:**
-
-| Mode | Behavior |
-|------|----------|
-| Continuous (default) | Cycles every 30 seconds, auto-exits when all cards are complete |
-
-**Concurrency mutex:**
-
-Only one `tick` instance is allowed per project at any time. Mutex is implemented via `runtime/tick.lock` (PID + timestamp). Locks exceeding `TICK_LOCK_TIMEOUT_MINUTES` (default 30 minutes) are considered deadlocked and can be forcibly taken over.
-
-**Failure classification:**
-
-| Type | Behavior | Example |
-|------|----------|---------|
-| Fatal failure | Short-circuits the entire tick | Corrupted conf, PM unavailable |
-| Degraded continuation | Subsequent steps run with limitations | Scheduler failure -> pipeline won't launch new cards |
-| Non-critical failure | Logged and continued | Notification send failure |
-
-| Option | Description |
-|--------|-------------|
-| `--once` | Exit after single execution |
-| `--json` | Output aggregated results in JSON format |
-| `--dry-run` | Preview actions without executing |
-
-**Example:**
-
-```bash
-# Single project continuous run
-sps tick my-project
-
-# Multi-project simultaneous management
-sps tick project-a project-b project-c
-
-# JSON output (suitable for cron)
-sps tick my-project --json
-
-# Preview mode
-sps tick my-project --dry-run
-```
-
-**JSON output format:**
-
-```json
-{
-  "project": "my-project",
-  "component": "tick",
-  "status": "ok",
-  "exitCode": 0,
-  "steps": [
-    { "step": "scheduler", "status": "ok", "actions": ["..."] },
-    { "step": "qa", "status": "ok", "actions": ["..."] },
-    { "step": "pipeline", "status": "ok", "actions": ["..."] },
-    { "step": "monitor", "status": "ok", "checks": ["..."] }
-  ]
-}
-```
-
----
-
-### sps status
-
-Show running status of all projects.
-
-```bash
-sps status [--json]
-```
-
-| Option | Description |
-|--------|-------------|
-| `--json` | Output structured JSON |
-
----
-
-### sps acp
-
-Manage persistent session-backed worker sessions directly for diagnostics, manual intervention, and experiments. This is no longer the default transport used by `sps tick`.
-
-```bash
-sps acp ensure <project> <slot> [claude] [--json]
-sps acp run <project> <slot> [claude] "<prompt>" [--json]
-sps acp prompt <project> <slot> [claude] "<prompt>" [--json]
-sps acp status <project> [slot] [--json]
-sps acp stop <project> <slot> [--json]
-```
-
-Current behavior:
-
-- `ensure` starts or reuses an ACP SDK session for the specified worker slot
-- `run` submits a prompt onto the session and records a new run snapshot
-- `status` refreshes session and run state from the local gateway
-- `stop` terminates the persistent session and marks the slot `offline`
-- `sps tick` does not use this transport as its default autonomous execution chain
-- retry / conflict follow-up runs reuse the same slot session when possible, and now recreate a fresh persistent session automatically if the old one has already disappeared
-
-Observed session states:
-
-| State | Meaning |
-|-------|---------|
-| `ready` | Session is authenticated and idle, ready to accept a prompt |
-| `busy` | Session is alive and currently working |
-| `booting` | Session started but is still blocked on onboarding or authentication |
-| `offline` | Session is not reachable |
-
-Current verification scope:
-
-- Codex is verified in this release for `ensure -> run -> status -> stop`
-- Claude session bootstrap and status detection are implemented, but prompt execution still depends on host-side `claude auth login`
-
----
-
-### sps scheduler tick
-
-Manually execute the scheduling step: Planning -> Backlog.
-
-```bash
-sps scheduler tick <project> [--json] [--dry-run]
-```
-
-- Reads `pipeline_order.json` to determine card priority
-- Checks admission criteria (Worker availability, conflict domains, etc.)
-- Moves eligible cards from Planning to Backlog
-
-**Example:**
-
-```bash
-sps scheduler tick my-project
-sps scheduler tick my-project --dry-run
-```
-
----
-
-### sps pipeline tick
-
-Manually execute the execution chain: Backlog -> Todo -> Inprogress.
-
-```bash
-sps pipeline tick <project> [--json] [--dry-run]
-```
-
-**Internal steps:**
-
-1. **Check Inprogress cards** -- Detect Worker completion status. MR_MODE=none pushes directly to Done; MR_MODE=create confirms MR then pushes to Done
-2. **Process Backlog cards** -- Create branch + create worktree + generate phase prompts -> push to Todo
-3. **Process Todo cards** -- Assign Worker slot + build task context + launch Worker -> push to Inprogress
-
-Limited by `MAX_ACTIONS_PER_TICK` (default 1) to prevent launching too many Workers in a single tick cycle. There is a delay between multiple Worker launches (2 seconds in print mode, 10 seconds in interactive mode).
-
-When ResourceLimiter blocks a launch, SPS now logs the exact reason (`worker cap reached` vs `memory threshold reached`) together with `active/max` and `memory/current-threshold` diagnostics.
-
-If `MAX_CONCURRENT_WORKERS` is increased after a project was already running, SPS now auto-reconciles legacy `state.json` worker slots to the new configured count on the next read.
-
-Cards with `BLOCKED`, `NEEDS-FIX`, `CONFLICT`, `WAITING-CONFIRMATION`, or `STALE-RUNTIME` labels are skipped.
-
-**Example:**
-
-```bash
-sps pipeline tick my-project
-sps pipeline tick my-project --json
-```
-
----
-
-### sps worker
-
-Worker lifecycle management.
-
-#### sps worker launch
-
-Manually launch a single Worker.
-
-```bash
-sps worker launch <project> <seq> [--json] [--dry-run]
-```
-
-If the card is in Backlog state, it will automatically execute prepare first (create branch + worktree), then launch the Worker.
-
-**Launch process:**
-
-1. Assign an available Worker slot
-2. Write `.sps/task_prompt.txt` to the worktree
-3. Launch Worker process
-4. Push card to Inprogress
-
-**Worker transport (`WORKER_TRANSPORT=acp-sdk`, the only supported mode):**
-
-Workers communicate with Claude Code via structured ACP JSON-RPC protocol over stdio, using the `claude-agent-acp` shim. As of v0.38.0, Claude is the only supported CLI.
-
-Key advantages:
-- **Structured communication** -- JSON-RPC protocol, no terminal screen-scraping
-- **Deterministic state detection** -- No regex parsing, no guessing
-- **Permission handling** -- Programmatic per-tool-call approval via `requestPermission` callback
-- **Real-time logs** -- ACP events stream to `*-acp-*.log` files
-- **No external dependencies** -- Pure process management, suitable for CI/CD environments
-
-**Session Resume chain:**
-
-Multiple tasks on the same worktree (initial implementation -> CI fix -> conflict resolution) share the same session:
-
-```
-Task 1: claude -p "Implement feature"              -> session_id_1 (stored in state.json)
-CI fix: claude -p "Fix CI" --resume sid             -> Inherits full context from task 1
-Conflict: claude -p "Resolve conflict" --resume sid -> Inherits all historical context
-```
-
-**Example:**
-
-```bash
-sps worker launch my-project 24
-sps worker launch my-project 24 --dry-run
-```
-
-#### sps worker dashboard
-
-Real-time dashboard for monitoring all Worker running states.
-
-```bash
-sps worker dashboard [project1] [project2] ... [--once] [--json]
-```
-
-| Option | Description |
-|--------|-------------|
-| (no arguments) | Auto-discovers all projects under `~/.coral/projects/` |
-| `--once` | Output a single snapshot then exit (no real-time mode) |
-| `--json` | Output in JSON format (all projects, all Worker slot states + output preview) |
-
-**Real-time mode:**
-
-- Refreshes every 3 seconds by default (adjustable via `SPS_DASHBOARD_INTERVAL` environment variable)
-- Press `q` to quit, press `r` to force refresh
-- Uses alternate screen buffer (does not pollute terminal scrollback)
-- Adaptive grid layout, one panel per Worker
-- Proc mode panels show: PID, exit code, JSONL-rendered human-readable output
-- ACP SDK panels show: transport, session/run status, model, cwd, pending confirmation, and the latest structured summary line
-
-**Example:**
-
-```bash
-# Monitor all projects
-sps worker dashboard
-
-# Monitor specific projects
-sps worker dashboard my-project
-
-# Single snapshot
-sps worker dashboard --once
-
-# JSON output (for script consumption)
-sps worker dashboard --json
-
-# Custom refresh interval
-SPS_DASHBOARD_INTERVAL=5000 sps worker dashboard
-```
-
----
-
-### sps pm
-
-PM backend operations.
-
-#### sps pm scan
-
-View card list.
-
-```bash
-sps pm scan <project> [state]
-```
-
-Lists all cards when `state` is not specified.
-
-**Example:**
-
-```bash
-# View all cards
-sps pm scan my-project
-
-# Filter by state
-sps pm scan my-project Inprogress
-sps pm scan my-project Planning
-```
-
-#### sps pm move
-
-Manually move a card's state.
-
-```bash
-sps pm move <project> <seq> <state>
-```
-
-**Example:**
-
-```bash
-sps pm move my-project 24 QA
-sps pm move my-project 25 Done
-```
-
-#### sps pm comment
-
-Add a comment to a card.
-
-```bash
-sps pm comment <project> <seq> "<text>"
-```
-
-**Example:**
-
-```bash
-sps pm comment my-project 24 "CI passed, awaiting review"
-```
-
-#### sps pm checklist
-
-Manage card checklists.
-
-```bash
-# Create checklist
-sps pm checklist create <project> <seq> "item1" "item2" "item3"
-
-# View checklist
-sps pm checklist list <project> <seq>
-
-# Check/uncheck items
-sps pm checklist check <project> <seq> <item-id>
-sps pm checklist uncheck <project> <seq> <item-id>
-```
-
-**Example:**
-
-```bash
-sps pm checklist create my-project 24 "Unit tests" "Integration tests" "Code review"
-sps pm checklist list my-project 24
-sps pm checklist check my-project 24 item-001
-```
-
----
-
-### sps qa tick
-
-QA close-out and worktree cleanup.
-
-```bash
-sps qa tick <project> [--json]
-```
-
-**When MR_MODE=none:** QA is the integration phase. The QA worker must inspect the task worktree, continue merge/rebase work, resolve conflicts, and drive the branch back into the target branch. `qa tick` launches or resumes that integration worker and only moves the card to `Done` after merge evidence is observed.
-
-**When MR_MODE=create:** QA remains a compatibility path while MR flow is still being converged on the same worker-owned model.
-
-**Automatic worktree cleanup:**
-
-After each qa tick cycle, items in the `state.worktreeCleanup` queue are automatically processed:
-
-1. `git worktree remove --force <path>` -- Remove worktree directory
-2. `git branch -d <branch>` -- Delete merged local branch
-3. `git worktree prune` -- Clean up residual references
-
-Failed cleanup entries remain in the queue and are automatically retried in the next tick cycle.
-
-**Example:**
-
-```bash
-sps qa tick my-project
-sps qa tick my-project --json
-```
-
----
-
-### sps monitor tick
-
-Manually execute anomaly detection and health inspection.
-
-```bash
-sps monitor tick <project> [--json]
-```
-
-**Inspection items:**
-
-| Check | Description |
-|-------|-------------|
-| Orphan slot cleanup | Worker process is dead but slot is still marked active |
-| Timeout detection | Inprogress exceeds `INPROGRESS_TIMEOUT_HOURS` |
-| State alignment | Whether PM state and runtime state are consistent |
-
-**Example:**
-
-```bash
-sps monitor tick my-project
-sps monitor tick my-project --json
-```
-
----
-
-### sps stop
-
-Stop running tick process(es).
-
-```bash
-sps stop <project>    # stop specific project
-sps stop --all        # stop all running ticks
-```
-
----
-
-### sps reset
-
-Reset cards for re-execution. Performs 5 atomic steps: stop tick, clean state, remove worktrees + branches, move cards to Planning, report.
-
-```bash
-sps reset <project>              # reset all non-Done cards
-sps reset <project> --all        # reset ALL cards including Done
-sps reset <project> --card 5     # reset specific card
-sps reset <project> --card 5,6,7 # reset multiple cards
-```
-
-Typical workflow after version upgrade:
-
-```bash
-npm i -g @coralai/sps-cli    # upgrade
-sps reset my-project          # clean reset
-sps tick my-project           # re-run
-```
-
----
-
-### sps logs
-
-Real-time log viewer.
-
-```bash
-sps logs [project]                    # follow pipeline log
-sps logs <project> --err              # follow error log
-sps logs <project> --lines 50         # show last 50 lines
-sps logs <project> --no-follow        # print and exit
-```
-
----
-
-## Worker Rule Files
-
-`sps doctor --fix` generates rule files for the Claude Code worker:
-
-| File | Purpose | Committed to git |
-|------|---------|-----------------|
-| `CLAUDE.md` | Project rules for Claude Code Worker | Yes |
-| `.sps/development_prompt.txt` | Development-phase prompt (debug archive) | No (.gitignore) |
-| `.sps/integration_prompt.txt` | Integration-phase prompt (debug archive) | No (.gitignore) |
-| `docs/DECISIONS.md` | Architecture decisions (worker auto-maintained) | Yes |
-| `docs/CHANGELOG.md` | Change log (worker auto-maintained) | Yes |
-
-**Note**: Prompts are generated in-memory and passed via stdin (v0.25.0+). The `.sps/` files are debug archives only — their absence does not block the pipeline.
-
-**Skill Profile injection (v0.16+):**
-
-| File | Purpose |
-|------|---------|
-| `~/.coral/profiles/<name>.md` | Loaded into Worker prompt via `skill:<name>` label |
-
-Prompt assembly order: Skill Profile -> CLAUDE.md/AGENTS.md -> DECISIONS.md/CHANGELOG.md -> Task description
-
-### How It Works
-
-1. `CLAUDE.md` and `AGENTS.md` are committed to the repository's main branch
-2. When creating a git worktree, these files are automatically inherited
-3. On startup, the Worker reads CLAUDE.md to understand project rules (auto-discovered in interactive mode; auto-loaded from cwd in print mode)
-4. Task-specific information is written into `.sps/development_prompt.txt` and `.sps/integration_prompt.txt` inside each worktree; `.sps/task_prompt.txt` remains as a development-phase compatibility alias
-5. Development workers use the development prompt and stop at a committed task branch; QA workers use the integration prompt and complete merge/conflict work
-
-### Project Knowledge Base
-
-Each Worker is instructed in the task prompt to:
-
-- **Before starting**: Read `docs/DECISIONS.md` and `docs/CHANGELOG.md` to understand decisions and changes from preceding tasks
-- **After completion**: Append their architecture decisions to `docs/DECISIONS.md` and change summaries to `docs/CHANGELOG.md`
-
-These files are merged with the code into the target branch. The next Worker inherits them when creating a worktree, enabling cross-task knowledge transfer.
-
-### Customizing Project Rules
-
-The generated CLAUDE.md includes a "Project-Specific Rules" placeholder section where you can add:
-
-```markdown
-## Project-Specific Rules
-- Language: TypeScript strict mode
-- Test framework: vitest, coverage 80%+
-- Architecture: src/modules/<domain>/ directory structure
-- Linting: eslint + prettier, must pass before commit
-```
-
-SPS will not overwrite existing CLAUDE.md / AGENTS.md files.
-
----
-
-## Project Configuration
-
-Configuration is split into two layers:
-
-| File | Scope | Description |
-|------|-------|-------------|
-| `~/.coral/env` | Global | Credentials shared across all projects (GitLab token, PM API key, etc.) |
-| `~/.coral/projects/<project>/conf` | Project | Project-specific configuration (repository, branch, Worker parameters, etc.) |
-
-Project conf can reference global variables (e.g., `${PLANE_URL}`).
-
-### Configuration Field Reference
-
-#### Project Basics
-
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `PROJECT_NAME` | Yes | -- | Project name |
-| `PROJECT_DIR` | No | `~/projects/<project>` | Project repository path |
-
-#### GitLab
-
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `GITLAB_PROJECT` | Yes | -- | GitLab project path (e.g., `group/repo`) |
-| `GITLAB_PROJECT_ID` | Yes | -- | GitLab project numeric ID |
-| `GITLAB_MERGE_BRANCH` | Yes | `develop` | MR target branch |
-
-#### PM Backend
-
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `PM_TOOL` | No | `trello` | PM backend type: `plane` / `trello` / `markdown` |
-| `PIPELINE_LABEL` | No | `AI-PIPELINE` | Pipeline card label |
-| `MR_MODE` | No | `none` | Merge mode: `none` (worker-owned QA integration back to target branch) / `create` (create MR, review flow under development) |
-
-#### Worker
-
-Claude is the only supported CLI as of v0.38.0; there is no per-project agent selector.
-
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `WORKER_TRANSPORT` | No | `acp-sdk` | Worker transport (only `acp-sdk` is supported) |
-| `MAX_CONCURRENT_WORKERS` | No | `3` | Maximum parallel Workers (worker slot ceiling) |
-| `WORKER_RESTART_LIMIT` | No | `2` | Maximum restart count after Worker death |
-| `MAX_ACTIONS_PER_TICK` | No | `1` | Maximum launches per tick cycle; raise with `MAX_CONCURRENT_WORKERS` if one tick should fill all slots |
-
-#### Timeouts and Policies
-
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `INPROGRESS_TIMEOUT_HOURS` | No | `8` | Inprogress timeout in hours |
-| `MONITOR_AUTO_QA` | No | `false` | Whether Monitor auto-pushes completed cards to QA |
-| `CONFLICT_DEFAULT` | No | `serial` | Default conflict domain strategy: `serial` / `parallel` |
-| `TICK_LOCK_TIMEOUT_MINUTES` | No | `30` | Tick lock timeout in minutes |
-
-#### Paths
-
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `WORKTREE_DIR` | No | `~/.coral/worktrees/` | Worktree root directory |
-
-### Configuration Example
-
-```bash
-# ~/.coral/projects/my-project/conf
-
-PROJECT_NAME="my-project"
-PROJECT_DIR="/home/user/projects/my-project"
-
-# GitLab
-GITLAB_PROJECT="team/my-project"
-GITLAB_PROJECT_ID="42"
-GITLAB_MERGE_BRANCH="develop"
-
-# PM (uses variables from global ~/.coral/env)
-PM_TOOL="plane"
-PLANE_API_URL="${PLANE_URL}"
-PLANE_PROJECT_ID="project-uuid-here"
-
-# Worker (claude is the only supported CLI — no selector)
-MAX_CONCURRENT_WORKERS=3
-MAX_ACTIONS_PER_TICK=1
-
-# Merge mode
-MR_MODE="none"                   # none (worker-owned QA integration) or create (create MR)
-```
-
----
-
-## Multi-Project Parallel Execution
-
-SPS supports managing multiple projects simultaneously in a single process:
-
-```bash
-sps tick project-a project-b project-c
-```
-
-Each project is fully isolated:
-- Independent ProjectContext, Provider instances, Engine instances
-- Independent tick.lock (non-blocking between projects)
-- Independent state.json (Worker slots are not mixed)
-- Errors in one project do not affect others
-
-Multi-Worker parallel configuration:
-
-```bash
-# Set in project conf
-MAX_CONCURRENT_WORKERS=3
-CONFLICT_DEFAULT=parallel
-```
-
----
-
-## Architecture Overview
-
-### Four-Layer Architecture
-
-```
-Layer 3  Commands + Engines    CLI commands + state machine engines
-Layer 2  Providers             Concrete backend implementations
-Layer 1  Interfaces            Abstract interfaces
-Layer 0  Core Runtime          Configuration, paths, state, locks, logging
-```
-
-### Supported Backends
-
-| Type | Provider | Interface |
-|------|----------|-----------|
-| PM Backend | Plane CE / Trello / Markdown | TaskBackend |
-| Code Hosting | GitLab | RepoBackend |
-| AI Worker (print) | ClaudePrintProvider / CodexExecProvider | WorkerProvider |
-| AI Worker (interactive) | ClaudeTmuxProvider / CodexTmuxProvider | WorkerProvider |
-| Notifications | Matrix | Notifier |
-
-### Engines
-
-| Engine | Responsibility |
-|--------|---------------|
-| SchedulerEngine | Planning -> Backlog (card selection, sorting, admission checks) |
-| ExecutionEngine | Backlog -> Todo -> Inprogress (prepare environment, launch development Worker, detect completion handoff to QA) |
-| CloseoutEngine | Worktree cleanup (legacy QA card handling when MR_MODE=create) |
-| MonitorEngine | Anomaly detection (orphan cleanup, timeouts, blocks, state alignment, dead Worker completion detection) |
-
----
-
-## Directory Structure
-
-```
-workflow-cli/
-├── src/
-│   ├── main.ts                 # CLI entry point, command routing
-│   ├── commands/               # Command implementations
-│   │   ├── setup.ts            #   sps setup
-│   │   ├── projectInit.ts      #   sps project init
-│   │   ├── doctor.ts           #   sps doctor
-│   │   ├── cardAdd.ts          #   sps card add
-│   │   ├── tick.ts             #   sps tick
-│   │   ├── schedulerTick.ts    #   sps scheduler tick
-│   │   ├── pipelineTick.ts     #   sps pipeline tick
-│   │   ├── workerLaunch.ts     #   sps worker launch
-│   │   ├── workerDashboard.ts  #   sps worker dashboard
-│   │   ├── pmCommand.ts        #   sps pm *
-│   │   ├── qaTick.ts           #   sps qa tick
-│   │   └── monitorTick.ts      #   sps monitor tick
-│   ├── core/                   # Core runtime
-│   │   ├── config.ts           #   Configuration loading (shell conf parsing)
-│   │   ├── context.ts          #   ProjectContext
-│   │   ├── paths.ts            #   Path resolution
-│   │   ├── state.ts            #   Runtime state (state.json)
-│   │   ├── lock.ts             #   Tick lock
-│   │   ├── logger.ts           #   Logging + structured events
-│   │   └── queue.ts            #   Pipeline queue
-│   ├── engines/                # State machine engines
-│   │   ├── SchedulerEngine.ts  #   Card selection and queuing
-│   │   ├── ExecutionEngine.ts  #   Execution chain
-│   │   ├── CloseoutEngine.ts   #   QA close-out
-│   │   └── MonitorEngine.ts    #   Anomaly detection
-│   ├── manager/                # Worker process management module (v0.16.0)
-│   │   ├── supervisor.ts       #   fd-redirected spawn, child handle, exit callbacks
-│   │   ├── completion-judge.ts #   git output checks, marker/keyword detection
-│   │   ├── post-actions.ts     #   merge + PM update + slot release + notify
-│   │   ├── pm-client.ts        #   Lightweight PM operations (Plane/Trello/Markdown)
-│   │   ├── resource-limiter.ts #   Global worker count cap + memory checks
-│   │   └── recovery.ts         #   Post-restart PID scan recovery
-│   ├── interfaces/             # Abstract interfaces
-│   │   ├── TaskBackend.ts      #   PM backend interface
-│   │   ├── RepoBackend.ts      #   Code repository interface
-│   │   ├── Notifier.ts         #   Notification interface
-│   │   └── HookProvider.ts     #   Hook interface
-│   ├── models/                 # Type definitions
-│   │   └── types.ts            #   Card, CommandResult, WorkerStatus, etc.
-│   └── providers/              # Concrete implementations
-│       ├── registry.ts         #   Provider factory
-│       ├── PlaneTaskBackend.ts
-│       ├── TrelloTaskBackend.ts
-│       ├── MarkdownTaskBackend.ts
-│       ├── adapters/           #   ACP SDK adapters
-│       │   └── AcpSdkAdapter.ts #  Unified ACP adapter (JSON-RPC over stdio)
-│       ├── outputParser.ts      #   JSONL output parsing, process management utilities
-│       ├── streamRenderer.ts    #   JSONL -> human-readable text (for Dashboard)
-│       ├── GitLabRepoBackend.ts
-│       └── MatrixNotifier.ts
-├── package.json
-└── tsconfig.json
-```
-
----
-
-## Manager Module (v0.16.0)
-
-v0.16.0 introduced the `src/manager/` directory, decoupling Worker process management from Engines into independent modules that run as internal tick modules (not standalone daemons).
-
-| Module | Lines | Responsibility |
-|--------|-------|---------------|
-| `supervisor.ts` | 288 | fd-redirected spawn (OS-level guaranteed output writing), holds child handle, exit callback triggers post-processing, three-layer env var merging (system -> global credentials -> project config) |
-| `completion-judge.ts` | 110 | phase-aware git evidence checks (branch commits vs merged target), marker file detection, completion keyword fallback |
-| `post-actions.ts` | 412 | Complete post-Worker-exit chain: merge -> PM state update -> slot release -> notify |
-| `pm-client.ts` | 294 | Lightweight PM operation wrapper, supports Plane/Trello/Markdown backends |
-| `resource-limiter.ts` | 103 | Global worker count cap check + memory check + launch interval control |
-| `recovery.ts` | 205 | Post-tick-restart PID scan to recover orphan worker processes |
-
-**Refactoring results:**
-- ExecutionEngine reduced from 1219 to 916 lines (removed attemptResume, completeAndRelease)
-- MonitorEngine reduced from 974 to 750 lines (removed direct PID detection)
-- tick.ts added ~80 lines (initialize shared Manager modules, run Recovery on startup)
-
----
-
-## Label-Driven Skill Injection (v0.16.0)
-
-Worker expertise is injected via PM card labels, allowing customization of Worker behavior for different tasks without code changes.
-
-**Mechanism:**
-- Adding a `skill:xxx` label to a PM card -> automatically loads `~/.coral/profiles/xxx.md` into the Worker prompt
-- Multiple `skill:` labels can be stacked for combined injection
-- Projects can configure default skills via `DEFAULT_WORKER_SKILLS`; card labels override project defaults
-
-**Prompt assembly order:**
-1. Skill Profiles (skill templates)
-2. Project Rules (CLAUDE.md / AGENTS.md)
-3. Project Knowledge (docs/DECISIONS.md, docs/CHANGELOG.md)
-4. Task (.sps/task_prompt.txt)
-
-**Built-in skill templates:**
-
-| File | Purpose |
-|------|---------|
-| `~/.coral/profiles/_template.md` | Template for creating new skills |
-| `~/.coral/profiles/typescript.md` | TypeScript project coding standards |
-| `~/.coral/profiles/phaser.md` | Phaser game framework development guide |
-
-**Adding new skills requires zero code:** Simply create an md file in `~/.coral/profiles/` directory, then add the corresponding `skill:xxx` label to the PM card.
-
----
-
-## License
-
-MIT
+Full attribution: [`ATTRIBUTION.md`](./ATTRIBUTION.md).

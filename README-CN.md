@@ -1,1074 +1,536 @@
-# SPS CLI — AI 驱动的全自动开发流水线
+# SPS CLI — AI Agent 流水线编排器
 
-[![npm](https://img.shields.io/npm/v/@coralai/sps-cli)](https://www.npmjs.com/package/@coralai/sps-cli)
+[![npm](https://img.shields.io/npm/v/@coralai/sps-cli)](https://www.npmjs.com/package/@coralai/sps-cli) [![license](https://img.shields.io/npm/l/@coralai/sps-cli)](../../LICENSE)
 
-SPS（Smart Pipeline System）是一套 AI Agent 驱动的全自动开发流水线 CLI 工具。从任务卡片创建到代码合并，全程无人值守。
+> **English**：[README.md](./README.md)
 
-```
-创建卡片 → 启动 pipeline → AI 自动编码 → 自动合并到目标分支 → 通知完成
-```
+**v0.51.3**
+
+SPS（Smart Pipeline System）驱动 Claude Code worker 走完任务卡 — 写代码、commit、push、QA、合并，全自动。三种模式：
+
+| 模式 | 命令 | 适用场景 |
+|---|---|---|
+| **Harness** | `sps agent` | 零配置 — 与 Claude 一次性对话或多轮 chat。无需建项目、无需 PM。 |
+| **Pipeline** | `sps tick <project>` | 自动化 — 卡片按 YAML 走完 stage 直到 Done。 |
+| **Console** | `sps console` | Web UI — 看板、日志、worker、项目、聊天（v0.44+）。 |
+
+v0.51 头条特性是 **Wiki 知识库** — per-project 可选，结构化互链 page（modules / concepts / decisions / lessons / sources），自动注入 worker prompt 的 5 层检索结果。详见 [doc-28](../../docs/design/28-wiki-system.md) 和 [`ATTRIBUTION.md`](./ATTRIBUTION.md)。
+
+---
 
 ## 目录
 
-- [安装](#安装)
-- [前置条件](#前置条件)
-- [快速开始](#快速开始)
-- [状态机](#状态机)
+- [安装与初始化](#安装与初始化)
+- [Harness 模式（`sps agent`）](#harness-模式sps-agent)
+- [Console 模式（`sps console`）](#console-模式sps-console)
+- [Pipeline 模式（`sps tick`）](#pipeline-模式sps-tick)
+- [卡片生命周期](#卡片生命周期)
+- [Memory + Wiki](#memory--wiki)
+- [Skills](#skills)
 - [命令参考](#命令参考)
-  - [sps setup](#sps-setup)
-  - [sps project init](#sps-project-init)
-  - [sps doctor](#sps-doctor)
-  - [sps card add](#sps-card-add)
-  - [sps tick](#sps-tick)
-  - [sps scheduler tick](#sps-scheduler-tick)
-  - [sps pipeline tick](#sps-pipeline-tick)
-  - [sps worker](#sps-worker)
-  - [sps pm](#sps-pm)
-  - [sps qa tick](#sps-qa-tick)
-  - [sps monitor tick](#sps-monitor-tick)
-  - [sps stop](#sps-stop)
-  - [sps reset](#sps-reset)
-  - [sps logs](#sps-logs)
-- [Worker 规则文件](#worker-规则文件)
-- [项目配置](#项目配置)
-- [多项目并行](#多项目并行)
-- [架构概览](#架构概览)
-- [目录结构](#目录结构)
+- [项目配置（conf）](#项目配置conf)
+- [目录布局](#目录布局)
+- [架构](#架构)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
-## 安装
+## 安装与初始化
 
 ```bash
-npm install -g @coralai/sps-cli
+npm install -g @coralai/sps-cli      # 最新 0.51.x
+sps setup                            # 交互式向导（首次必跑）
 ```
 
-本地开发：
+`sps setup` 做的事：
+1. 创建 `~/.coral/` 目录树（`projects/`、`memory/{user,agents}/`）。
+2. 把 bundled skills 复制到 `~/.coral/skills/`。
+3. 询问 `GITLAB_URL` / `GITLAB_TOKEN` / `MATRIX_*`（可跳过），写到 `~/.coral/env`。
+4. 把 user skill symlink 到 `~/.claude/skills/`。
+5. 全局安装 `@agentclientprotocol/claude-agent-acp`。
 
-```bash
-cd coding-work-flow/workflow-cli
-npm run build
-# 或使用 tsx 直接运行
-npx tsx src/main.ts --help
-```
+`sps setup --force` 重跑（保留旧值作默认）。**升级 sps-cli 后必须跑 `sps skill sync --force`** 才能拉新版 skill SOP（默认 sync 是非破坏性的，不会覆盖已有 skill）。
 
-## 前置条件
-
-| 依赖 | 最低版本 | 说明 |
-|------|---------|------|
-| Node.js | 18+ | CLI 运行环境 |
-| git | 2.x | 分支与 worktree 管理 |
-| Claude Code CLI 或 Codex CLI | 最新 | AI Worker |
-| tmux | 3.x | 仅 `WORKER_MODE=interactive` 时需要 |
-
-## 快速开始
-
-```bash
-# 1. 全局环境初始化（首次使用，配置 GitLab/PM/通知凭据）
-sps setup
-
-# 2. 克隆业务仓库（前置条件）
-git clone git@gitlab.example.com:team/my-project.git ~/projects/my-project
-
-# 3. 初始化 SPS 项目管理目录
-sps project init my-project
-
-# 4. 编辑项目配置
-vim ~/.coral/projects/my-project/conf
-
-# 5. 健康检查 + 自动修复（生成 CLAUDE.md、AGENTS.md、初始化 state.json 等）
-sps doctor my-project --fix
-
-# 6.（可选）编辑 Worker 规则，加入项目特有的编码规范
-vim ~/projects/my-project/CLAUDE.md
-
-# 7. 创建任务卡片
-sps card add my-project "实现用户登录" "JWT 登录接口"
-sps card add my-project "实现订单系统" "CRUD API + 分页"
-
-# 8. 启动 pipeline（全自动，所有卡片完成后自动退出）
-sps tick my-project
-
-# 9.（可选）实时监控 Worker 运行状态
-sps worker dashboard
-```
+**前置条件**：Node ≥ 18；Anthropic API key（或 Claude Pro / Max 订阅）；`claude` CLI 在 PATH。
 
 ---
 
-## 状态机
+## Harness 模式（`sps agent`）
 
-每张任务卡片按以下状态机流转，全程由 SPS 自动驱动：
+直接和 Claude 对话，单次或多轮。无项目、无 PM、无 git。
 
-### MR_MODE=none（默认，推荐）
+```bash
+# 一次性
+sps agent "解释这个 repo"
+sps agent --output summary.md "总结架构"
 
-Worker 完成编码后直接合并到目标分支，跳过 MR/CI/QA 环节：
+# 多轮（daemon 后端，会话持久化）
+sps agent --chat                              # 交互 REPL
+sps agent --chat --name reviewer              # 命名会话，下次可继续
+sps agent status                              # 列活跃会话
+sps agent close --name reviewer
 
-```
-Planning → Backlog → Todo → Inprogress → Done
-```
+# Profile + 上下文文件
+sps agent --profile reviewer "审这个模块" --context src/auth.ts --context src/auth.test.ts
+sps agent --system "你是发布工程师" "规划 v0.52 切版"
 
-| 阶段 | 触发引擎 | 操作 |
-|------|---------|------|
-| Planning → Backlog | SchedulerEngine | 选卡入队，检查准入条件 |
-| Backlog → Todo | ExecutionEngine | 创建分支、创建 worktree、生成 `.sps/merge.sh` |
-| Todo → Inprogress | ExecutionEngine | 分配 Worker slot、构建任务上下文、启动 AI Worker |
-| Inprogress → Done | ExecutionEngine | 检测 Worker 完成（代码已合并到目标分支）、释放资源、清理 worktree |
-
-Worker 执行的最后一步是运行 `bash .sps/merge.sh`，该脚本自动将 feature branch rebase 并合并到目标分支。
-
-### MR_MODE=create（可选）
-
-Worker 完成编码后创建 MR，任务即完成。MR 审核由后续流程处理（待开发）：
-
-```
-Planning → Backlog → Todo → Inprogress → Done（MR 已创建）
+# Verbose
+sps agent --verbose "为什么构建失败"
 ```
 
-| 阶段 | 触发引擎 | 操作 |
-|------|---------|------|
-| Inprogress → Done | ExecutionEngine | 检测 Worker 完成（MR 已创建）、释放资源、清理 worktree |
+**`--profile <name>`**：查 `~/.coral/skills/dev-worker/references/<name>.md`，作为 system prompt 注入。（注意区别 `sps skill add` — 那是项目级 skill 链接。）
 
-### 辅助状态标签
+**Built-in agent**：仅 `claude`（Codex / Gemini 支持已在 v0.38 移除）。Worker 通过 ACP JSON-RPC over stdio 与 `claude-agent-acp` 通信。
 
-卡片可能被标记以下标签，表示需要特殊处理：
+**Agent skill 由 Claude Code 自己加载**：`~/.claude/skills/` 是 `claude` 自己扫的目录 — 含 `sps-pipeline`、`sps-memory`、`wiki-update`、以及 24 个 dev / persona skill。Skill description 触发懒加载，harness 模式不需要 SPS 主动注入。
 
-| 标签 | 含义 | 处理方式 |
-|------|------|---------|
-| `BLOCKED` | 被外部依赖阻塞 | 跳过，等待人工处理 |
-| `NEEDS-FIX` | Worker 失败或 CI 失败 | 自动修复或人工介入 |
-| `WAITING-CONFIRMATION` | Worker 等待破坏性操作确认 | 通知人工确认 |
-| `CONFLICT` | 合并冲突 | Worker 自动解冲突或人工处理 |
-| `STALE-RUNTIME` | Worker 运行时异常 | MonitorEngine 清理 |
+**Daemon cwd 注意**：`sps console` 和 `sps agent --chat` 启动 session daemon（`~/.coral/sessions/daemon.sock`），daemon 启动时捕获 `process.cwd()` 作为所有 chat worker 的默认工作目录。要切目录必须重启 daemon：`sps agent daemon stop && sps agent daemon start`，从目标目录发起。
+
+---
+
+## Console 模式（`sps console`）
+
+本机 web UI，打包进二进制。`~/.coral/console.lock` 单实例保证。
+
+```bash
+sps console                          # 打开 http://127.0.0.1:4311
+sps console --port 5000
+sps console --no-open                # 不自动开浏览器
+sps console --kill                   # 停止运行中的 console
+sps console --dev                    # vite dev 模式（开发用）
+```
+
+页面：
+
+| 路径 | 用途 |
+|---|---|
+| `/projects` | 项目列表 + 状态摘要 |
+| `/projects/new` | 新建项目（含 Wiki 开关，v0.51+） |
+| `/projects/<n>` | Pipeline 编辑器 + conf 编辑器 + 删除 |
+| `/board` | 看板（列内独立滚动，v0.51.1+） |
+| `/workers` | 跨项目聚合 worker 仪表板 |
+| `/logs` | 实时 SSE 日志查看器 |
+| `/skills` | User-level skill 管理 |
+| `/system` | 全局设置 + daemon 状态 |
+| `/chat` | Agent 聊天（多会话，持久化） |
+
+技术栈：Hono server on `127.0.0.1:4311`、chokidar 推 SSE 给 React 19 + Vite + Tailwind v4 + shadcn/ui 前端。设计系统：Pastel Neubrutalism，规范在 [`console/DESIGN.md`](./console/DESIGN.md)。
+
+---
+
+## Pipeline 模式（`sps tick`）
+
+全自动卡片驱动。**单 worker，单卡，串行**。每卡走 YAML 定义的若干 stage（如 `develop → review → Done`）；失败 → halt pipeline 直到你移除 `NEEDS-FIX` 标签。
+
+### 建项目
+
+```bash
+sps project init my-app
+# 或用 Console /projects/new — 表单含 Wiki 开关（v0.51+）
+```
+
+会问：项目目录、合并分支、最大 worker 数、ACK 超时、可选 GitLab 远程、可选 Matrix 房间。
+
+生成：
+
+```
+~/.coral/projects/my-app/
+├── conf                              # mode 600 — 当前活动配置
+├── conf.example                      # 字段全参考（自动生成）
+├── pipelines/
+│   ├── project.yaml                  # 默认 1-stage（develop → Done）
+│   └── sample.yaml.example           # YAML 完整带注释参考
+└── pipeline_order.json               # 当前 active pipeline 指针
+```
+
+在目标 repo（PROJECT_DIR）下：
+
+```
+.claude/CLAUDE.md                     # Worker 规则（自动安装）
+.claude/skills/                       # 从 ~/.coral/skills/ symlink
+.claude/settings.local.json           # Claude Code 本地配置
+wiki/                                 # 若 WIKI_ENABLED — 见 doc-28
+ATTRIBUTION.md                        # 若 WIKI_ENABLED
+```
+
+### 运行
+
+```bash
+sps tick my-app                      # 前台 tick 循环
+sps pipeline start my-app            # 别名
+sps pipeline stop my-app             # 优雅停（别名 sps stop my-app）
+sps stop --all                       # 停所有运行中的 tick
+sps status                           # 看所有项目
+```
+
+### Pipeline YAML
+
+`~/.coral/projects/<n>/pipelines/project.yaml` — stage 单一来源。
+
+```yaml
+mode: project
+git: true                            # false = 非代码项目，无 git 操作
+stages:
+  - name: develop
+    profile: fullstack
+    on_complete: "move_card Review"
+    on_fail: { action: "label NEEDS-FIX", halt: true }
+  - name: review
+    profile: reviewer
+    on_complete: "move_card Done"
+    on_fail: { action: "label REVIEW-FAILED", halt: true }
+```
+
+关键规则：
+1. `mode: project` 是状态机式 pipeline；`mode: steps` 是一次性脚本，用 `sps pipeline run <name>` 触发。
+2. 每个 stage 的 `on_complete` 必须指向**下一个** stage 的目标 state。
+3. 最后一个 stage `on_complete: "move_card Done"`。
+4. 别写 `agent:` 字段 — v0.38+ 起被静默忽略（Claude 是唯一 worker）。
+5. `trigger` 和 `card_state` 按 stage 位置自动推导。
+
+字段全集见 `~/.coral/projects/<n>/pipelines/sample.yaml.example`（自动生成，注释丰富）或 [doc-17](../../docs/design/17-pipeline-configuration-design.md)。
+
+---
+
+## 卡片生命周期
+
+```
+Planning → Backlog → Todo → Inprogress → [QA / Review] → Done
+                                  ↓ 失败
+                            NEEDS-FIX (halt)
+```
+
+默认状态（可在 YAML `pm.card_states` 自定义）。
+
+```bash
+sps card add <p> "标题" "描述"
+sps card add <p> "T" "D" --skills python,backend --labels feature
+
+sps card dashboard <p>               # CLI 表格
+                                     # console: /board?project=<n>
+
+sps card mark-started <p> <seq>     # 由 Claude Code UserPromptSubmit hook 调用
+sps card mark-complete <p> <seq>    # 由 Claude Code Stop hook 调用
+
+sps reset <p>                        # 重置非 Done 卡
+sps reset <p> --card 5,6,7
+sps reset <p> --all                  # 全重置含 Done + worktree + branch
+```
+
+### 卡片标签词典
+
+| 标签 | 含义 | 设置者 |
+|---|---|---|
+| `AI-PIPELINE` | 进入 pipeline 的必备标签 | 创建时由用户加 |
+| `STARTED-<stage>` | ACK 信号 — Claude 收到了 prompt | UserPromptSubmit hook |
+| `COMPLETED-<stage>` | Worker 完成了某 stage | Stop hook |
+| `CLAIMED` | StageEngine 占了 worker slot | Engine |
+| `NEEDS-FIX` | Worker 失败；pipeline halt | Engine |
+| `BLOCKED` | 外部依赖阻塞；pipeline 跳过 | 用户 |
+| `WAITING-CONFIRMATION` | Worker 等用户输入 | Engine |
+| `STALE-RUNTIME` | Inprogress 超时 | MonitorEngine |
+| `ACK-TIMEOUT` | Claude 在 `WORKER_ACK_TIMEOUT_S` 内没 ACK | MonitorEngine |
+| `skill:<name>` | 强制加载某 skill | 用户 |
+| `conflict:<domain>` | 同 domain 内串行 | 用户 |
+
+活动 stage 会在 `~/.coral/projects/<p>/runtime/worker-<slot>-current.json` 写 marker 文件（v0.50.21+），Stop hook 读它判断 worker 刚刚做完哪张卡。
+
+---
+
+## Memory + Wiki
+
+两套互补的持久化系统，都自动注入 worker prompt。
+
+| | **Memory** | **Wiki**（v0.51+） |
+|---|---|---|
+| 路径 | `~/.coral/memory/{user,agents,projects/<p>}/` | `<repo>/wiki/`（per-project，进 repo） |
+| 格式 | 平铺 markdown + YAML frontmatter | 5 类 page，zod 校验的 frontmatter |
+| 互链 | 无（平铺索引） | `[[type/Title]]` wikilink |
+| 自动注入 | prompt 的 `knowledge` 段 | `wikiContext` 段（5 层检索） |
+| 开关 | 默认开（`ENABLE_MEMORY=false` 关） | per-project（`WIKI_ENABLED=true` 开） |
+| 适合 | 个人偏好、零散决策、坑 | 结构化项目知识：modules、concepts、decisions、lessons |
+
+### Memory CLI
+
+```bash
+sps memory list <p>                            # 看项目 memory 索引
+sps memory list                                # 看全局 user + agents
+sps memory context <p> --card <seq>            # 预览注入内容
+
+sps memory add <p> --type convention --name "API 用 camelCase" \
+  --description "REST 接口用 camelCase" --body "..."
+```
+
+类型：`convention`（不衰减）、`decision`（缓慢衰减）、`lesson`（30 天衰减）、`reference`（不衰减）。
+
+### Wiki CLI（`WIKI_ENABLED=true` 时）
+
+```bash
+sps wiki init <p>                              # scaffold wiki/（开了 toggle 时建项目自动跑）
+sps wiki update <p>                            # 看 source diff
+sps wiki update <p> --finalize                 # worker 写完 page 后刷新 manifest
+sps wiki check <p>                             # lint：orphan / dead-link / fm-gap / stale
+sps wiki list <p> --type lesson --tag pipeline
+sps wiki get <p> lessons/Stop-Hook-Race
+sps wiki status <p>                            # source ↔ manifest ↔ pages 差异
+sps wiki add <p> ~/notes.md --category transcripts
+sps wiki read <p> "<query>"                    # 预览 5 层检索
+```
+
+5 层检索：hot.md / index 节选 / pinned / skill-tag / BM25F keyword。类型优先级：lesson = 3、decision = 3、concept = 2、module = 1、source = 1。Token 预算硬上限 ~2000。
+
+Worker SOP：[`skills/wiki-update/SKILL.md`](./skills/wiki-update/SKILL.md)（300 行，单一来源）。
+
+---
+
+## Skills
+
+User-level skill 在 `~/.coral/skills/`（28 个 bundled，`sps setup` 时从 npm 包拷贝）。Symlink 到 `~/.claude/skills/`，Claude Code 自动加载。
+
+```bash
+sps skill list                                 # 列可用 + 项目链接状态
+sps skill add <name> --project <p>             # symlink 到 <repo>/.claude/skills/
+sps skill remove <name> --project <p>
+sps skill freeze <name> --project <p>          # symlink → 真实副本（项目可定制）
+sps skill unfreeze <name> --project <p>        # 改回 symlink
+sps skill sync                                 # ① bundled (npm 包) → ~/.coral/skills/
+                                               # ② ~/.coral/skills/ → ~/.claude/skills/
+sps skill sync --force                         # ⭐ 覆盖已存在的 user skill（升级 sps-cli 后用）
+```
+
+Bundled skill 列表（v0.51.3）：
+
+- **开发类（23 个）**：`frontend`、`frontend-developer`、`backend`、`backend-architect`、`typescript`、`golang`、`rust`、`python`、`java`、`kotlin`、`swift`、`mobile`、`database`、`database-optimizer`、`qa-tester`、`security-engineer`、`architecture-decision-records`、`coding-standards`、`debugging-workflow`、`devops`、`devops-automator`、`git-workflow`、`code-reviewer`
+- **Worker profile（3 个）**：`dev-worker`、`tax-worker`、`reviewer`（通过 `--profile` 引用）
+- **SPS 专用（5 个）**：`sps-pipeline`、`sps-memory`、`wiki-update`
 
 ---
 
 ## 命令参考
 
-### 全局选项
-
-所有命令均支持：
-
-| 选项 | 说明 |
-|------|------|
-| `--json` | 输出结构化 JSON（供脚本/cron 消费） |
-| `--dry-run` | 预览操作，不实际执行 |
-| `--help` | 显示帮助 |
-| `--version` | 显示版本号 |
-
-### 退出码
-
-| 退出码 | 含义 |
-|-------|------|
-| `0` | 成功 |
-| `1` | 业务失败 / 校验失败 |
-| `2` | 参数错误 |
-| `3` | 外部依赖不可用（GitLab / PM / Worker） |
-
----
-
-### sps setup
-
-全局环境初始化向导，配置各外部系统凭据。
-
 ```bash
+# Setup & 项目
 sps setup [--force]
-```
-
-**交互式配置项：**
-
-- GitLab：`GITLAB_URL`、`GITLAB_TOKEN`、`GITLAB_SSH_HOST`、`GITLAB_SSH_PORT`
-- Plane：`PLANE_URL`、`PLANE_API_KEY`、`PLANE_WORKSPACE_SLUG`
-- Trello：`TRELLO_API_KEY`、`TRELLO_TOKEN`
-- Matrix：`MATRIX_HOMESERVER`、`MATRIX_TOKEN`、`MATRIX_ROOM_ID`
-
-凭据写入 `~/.coral/env`（权限 0600），所有项目共享。
-
-| 选项 | 说明 |
-|------|------|
-| `--force` | 覆盖已有的 `~/.coral/env` |
-
----
-
-### sps project init
-
-初始化 SPS 项目管理目录。
-
-```bash
-sps project init <project> [--force]
-```
-
-**创建的目录结构：**
-
-```
-~/.coral/projects/<project>/
-├── conf                    # 项目配置文件（从模板生成）
-├── logs/                   # 日志目录
-├── pm_meta/                # PM 元数据缓存
-├── runtime/                # 运行时状态
-├── pipeline_order.json     # 卡片执行顺序
-├── batch_scheduler.sh      # cron 兼容入口脚本
-└── deploy.sh               # 部署脚本模板
-```
-
-| 选项 | 说明 |
-|------|------|
-| `--force` | 覆盖模板文件（conf 不会被覆盖） |
-
-**示例：**
-
-```bash
-sps project init accounting-agent
-# → 生成 ~/.coral/projects/accounting-agent/
-# → 下一步：编辑 conf 填入配置值
-```
-
----
-
-### sps doctor
-
-项目健康检查与自动修复。
-
-```bash
-sps doctor <project> [--fix] [--json] [--skip-remote]
-```
-
-等价于 `sps project doctor <project>`。
-
-**检查项：**
-
-| 检查项 | 说明 | --fix |
-|-------|------|-------|
-| global-env | `~/.coral/env` 是否存在 | — |
-| global-env-vars | GITLAB_URL / GITLAB_TOKEN 是否已加载 | — |
-| conf-load | 配置文件是否可加载 | — |
-| conf-fields | 必填字段是否完整 | — |
-| instance-dir / logs-dir / runtime-dir / pm-meta-dir | 目录结构 | 创建缺失目录 |
-| repo-dir | 业务仓库是否存在且为 git 仓库 | — |
-| gitignore-sps | `.sps/` 是否在 .gitignore 中 | 追加 |
-| worker-rules | CLAUDE.md / AGENTS.md 是否存在于仓库根目录 | 生成并提交（含 .gitignore） |
-| skill-profiles | DEFAULT_WORKER_SKILLS 指定的 profile 文件是否存在 | — |
-| state-json | 运行时状态文件是否有效 | 初始化 |
-| pipeline-order | 执行顺序文件是否存在 | 创建空 |
-| conf-cli-fields | CLI 所需的 Provider 字段映射是否完整（仅 Plane） | 追加映射 |
-| gitlab | GitLab API 连通性 | — |
-| plane | Plane API 连通性（仅 PM_TOOL=plane） | — |
-| pm-states / pm-lists | PM 状态/列表 UUID 是否有效 | 自动创建 + 写入 conf |
-| worker-tool | Claude Code / Codex CLI 是否在 PATH 中 | — |
-| tmux | tmux 是否可用（仅 WORKER_MODE=interactive） | — |
-
-| 选项 | 说明 |
-|------|------|
-| `--fix` | 自动修复可修复的问题（创建目录、生成文件、初始化状态） |
-| `--json` | 输出 JSON 格式的检查结果 |
-| `--skip-remote` | 跳过远程连通性检查（GitLab/Plane） |
-
-**示例：**
-
-```bash
-# 检查 + 自动修复
-sps doctor my-project --fix
-#   ✓ global-env        /home/user/.coral/env
-#   ✓ global-env-vars   GITLAB_URL and GITLAB_TOKEN set
-#   ✓ conf-load         Loaded ~/.coral/projects/my-project/conf
-#   ✓ conf-fields       All required fields present
-#   ✓ repo-dir          /home/user/projects/my-project
-#   ✓ gitignore-sps     .sps/ in .gitignore
-#   ✓ worker-rules      Generated and committed: CLAUDE.md, AGENTS.md
-#   ✓ skill-profiles    DEFAULT_WORKER_SKILLS="senior" — all profiles found
-#   ✓ state-json        Initialized with 3 worker slots
-#   - tmux              Not required (WORKER_MODE=print)
-
-# JSON 输出
-sps doctor my-project --json
-```
-
----
-
-### sps card add
-
-创建任务卡片。
-
-```bash
-sps card add <project> "<title>" ["description"]
-```
-
-卡片创建在 Planning 状态，自动添加 `AI-PIPELINE` 标签，并追加到 `pipeline_order.json` 中。
-
-创建后需要打一个 `skill:` 标签，指定 Worker 的专业技能（见下方标签说明）。
-
-| 选项 | 说明 |
-|------|------|
-| `--json` | 输出 JSON 格式的创建结果 |
-
-**示例：**
-
-```bash
-# 创建卡片 + 打 skill 标签
-sps card add my-project "实现用户登录" "使用 JWT 的认证接口"
-sps pm addLabel my-project 1 "skill:backend"
-
-sps card add my-project "实现订单列表" "CRUD API + 分页查询"
-sps pm addLabel my-project 2 "skill:backend"
-
-sps card add my-project "写 API 文档" "用户和订单接口文档"
-sps pm addLabel my-project 3 "skill:writer"
-```
-
-#### Skill 标签
-
-每张卡片打 **一个** `skill:` 标签，Pipeline 自动加载对应的 Worker skill profile 注入 prompt：
-
-| 标签 | Worker 角色 | 交付物 |
-|------|------------|--------|
-| `skill:architect` | 架构设计 | ADR、设计文档、目录结构 |
-| `skill:frontend` | 前端开发 | 组件、页面、前端测试 |
-| `skill:backend` | 后端开发 | API、DB migration、后端测试 |
-| `skill:fullstack` | 全栈开发 | 前后端 + DB 一体化 |
-| `skill:prototyper` | 快速原型 | 可运行的 MVP |
-| `skill:reviewer` | 代码审查 | Review 报告 + 修复 commit |
-| `skill:security` | 安全审计 | 审计报告 + 漏洞修复 |
-| `skill:writer` | 技术文档 | README、API 文档、PRD |
-| `skill:optimizer` | 性能优化 | Benchmark 报告 + 优化 commit |
-| `skill:senior` | 通用（兜底） | 高质量通用实现 |
-
-Profile 文件位于 `~/.coral/profiles/<name>.md`。无标签时 fallback 到项目 conf 中的 `DEFAULT_WORKER_SKILLS`。
-
----
-
-### sps tick
-
-统一主循环——编排全部引擎，依次执行 scheduler → qa → pipeline → monitor。
-
-```bash
-sps tick <project> [project2] [project3] ... [--json] [--dry-run]
-```
-
-**执行顺序（每轮 tick）：**
-
-1. **scheduler tick** — Planning → Backlog（选卡入队）
-2. **qa tick** — QA → merge → Done（优先释放 Worker slot）
-3. **pipeline tick** — Backlog → Todo → Inprogress（准备环境 + 启动 Worker）
-4. **monitor tick** — 异常巡检与对齐
-
-**运行模式：**
-
-| 模式 | 行为 |
-|------|------|
-| 持续模式（默认） | 每 30 秒循环一次，所有卡片完成后自动退出 |
-
-**并发互斥：**
-
-同一项目同一时刻只允许一个 `tick` 实例运行。通过 `runtime/tick.lock`（PID + 时间戳）实现互斥，超过 `TICK_LOCK_TIMEOUT_MINUTES`（默认 30 分钟）视为死锁可强制接管。
-
-**失败分类：**
-
-| 类型 | 行为 | 示例 |
-|------|------|------|
-| 致命失败 | 短路整个 tick | conf 损坏、PM 不可用 |
-| 降级继续 | 后续步骤有限运行 | scheduler 失败 → pipeline 不启动新卡 |
-| 非关键失败 | 记录后继续 | 通知发送失败 |
-
-| 选项 | 说明 |
-|------|------|
-| `--once` | 单次执行后退出 |
-| `--json` | 输出 JSON 格式的聚合结果 |
-| `--dry-run` | 预览操作，不实际执行 |
-
-**示例：**
-
-```bash
-# 单项目持续运行
-sps tick my-project
-
-# 多项目同时管理
-sps tick project-a project-b project-c
-
-# JSON 输出（适合 cron）
-sps tick my-project --json
-
-# 预览模式
-sps tick my-project --dry-run
-```
-
-**JSON 输出格式：**
-
-```json
-{
-  "project": "my-project",
-  "component": "tick",
-  "status": "ok",
-  "exitCode": 0,
-  "steps": [
-    { "step": "scheduler", "status": "ok", "actions": [...] },
-    { "step": "qa", "status": "ok", "actions": [...] },
-    { "step": "pipeline", "status": "ok", "actions": [...] },
-    { "step": "monitor", "status": "ok", "checks": [...] }
-  ]
-}
-```
-
----
-
-### sps scheduler tick
-
-手动执行编排步骤：Planning → Backlog。
-
-```bash
-sps scheduler tick <project> [--json] [--dry-run]
-```
-
-- 读取 `pipeline_order.json` 确定卡片优先级
-- 检查准入条件（Worker 可用性、冲突域等）
-- 将符合条件的卡片从 Planning 推入 Backlog
-
-**示例：**
-
-```bash
-sps scheduler tick my-project
-sps scheduler tick my-project --dry-run
-```
-
----
-
-### sps pipeline tick
-
-手动执行执行链：Backlog → Todo → Inprogress。
-
-```bash
-sps pipeline tick <project> [--json] [--dry-run]
-```
-
-**内部步骤：**
-
-1. **检查 Inprogress 卡片** — 检测 Worker 完成状态，MR_MODE=none 直接推入 Done，MR_MODE=create 确认 MR 后推入 Done
-2. **处理 Backlog 卡片** — 创建分支 + 创建 worktree + 生成 `.sps/merge.sh` → 推入 Todo
-3. **处理 Todo 卡片** — 分配 Worker slot + 构建任务上下文 + 启动 Worker → 推入 Inprogress
-
-受 `MAX_ACTIONS_PER_TICK` 限制（默认 1），防止单轮 tick 同时启动过多 Worker。多个 Worker 启动之间有间隔（print 模式 2 秒，interactive 模式 10 秒）。
-
-带有 `BLOCKED`、`NEEDS-FIX`、`CONFLICT`、`WAITING-CONFIRMATION`、`STALE-RUNTIME` 标签的卡片会被跳过。
-
-**示例：**
-
-```bash
-sps pipeline tick my-project
-sps pipeline tick my-project --json
-```
-
----
-
-### sps worker
-
-Worker 生命周期管理。
-
-#### sps worker launch
-
-手动启动单个 Worker。
-
-```bash
-sps worker launch <project> <seq> [--json] [--dry-run]
-```
-
-如果卡片在 Backlog 状态，会自动先执行 prepare（创建分支 + worktree），然后启动 Worker。
-
-**启动流程：**
-
-1. 分配空闲 Worker slot
-2. 写入 `.sps/task_prompt.txt` 到 worktree
-3. 启动 Worker 进程
-4. 卡片推入 Inprogress
-
-**Worker 执行模式（`WORKER_MODE`）：**
-
-| 模式 | 默认 | 说明 |
-|------|------|------|
-| `print` | **是** | 一次性执行，进程退出 = 任务完成，不依赖 tmux |
-| `interactive` | 否 | 传统 tmux TUI 交互模式（降级方案） |
-
-**Print 模式（推荐）：**
-
-Worker 以子进程方式运行，prompt 通过 stdin 传入，输出写入 JSONL 文件：
-
-```
-Claude:  claude -p --output-format stream-json --dangerously-skip-permissions
-Codex:   codex exec - --json --dangerously-bypass-approvals-and-sandbox
-```
-
-核心优势：
-- **不会卡住** — 无 TUI 交互，进程退出即完成
-- **不需要确认** — 权限参数跳过所有确认弹窗
-- **上下文延续** — 通过 `--resume <sessionId>` 实现跨任务上下文复用（命中 prompt cache，节省 token）
-- **不依赖 tmux** — 纯进程管理，适合 CI/CD 环境
-
-**Session Resume 链：**
-
-同一 worktree 上的多次任务（初始实现 → CI 修复 → 冲突解决）共享同一个 session：
-
-```
-任务1: claude -p "实现功能"              → session_id_1（存入 state.json）
-CI修复: claude -p "修复CI" --resume sid  → 继承任务1的完整上下文
-冲突:   claude -p "解冲突" --resume sid  → 继承所有历史上下文
-```
-
-**Interactive 模式（降级方案）：**
-
-设置 `WORKER_MODE=interactive` 回退到 tmux 交互模式。此模式下复用策略：
-
-| 场景 | 行为 |
-|------|------|
-| Session 存在 + Claude 运行中 | 复用：`/clear` + `cd worktree` |
-| Session 存在 + Claude 未运行 | 复用 session：`cd` + 启动 Claude |
-| 无 session | 创建新 session + 启动 Claude |
-
-**示例：**
-
-```bash
-sps worker launch my-project 24
-sps worker launch my-project 24 --dry-run
-```
-
-#### sps worker dashboard
-
-实时监控所有 Worker 运行状态的仪表盘。
-
-```bash
-sps worker dashboard [project1] [project2] ... [--once] [--json]
-```
-
-| 选项 | 说明 |
-|------|------|
-| （无参数） | 自动发现 `~/.coral/projects/` 下所有项目 |
-| `--once` | 输出一次快照后退出（不进入实时模式） |
-| `--json` | 输出 JSON 格式（所有项目、所有 Worker slot 状态 + 输出预览） |
-
-**实时模式：**
-
-- 默认每 3 秒刷新（可通过 `SPS_DASHBOARD_INTERVAL` 环境变量调整）
-- 按 `q` 退出，按 `r` 强制刷新
-- 使用 alternate screen buffer（不污染终端 scrollback）
-- 自适应网格布局，每个 Worker 一个面板
-- Print 模式面板显示：PID、exit code、JSONL 渲染后的可读输出
-- Interactive 模式面板显示：tmux pane 实时输出
-
-**示例：**
-
-```bash
-# 监控所有项目
-sps worker dashboard
-
-# 监控指定项目
-sps worker dashboard my-project
-
-# 单次快照
-sps worker dashboard --once
-
-# JSON 输出（供脚本消费）
-sps worker dashboard --json
-
-# 自定义刷新间隔
-SPS_DASHBOARD_INTERVAL=5000 sps worker dashboard
-```
-
----
-
-### sps pm
-
-PM 后端操作。
-
-#### sps pm scan
-
-查看卡片列表。
-
-```bash
-sps pm scan <project> [state]
-```
-
-不指定 `state` 时列出所有卡片。
-
-**示例：**
-
-```bash
-# 查看所有卡片
-sps pm scan my-project
-
-# 按状态筛选
-sps pm scan my-project Inprogress
-sps pm scan my-project Planning
-```
-
-#### sps pm move
-
-手动移动卡片状态。
-
-```bash
-sps pm move <project> <seq> <state>
-```
-
-**示例：**
-
-```bash
-sps pm move my-project 24 QA
-sps pm move my-project 25 Done
-```
-
-#### sps pm comment
-
-给卡片添加评论。
-
-```bash
-sps pm comment <project> <seq> "<text>"
-```
-
-**示例：**
-
-```bash
-sps pm comment my-project 24 "CI 已通过，等待 review"
-```
-
-#### sps pm checklist
-
-管理卡片的检查清单。
-
-```bash
-# 创建清单
-sps pm checklist create <project> <seq> "item1" "item2" "item3"
-
-# 查看清单
-sps pm checklist list <project> <seq>
-
-# 勾选/取消勾选
-sps pm checklist check <project> <seq> <item-id>
-sps pm checklist uncheck <project> <seq> <item-id>
-```
-
-**示例：**
-
-```bash
-sps pm checklist create my-project 24 "单元测试" "集成测试" "代码审查"
-sps pm checklist list my-project 24
-sps pm checklist check my-project 24 item-001
-```
-
----
-
-### sps qa tick
-
-QA 闭环与 worktree 清理。
-
-```bash
-sps qa tick <project> [--json]
-```
-
-**MR_MODE=none 时：** QA 阶段主要负责 worktree 清理。Worker 完成后由 ExecutionEngine 直接推入 Done。
-
-**MR_MODE=create 时：** QA 作为遗留兼容路径，处理到达 QA 状态的卡片（自动创建 MR 或标记 `NEEDS-FIX`）。
-
-**Worktree 自动清理：**
-
-每轮 qa tick 结束后，自动处理 `state.worktreeCleanup` 队列中的待清理项：
-
-1. `git worktree remove --force <path>` — 删除 worktree 目录
-2. `git branch -d <branch>` — 删除已合并的本地分支
-3. `git worktree prune` — 清理残留引用
-
-清理失败的条目保留在队列中，下轮 tick 自动重试。
-
-**示例：**
-
-```bash
-sps qa tick my-project
-sps qa tick my-project --json
-```
-
----
-
-### sps monitor tick
-
-手动执行异常检测与健康巡检。
-
-```bash
-sps monitor tick <project> [--json]
-```
-
-**巡检项：**
-
-| 检查 | 说明 |
-|------|------|
-| 孤儿 slot 清理 | 进程/tmux session 已死但 slot 仍标记 active |
-| 超时检测 | Inprogress 超过 `INPROGRESS_TIMEOUT_HOURS` |
-| 等待确认检测 | Worker 等待用户确认（仅 interactive 模式；print 模式无确认） |
-| 阻塞检测 | Worker 遇到 error/fatal/stuck 等（仅 interactive 模式） |
-| 状态对齐 | PM 状态与 runtime 状态是否一致 |
-
-**示例：**
-
-```bash
-sps monitor tick my-project
-sps monitor tick my-project --json
-```
-
----
-
-### sps stop
-
-停止运行中的 tick 进程。
-
-```bash
-sps stop <project>    # 停止指定项目
-sps stop --all        # 停止所有运行中的 tick
-```
-
----
-
-### sps reset
-
-重置卡片状态，准备重新执行。一键完成 5 步清理：停 tick、清 state、清 worktree+branch、移卡回 Planning、报告。
-
-```bash
-sps reset <project>              # 重置所有未完成的卡片（Done 保留）
-sps reset <project> --all        # 重置全部卡片（包括 Done）
-sps reset <project> --card 5     # 重置指定卡片
-sps reset <project> --card 5,6,7 # 重置多张卡片
-```
-
-版本升级后重新测试的典型流程：
-
-```bash
-npm i -g @coralai/sps-cli    # 升级
-sps reset my-project          # 一键清理
-sps tick my-project           # 重新跑
-```
-
----
-
-### sps logs
-
-实时日志查看器。
-
-```bash
-sps logs [project]                    # 跟踪 pipeline 日志
-sps logs <project> --err              # 跟踪 error 日志
-sps logs <project> --lines 50         # 显示最近 50 行
-sps logs <project> --no-follow        # 打印后退出
-```
-
----
-
-## Worker 规则文件
-
-`sps doctor --fix` 会根据 `WORKER_TOOL` 配置在业务仓库根目录生成规则文件并自动提交：
-
-| 文件 | 用途 | 要求 | 提交到 git |
-|------|------|------|-----------|
-| `CLAUDE.md` | Claude Code Worker 的项目规则 | `WORKER_TOOL=claude` 时必需 | 是 |
-| `AGENTS.md` | Codex Worker 的项目规则 | `WORKER_TOOL=codex` 时必需 | 是 |
-| `.sps/development_prompt.txt` | Development 阶段提示词（调试存档） | 自动生成 | 否（.gitignore） |
-| `.sps/integration_prompt.txt` | Integration 阶段提示词（调试存档） | 自动生成 | 否（.gitignore） |
-| `docs/DECISIONS.md` | 项目知识库——架构决策和技术选择 | — | 是（Worker 自动维护） |
-| `docs/CHANGELOG.md` | 项目知识库——变更记录 | — | 是（Worker 自动维护） |
-
-> **注意（v0.25.0+）：** 提示词在内存中生成，通过 stdin 传递给 worker。`.sps/` 下的文件仅为调试存档，缺失不影响流程。
-
-**Skill Profile 注入（v0.16+）：**
-
-| 文件 | 用途 |
-|------|------|
-| `~/.coral/profiles/<name>.md` | 通过 `skill:<name>` 标签加载到 Worker prompt |
-
-Prompt 组装顺序：Skill Profile → CLAUDE.md/AGENTS.md → DECISIONS.md/CHANGELOG.md → 任务描述
-
-### 工作原理
-
-1. `CLAUDE.md` 和 `AGENTS.md` 提交到仓库主分支
-2. 创建 git worktree 时自动继承这些文件
-3. Worker 启动时读取 CLAUDE.md 了解项目规则（interactive 模式自动发现；print 模式在 cwd 中自动加载）
-4. 任务特有信息（seq、分支名、描述）写入 `.sps/task_prompt.txt`，通过 stdin 传给 Worker（print 模式）或通过 tmux paste 传入（interactive 模式）
-5. `.sps/merge.sh` 在每个 worktree 中自动生成，Worker 在 push 后运行此脚本完成合并或 MR 创建
-
-### 项目知识库
-
-每个 Worker 在任务 prompt 中被要求：
-
-- **开始前**：阅读 `docs/DECISIONS.md` 和 `docs/CHANGELOG.md`，了解前序任务的决策和变更
-- **完成后**：将自己的架构决策追加到 `docs/DECISIONS.md`，变更摘要追加到 `docs/CHANGELOG.md`
-
-这些文件随代码一起合并到目标分支，下一个 Worker 创建 worktree 时自动继承，实现跨任务的知识传递。
-
-### 自定义项目规则
-
-生成的 CLAUDE.md 包含"Project-Specific Rules"占位区，你可以在此添加：
-
-```markdown
-## Project-Specific Rules
-- 语言：TypeScript strict mode
-- 测试框架：vitest，覆盖率 80%+
-- 架构：src/modules/<domain>/ 目录结构
-- Linting：eslint + prettier，提交前必须通过
-```
-
-SPS 不会覆盖已存在的 CLAUDE.md / AGENTS.md。
-
----
-
-## 项目配置
-
-配置分两层：
-
-| 文件 | 作用域 | 说明 |
-|------|-------|------|
-| `~/.coral/env` | 全局 | 所有项目共享的凭据（GitLab token、PM API key 等） |
-| `~/.coral/projects/<project>/conf` | 项目级 | 项目特有配置（仓库、分支、Worker 参数等） |
-
-项目 conf 可以引用全局变量（如 `${PLANE_URL}`）。
-
-### 配置字段一览
-
-#### 项目基础
-
-| 字段 | 必填 | 默认值 | 说明 |
-|------|------|-------|------|
-| `PROJECT_NAME` | 是 | — | 项目名称 |
-| `PROJECT_DIR` | 否 | `~/projects/<project>` | 业务仓库路径 |
-
-#### GitLab
-
-| 字段 | 必填 | 默认值 | 说明 |
-|------|------|-------|------|
-| `GITLAB_PROJECT` | 是 | — | GitLab 项目路径（如 `group/repo`） |
-| `GITLAB_PROJECT_ID` | 是 | — | GitLab 项目数字 ID |
-| `GITLAB_MERGE_BRANCH` | 是 | `develop` | MR 目标分支 |
-
-#### PM 后端
-
-| 字段 | 必填 | 默认值 | 说明 |
-|------|------|-------|------|
-| `PM_TOOL` | 否 | `trello` | PM 后端类型：`plane` / `trello` / `markdown` |
-| `PIPELINE_LABEL` | 否 | `AI-PIPELINE` | Pipeline 卡片标签 |
-| `MR_MODE` | 否 | `none` | 合并模式：`none`（直接合并到目标分支） / `create`（创建 MR，审核流程待开发） |
-
-#### Worker
-
-| 字段 | 必填 | 默认值 | 说明 |
-|------|------|-------|------|
-| `WORKER_TOOL` | 否 | `claude` | Worker 类型：`claude` / `codex` |
-| `WORKER_TRANSPORT` | 否 | `acp-sdk` | Worker 传输方式：`acp-sdk`（ACP JSON-RPC，默认）/ `proc`（一次性进程降级） |
-| `MAX_CONCURRENT_WORKERS` | 否 | `3` | 最大并行 Worker 数 |
-| `WORKER_RESTART_LIMIT` | 否 | `2` | Worker 死亡后最大重启次数 |
-| `MAX_ACTIONS_PER_TICK` | 否 | `1` | 每轮 tick 最大操作数 |
-
-#### 超时与策略
-
-| 字段 | 必填 | 默认值 | 说明 |
-|------|------|-------|------|
-| `INPROGRESS_TIMEOUT_HOURS` | 否 | `8` | Inprogress 超时小时数 |
-| `MONITOR_AUTO_QA` | 否 | `false` | Monitor 是否自动将完成的卡推入 QA |
-| `CONFLICT_DEFAULT` | 否 | `serial` | 冲突域默认策略：`serial` / `parallel` |
-| `TICK_LOCK_TIMEOUT_MINUTES` | 否 | `30` | tick 锁超时分钟数 |
-
-#### 路径
-
-| 字段 | 必填 | 默认值 | 说明 |
-|------|------|-------|------|
-| `WORKTREE_DIR` | 否 | `~/.coral/worktrees/` | worktree 根目录 |
-
-### 配置示例
-
-```bash
-# ~/.coral/projects/my-project/conf
-
-PROJECT_NAME="my-project"
-PROJECT_DIR="/home/user/projects/my-project"
-
-# GitLab
-GITLAB_PROJECT="team/my-project"
-GITLAB_PROJECT_ID="42"
-GITLAB_MERGE_BRANCH="develop"
-
-# PM（使用全局 .coral/env 中的变量）
-PM_TOOL="plane"
-PLANE_API_URL="${PLANE_URL}"
-PLANE_PROJECT_ID="project-uuid-here"
+sps project init <name>
+sps project doctor <name> [--fix] [--json] [--reset-state] [--skip-remote]
+sps doctor <name> --fix              # 别名
+
+# Pipeline
+sps tick <project> [--json]
+sps pipeline start|stop|status|reset|workers|board|card|logs|list|run|use [project] [args]
+sps pipeline run <name> "<prompt>"   # 用于 mode: steps pipeline
+sps pipeline tick <project>          # 单次 StageEngine pass
+sps scheduler tick <project>         # Planning → Backlog 提升
+sps qa tick <project>                # QA → Done 收尾
+sps monitor tick <project>           # 健康探测（ACK timeout、stale）
+sps pm scan <project>                # 从磁盘重建卡片索引
+
+# 卡片
+sps card add <p> "title" ["description"] [--skills a,b] [--labels x,y]
+sps card dashboard <p>
+sps card mark-started <p> [seq] [--stage <name>]
+sps card mark-complete <p> <seq> [--stage <name>]
 
 # Worker
-WORKER_TOOL="claude"
-MAX_CONCURRENT_WORKERS=3
-MAX_ACTIONS_PER_TICK=1
+sps worker ps <project>
+sps worker dashboard <project>
+sps worker kill <project> <seq>
+sps worker launch <project> <seq>
 
-# 合并模式
-MR_MODE="none"                   # none（直接合并）或 create（创建 MR）
+# 状态 / 日志
+sps status [--json]
+sps stop <project> [--all]
+sps reset <project> [--all] [--card N,N,N]
+sps logs [project] [--err] [--lines N] [--no-follow]
+
+# Memory
+sps memory list [project] [--agent <id>]
+sps memory context <project> [--card <seq>] [--agent <id>]
+sps memory add <project> --type <T> --name "title" [--body "content"]
+
+# Wiki（v0.51+）
+sps wiki init <p>
+sps wiki update <p> [--finalize] [--json]
+sps wiki read <p> "<query>" [--skills a,b] [--pinned id1,id2] [--budget N]
+sps wiki check <p> [--json] [--fix]
+sps wiki add <p> <file> [--category <name>] [--no-ingest]
+sps wiki list <p> [--type T] [--tag T] [--json]
+sps wiki get <p> <pageId> [--json]
+sps wiki status <p> [--json]
+
+# Skill
+sps skill list [--project <p>]
+sps skill add <name> [--project <p>]
+sps skill remove <name> [--project <p>]
+sps skill freeze <name> [--project <p>]
+sps skill unfreeze <name> [--project <p>]
+sps skill sync [--force]
+
+# Console
+sps console [--port N] [--host H] [--no-open] [--dev] [--kill]
+
+# Agent
+sps agent "<prompt>" [--profile <p>] [--system "..."] [--context file] [--output file] [--verbose]
+sps agent --chat [--name <session>]
+sps agent status|close|list|add [args]
+sps agent daemon start|stop|status
+
+# Hook（由 Claude Code 调用，不是用户）
+sps hook stop
+sps hook user-prompt-submit
+
+# ACP 控制（高级 debug 用）
+sps acp <ensure|run|prompt|status|stop|pending|respond> <project> [args]
+```
+
+任何命令后加 `--help` 看具体用法；支持的命令加 `--json` 输出结构化结果。
+
+---
+
+## 项目配置（conf）
+
+文件位置 `~/.coral/projects/<name>/conf`（shell `export VAR="value"` 语法，mode 600）。完整字段参考自动生成在 `~/.coral/projects/<name>/conf.example`。
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `PROJECT_NAME` | （必填） | 内部 id |
+| `PROJECT_DIR` | （必填） | repo 绝对路径 |
+| `GITLAB_PROJECT` | — | `user/repo`（可选，用 GitLab API 时必填） |
+| `GITLAB_PROJECT_ID` | — | 数字 ID（GitLab 才需，按路径首次 MR 时自动解析） |
+| `GITLAB_MERGE_BRANCH` | `main` | Worker push 的目标分支 |
+| `PM_TOOL` | `markdown` | **v0.42 起只支持 `markdown`**。卡片在 `~/.coral/projects/<n>/cards/<state>/<seq>.md` |
+| `PIPELINE_LABEL` | `AI-PIPELINE` | 卡片进入 pipeline 必备标签 |
+| `MR_MODE` | `none` | `none`（直接 push）/ `create`（开 MR，需要 `GITLAB_PROJECT_ID`） |
+| `WORKER_TRANSPORT` | `acp-sdk` | 固定，不要改 |
+| `MAX_CONCURRENT_WORKERS` | `1` | Slot 数；同一项目内卡仍是串行 |
+| `MAX_ACTIONS_PER_TICK` | `3` | 单次 tick 可领多少新任务 |
+| `INPROGRESS_TIMEOUT_HOURS` | `2` | 超时后 MonitorEngine 标 STALE-RUNTIME |
+| `WORKER_ACK_TIMEOUT_S` | `300` | 派发后等 STARTED-<stage> 标签的最长时间（v0.50.24 提到 5min） |
+| `WORKER_ACK_MAX_RETRIES` | `1` | ACK 超时后最多重试次数 |
+| `MONITOR_AUTO_QA` | `true` | 检测到 stale runtime 时自动迁到 QA |
+| `CONFLICT_DEFAULT` | `serial` | 卡上无 `conflict:` 标签时的兜底策略 |
+| `MATRIX_ROOM_ID` | — | 项目级 Matrix 覆盖 |
+| `WORKTREE_DIR` | `~/.coral/worktrees/<p>` | Worker 工作树根 |
+| `DEFAULT_WORKER_SKILLS` | — | 逗号分隔；卡上无 `profile:` 也无 `card.skills` 时兜底 |
+| `ENABLE_MEMORY` | `true` | `false` 跳过 prompt 里的 memory 写指引 |
+| **`WIKI_ENABLED`** | 未设（关） | **v0.51+**：`true` 启用 wiki context 注入 + reminder |
+| `COMPLETION_SIGNAL` | `done` | Stop hook 监听的完成关键词 |
+
+全局凭证 `~/.coral/env`：`GITLAB_URL`、`GITLAB_TOKEN`、`GITLAB_SSH_HOST`、`GITLAB_SSH_PORT`、`MATRIX_HOMESERVER`、`MATRIX_ACCESS_TOKEN`、`MATRIX_ROOM_ID`。`sps setup` 写或 `vim` 改。
+
+---
+
+## 目录布局
+
+```
+~/.coral/                              # 用户全局状态
+├── env                                # 全局凭证（mode 600）
+├── skills/                            # User-level skill（从 npm 同步）
+├── memory/{user,agents,projects}/     # 3 层 memory 存储
+├── projects/<name>/                   # 项目状态
+│   ├── conf                           # 项目配置（mode 600）
+│   ├── conf.example                   # 字段全参考（自动生成）
+│   ├── pipelines/{project,*}.yaml     # Pipeline 定义
+│   ├── pipeline_order.json            # 当前 active pipeline 指针
+│   ├── runtime/state.json             # Worker slot + 当前卡状态
+│   ├── runtime/worker-<slot>-current.json   # Per-slot 卡 marker（v0.50.21+）
+│   ├── runtime/tick.lock              # tick 锁
+│   ├── runtime/acp-state.json         # ACP 会话状态
+│   ├── cards/<state>/<seq>.md         # 卡片文件（markdown PM 后端）
+│   ├── cards/seq.txt                  # 序列号
+│   ├── logs/                          # 每次 tick 的日志
+│   └── pm_meta/                       # 卡片索引
+├── sessions/                          # Agent daemon（chat 会话）
+│   ├── daemon.sock daemon.pid
+│   └── chat-sessions/<id>.json        # 持久化 chat 会话
+├── console.lock                       # console 单实例 guard
+└── worktrees/<project>/<seq>/         # 每张活动卡一个 worktree
+
+<目标 repo>/                           # 你的项目 repo
+├── .claude/
+│   ├── CLAUDE.md                      # Worker 规则（项目相关 + SPS 注入）
+│   ├── settings.local.json            # Claude Code 本地配置
+│   ├── skills/                        # 从 ~/.coral/skills/ symlink
+│   └── hooks/{start,stop}.sh          # 生命周期 hook（call sps）
+├── wiki/                              # 若 WIKI_ENABLED — 见 doc-28
+└── ATTRIBUTION.md                     # 若 WIKI_ENABLED
 ```
 
 ---
 
-## 多项目并行
+## 架构
 
-SPS 支持单进程同时管理多个项目：
+4 层服务架构（v0.50+）：
+
+```
+Delivery (commands/, console/routes/)        参数解析 + I/O 编排（薄）
+  ↓
+Service (services/)                          ProjectService / ChatService / PipelineService /
+                                             SkillService / WikiService — Result<T> + DomainEvent
+  ↓
+Domain (engines/)                            SchedulerEngine / StageEngine / MonitorEngine /
+                                             CloseoutEngine / EventHandler — pipeline 逻辑
+  ↓
+Infrastructure                               WorkerManager（单 worker）、ACPWorkerRuntime、
+  (manager/, providers/, daemon/)            sessionDaemon、TaskBackend、RepoBackend
+```
+
+引擎职责：
+
+- **SchedulerEngine** — 见 `AI-PIPELINE` 标签时把 Planning → Backlog 提升。
+- **StageEngine** — 驱动卡走 stage；构造 prompt（skill + projectRules + memory + **wikiContext** + task description + **wikiUpdateReminder**）；通过 ACP 拉起 worker。
+- **MonitorEngine** — ACK 超时检测、stale runtime、自动 QA 提升。
+- **CloseoutEngine** + **EventHandler** — 完成卡的收尾。
+
+**单 worker 是刻意设计**：v0.37.2 已删除多 worker 并发代码。不要提议"加并行模式" — 架构依赖串行执行保证状态一致。要更高吞吐，跑多个项目并行。
+
+深入阅读：
+- [doc-27：Service Layer Architecture](../../docs/design/27-service-layer-architecture.md) — 当前架构
+- [doc-26：Console Architecture](../../docs/design/26-console-architecture.md) — Console 内部
+- [doc-28：Wiki System](../../docs/design/28-wiki-system.md) — Wiki 设计
+- [doc-13：Development Guardrails](../../docs/design/13-development-guardrails.md) — 贡献者硬规则
+- [doc-17：Pipeline Configuration](../../docs/design/17-pipeline-configuration-design.md) — YAML 字段语义
+- [docs/design/](../../docs/design/) — 完整设计树（v0.15-v0.32 时代的多数文档已标 HISTORICAL）
+
+---
+
+## Troubleshooting
 
 ```bash
-sps tick project-a project-b project-c
+sps doctor <project> --fix           # ★ 第一招
+sps logs <project> --err             # 只看 stderr / 错误
+sps reset <project> --card <seq>     # 重置卡死的卡
+sps reset <project> --all            # 全项目重置
+
+# Worker / daemon 问题
+sps worker ps <project>
+sps agent daemon status              # chat daemon 还在不？
+sps agent daemon stop && sps agent daemon start    # 重启（清旧 cwd）
+
+# Wiki 问题
+sps wiki check <project>
+sps wiki status <project>
 ```
 
-每个项目完全隔离：
-- 独立的 ProjectContext、Provider 实例、Engine 实例
-- 独立的 tick.lock（互不阻塞）
-- 独立的 state.json（Worker slot 不混淆）
-- 一个项目出错不影响其他项目
+常见问题：
 
-多 Worker 并行配置：
-
-```bash
-# 在项目 conf 中设置
-MAX_CONCURRENT_WORKERS=3
-CONFLICT_DEFAULT=parallel
-```
+| 现象 | 原因 / 修复 |
+|---|---|
+| Pipeline halt 在 `NEEDS-FIX` | 打开失败的卡，修问题，移除标签。Console 上 2 步搞定。 |
+| Worker 启动不了 | 先 `sps worker ps`，再 `sps logs --err`。多半是 Claude API key 缺、或 `claude-agent-acp` adapter 没装（`sps setup` 重装它）。 |
+| 卡片卡在 Planning | 缺 `AI-PIPELINE` 标签。`sps card add` 自动加；外部加的需手动补。 |
+| 每张卡都 ACK timeout | Claude 冷启动慢（skill / memory 多）。conf 里调高 `WORKER_ACK_TIMEOUT_S`（v0.50.24 起默认 300s）。 |
+| Console 数据陈旧 | SSE 可能掉了；刷新页面；不行就 `sps console --kill && sps console`。 |
+| Wiki context 不注入 | 检查 `WIKI_ENABLED=true` 在 conf 里、`wiki/WIKI.md` 存在。conf 开了但 scaffold 缺时 StageEngine 会 warn。 |
+| 升级后 skill SOP 不更新 | `sps skill sync --force`（默认 sync 会跳过已存在的）。 |
+| Daemon chat 用了错的 cwd | Daemon 启动时锁 cwd。`sps agent daemon stop && cd <repo> && sps agent daemon start`。 |
 
 ---
 
-## 架构概览
+## 许可证 & 致谢
 
-### 四层架构
+MIT，见 [`LICENSE`](../../LICENSE)。
 
-```
-Layer 3  Commands + Engines    CLI 命令 + 状态机引擎
-Layer 2  Providers             具体后端实现
-Layer 1  Interfaces            抽象接口
-Layer 0  Core Runtime          配置、路径、状态、锁、日志
-```
+Wiki 系统（v0.51+）~70% 借鉴 [claude-obsidian](https://github.com/kepano/claude-obsidian)（MIT）— 三层架构、manifest 增量、hot cache、ingest 流程、contradiction callout、wikilink。SPS 专属 30%：5 类 page、`sources={card,commit,path}`、5 层 reader、`sps wiki check` exit gate。心智模型来自 Karpathy "LLM Wiki" gist。
 
-### 支持的后端
-
-| 类型 | Provider | 接口 |
-|------|----------|------|
-| PM 后端 | Plane CE / Trello / Markdown | TaskBackend |
-| 代码托管 | GitLab | RepoBackend |
-| AI Worker (print) | ClaudePrintProvider / CodexExecProvider | WorkerProvider |
-| AI Worker (interactive) | ClaudeTmuxProvider / CodexTmuxProvider | WorkerProvider |
-| 通知 | Matrix | Notifier |
-
-### 引擎
-
-| 引擎 | 职责 |
-|------|------|
-| SchedulerEngine | Planning → Backlog（选卡、排序、准入检查） |
-| ExecutionEngine | Backlog → Todo → Inprogress → Done（准备环境、启动 Worker、检测完成、释放资源） |
-| CloseoutEngine | worktree 清理（MR_MODE=create 时兼容处理 QA 卡片） |
-| MonitorEngine | 异常检测（孤儿清理、超时、阻塞、状态对齐、死亡 Worker 完成检测） |
-
----
-
-## 目录结构
-
-```
-workflow-cli/
-├── src/
-│   ├── main.ts                 # CLI 入口、命令路由
-│   ├── commands/               # 命令实现
-│   │   ├── setup.ts            #   sps setup
-│   │   ├── projectInit.ts      #   sps project init
-│   │   ├── doctor.ts           #   sps doctor
-│   │   ├── cardAdd.ts          #   sps card add
-│   │   ├── tick.ts             #   sps tick
-│   │   ├── schedulerTick.ts    #   sps scheduler tick
-│   │   ├── pipelineTick.ts     #   sps pipeline tick
-│   │   ├── workerLaunch.ts     #   sps worker launch
-│   │   ├── workerDashboard.ts  #   sps worker dashboard
-│   │   ├── pmCommand.ts        #   sps pm *
-│   │   ├── qaTick.ts           #   sps qa tick
-│   │   └── monitorTick.ts      #   sps monitor tick
-│   ├── core/                   # 核心运行时
-│   │   ├── config.ts           #   配置加载（shell conf 解析）
-│   │   ├── context.ts          #   ProjectContext
-│   │   ├── paths.ts            #   路径解析
-│   │   ├── state.ts            #   运行时状态（state.json）
-│   │   ├── lock.ts             #   tick 锁
-│   │   ├── logger.ts           #   日志 + 结构化事件
-│   │   └── queue.ts            #   Pipeline 队列
-│   ├── engines/                # 状态机引擎
-│   │   ├── SchedulerEngine.ts  #   选卡入队
-│   │   ├── ExecutionEngine.ts  #   执行链
-│   │   ├── CloseoutEngine.ts   #   QA 闭环
-│   │   └── MonitorEngine.ts    #   异常检测
-│   ├── manager/                # Worker 进程管理模块（v0.16.0）
-│   │   ├── supervisor.ts       #   fd 重定向 spawn, child handle, exit 回调
-│   │   ├── completion-judge.ts #   git 产出检查, marker/keyword 检测
-│   │   ├── post-actions.ts     #   merge + PM update + slot release + notify
-│   │   ├── pm-client.ts        #   轻量 PM 操作 (Plane/Trello/Markdown)
-│   │   ├── resource-limiter.ts #   全局 worker 数上限 + 内存检查
-│   │   └── recovery.ts         #   tick 重启后 PID 扫描恢复
-│   ├── interfaces/             # 抽象接口
-│   │   ├── TaskBackend.ts      #   PM 后端接口
-│   │   ├── WorkerProvider.ts   #   Worker 接口
-│   │   ├── RepoBackend.ts      #   代码仓库接口
-│   │   ├── Notifier.ts         #   通知接口
-│   │   └── HookProvider.ts     #   Hook 接口
-│   ├── models/                 # 类型定义
-│   │   └── types.ts            #   Card, CommandResult, WorkerStatus 等
-│   └── providers/              # 具体实现
-│       ├── registry.ts         #   Provider 工厂（按 WORKER_MODE × WORKER_TOOL 路由）
-│       ├── PlaneTaskBackend.ts
-│       ├── TrelloTaskBackend.ts
-│       ├── MarkdownTaskBackend.ts
-│       ├── ClaudePrintProvider.ts   # claude -p 一次性执行（默认）
-│       ├── CodexExecProvider.ts     # codex exec 一次性执行（默认）
-│       ├── ClaudeTmuxProvider.ts    # tmux 交互模式（降级方案）
-│       ├── CodexTmuxProvider.ts     # tmux 交互模式（降级方案）
-│       ├── outputParser.ts      #   JSONL 输出解析、进程管理工具
-│       ├── streamRenderer.ts    #   JSONL → 人类可读文本（Dashboard 用）
-│       ├── GitLabRepoBackend.ts
-│       └── MatrixNotifier.ts
-├── package.json
-└── tsconfig.json
-```
-
----
-
-## Manager 模块 (v0.16.0)
-
-v0.16.0 新增 `src/manager/` 目录，将 Worker 进程管理从 Engine 中解耦为独立模块，作为 tick 内部模块运行（非独立守护进程）。
-
-| 模块 | 行数 | 职责 |
-|------|------|------|
-| `supervisor.ts` | 288 | fd 重定向 spawn（OS 级保证 output 写入），持有 child handle，exit 回调触发后置流程，三层环境变量合并（系统→全局凭据→项目配置） |
-| `completion-judge.ts` | 110 | git 产出检查（分支是否已推送/已合并），auto-push，marker 文件检测，完成关键词匹配 |
-| `post-actions.ts` | 412 | Worker 退出后完整后置链：merge → PM 状态更新 → slot 释放 → 通知 |
-| `pm-client.ts` | 294 | 轻量 PM 操作封装，支持 Plane/Trello/Markdown 三种后端 |
-| `resource-limiter.ts` | 103 | 全局 worker 数上限检查 + 内存检查 + 启动间隔控制 |
-| `recovery.ts` | 205 | tick 重启后通过 PID 扫描恢复 orphan worker 进程 |
-
-**改造效果：**
-- ExecutionEngine 从 1219 行缩减至 916 行（删除 attemptResume, completeAndRelease）
-- MonitorEngine 从 974 行缩减至 750 行（删除直接 PID/tmux 检测）
-- tick.ts 新增约 80 行（初始化共享 Manager 模块，启动时执行 Recovery）
-
----
-
-## 标签技能注入 (v0.16.0)
-
-通过 PM 卡片标签驱动 Worker 专业能力注入，无需修改代码即可为不同任务定制 Worker 行为。
-
-**机制：**
-- PM 卡片添加 `skill:xxx` 标签 → 自动加载 `skills/worker-profiles/xxx.md` 到 Worker prompt
-- 支持多个 `skill:` 标签叠加注入
-- 项目可通过 `DEFAULT_WORKER_SKILLS` 配置默认技能，卡片标签可覆盖项目默认
-
-**Prompt 组装顺序：**
-1. Skill Profiles（技能模板）
-2. Project Rules（CLAUDE.md / AGENTS.md）
-3. Project Knowledge（docs/DECISIONS.md, docs/CHANGELOG.md）
-4. Task（.sps/task_prompt.txt）
-
-**内置技能模板：**
-
-| 文件 | 用途 |
-|------|------|
-| `skills/worker-profiles/_template.md` | 创建新技能的模板 |
-| `skills/worker-profiles/typescript.md` | TypeScript 项目编码规范 |
-| `skills/worker-profiles/phaser.md` | Phaser 游戏框架开发指南 |
-
-**新增技能零代码：** 只需创建 md 文件到 `skills/worker-profiles/` 目录，然后在 PM 卡片上添加对应的 `skill:xxx` 标签即可。
-
----
-
-## License
-
-MIT
+完整归属见 [`ATTRIBUTION.md`](./ATTRIBUTION.md)。
