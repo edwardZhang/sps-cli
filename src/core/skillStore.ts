@@ -181,16 +181,24 @@ export function syncAllSkillsToProject(
 
 /**
  * 把 bundled skills（npm 包内 skills/）拷贝到 ~/.coral/skills/。
- * Non-destructive：已存在的 skill 目录保留，不覆盖用户改动。
+ *
+ * 默认 non-destructive：已存在的 skill 目录保留，不覆盖用户改动。
+ * `force=true`（v0.51.2+）：用 bundled 的 SKILL.md 覆盖（升级 sps-cli 后拉新 SOP）。
+ *   注意：force 会覆盖用户对 ~/.coral/skills/<name>/ 的直接编辑。如想保留定制，
+ *   先 `sps skill freeze <name> --project <p>` 把它固化到项目级（项目级副本不受
+ *   sync 影响）。
+ *
  * Bundled → user 必须是 cpSync，因为 npm 包路径会随重装变化，symlink 会失效。
  */
 export function syncBundledSkillsToUser(
   bundledSkillsDir: string,
-): { copied: number; skipped: number } {
-  if (!existsSync(bundledSkillsDir)) return { copied: 0, skipped: 0 };
+  opts: { force?: boolean } = {},
+): { copied: number; updated: number; skipped: number } {
+  if (!existsSync(bundledSkillsDir)) return { copied: 0, updated: 0, skipped: 0 };
   if (!existsSync(USER_SKILLS_DIR)) mkdirSync(USER_SKILLS_DIR, { recursive: true });
 
   let copied = 0;
+  let updated = 0;
   let skipped = 0;
   const entries = readdirSync(bundledSkillsDir, { withFileTypes: true });
   for (const entry of entries) {
@@ -199,13 +207,18 @@ export function syncBundledSkillsToUser(
     if (!existsSync(resolve(src, 'SKILL.md'))) continue;
     const dst = resolve(USER_SKILLS_DIR, entry.name);
     if (existsSync(dst)) {
-      skipped++;
+      if (opts.force) {
+        cpSync(src, dst, { recursive: true, force: true });
+        updated++;
+      } else {
+        skipped++;
+      }
       continue;
     }
     cpSync(src, dst, { recursive: true, force: false });
     copied++;
   }
-  return { copied, skipped };
+  return { copied, updated, skipped };
 }
 
 /**

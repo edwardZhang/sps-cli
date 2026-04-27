@@ -96,7 +96,7 @@ export async function executeSkillCommand(
     case 'unfreeze':
       return skillUnfreeze(log, positionals[0], flagProject);
     case 'sync':
-      return skillSync(log);
+      return skillSync(log, !!flags.force);
     default:
       console.error('Usage: sps skill <list|add|remove|freeze|unfreeze|sync> [name] [--project <name>]');
       process.exit(2);
@@ -231,12 +231,21 @@ function skillUnfreeze(log: Logger, name: string | undefined, flagProject: strin
   }
 }
 
-function skillSync(log: Logger): void {
+function skillSync(log: Logger, force: boolean): void {
   // 1. bundled (npm 包内) → ~/.coral/skills/
   const bundledDir = resolveBundledSkillsDir();
-  const { copied, skipped } = syncBundledSkillsToUser(bundledDir);
-  if (copied > 0) log.ok(`Bundled → user: ${copied} copied, ${skipped} kept`);
-  else log.info(`Bundled → user: nothing new (${skipped} already installed)`);
+  const { copied, updated, skipped } = syncBundledSkillsToUser(bundledDir, { force });
+  if (copied > 0 || updated > 0) {
+    const parts: string[] = [];
+    if (copied > 0) parts.push(`${copied} new`);
+    if (updated > 0) parts.push(`${updated} updated`);
+    if (skipped > 0) parts.push(`${skipped} kept`);
+    log.ok(`Bundled → user: ${parts.join(', ')}`);
+  } else if (force) {
+    log.info(`Bundled → user: ${skipped} skill(s) up to date`);
+  } else {
+    log.info(`Bundled → user: nothing new (${skipped} already installed; pass --force to refresh)`);
+  }
 
   // 2. ~/.coral/skills/ → ~/.claude/skills/（Claude Code 用户级 skill 目录）
   // 复用 setup.ts 中的 syncSkills（symlink 到 ~/.claude/skills/）

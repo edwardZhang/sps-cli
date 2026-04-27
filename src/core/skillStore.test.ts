@@ -202,7 +202,7 @@ describe('skillStore', () => {
     expect(second.kept).toBe(20);
   });
 
-  it('syncBundledSkillsToUser 把 bundled 目录 cpSync 到 ~/.coral/skills/，不覆盖已存在', async () => {
+  it('syncBundledSkillsToUser 默认不覆盖已存在的 skill', async () => {
     const bundled = resolve(root, 'bundled');
     mkdirSync(resolve(bundled, 'python'), { recursive: true });
     writeFileSync(resolve(bundled, 'python', 'SKILL.md'), '# bundled python\n');
@@ -216,9 +216,29 @@ describe('skillStore', () => {
     const store = await loadStoreWithFakeHome(fakeHome);
     const res = store.syncBundledSkillsToUser(bundled);
     expect(res.copied).toBe(1); // rust 新建
+    expect(res.updated).toBe(0);
     expect(res.skipped).toBe(1); // python 保留
     expect(readFileSync(resolve(fakeHome, '.coral', 'skills', 'python', 'SKILL.md'), 'utf-8'))
       .toBe('# user customized\n');
+  });
+
+  it('syncBundledSkillsToUser({force:true}) 覆盖已存在的 skill（升级路径）', async () => {
+    const bundled = resolve(root, 'bundled');
+    mkdirSync(resolve(bundled, 'python'), { recursive: true });
+    writeFileSync(resolve(bundled, 'python', 'SKILL.md'), '# bundled v2 python\n');
+    mkdirSync(resolve(bundled, 'rust'), { recursive: true });
+    writeFileSync(resolve(bundled, 'rust', 'SKILL.md'), '# bundled rust\n');
+
+    makeUserSkill(fakeHome, 'python', {});
+    writeFileSync(resolve(fakeHome, '.coral', 'skills', 'python', 'SKILL.md'), '# user old\n');
+
+    const store = await loadStoreWithFakeHome(fakeHome);
+    const res = store.syncBundledSkillsToUser(bundled, { force: true });
+    expect(res.copied).toBe(1); // rust 新增
+    expect(res.updated).toBe(1); // python 被覆盖
+    expect(res.skipped).toBe(0);
+    expect(readFileSync(resolve(fakeHome, '.coral', 'skills', 'python', 'SKILL.md'), 'utf-8'))
+      .toBe('# bundled v2 python\n');
   });
 
   it('listUserSkills 包括 symlink 指向目录的 skill（外部包 vendor 接入模式）', async () => {
