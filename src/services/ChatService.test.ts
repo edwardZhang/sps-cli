@@ -165,4 +165,79 @@ describe('ChatService', () => {
     expect(r.ok).toBe(true);
     expect(calls).toEqual(['abc']);
   });
+
+  // ─── v0.51.4: per-session cwd ────────────────────────────────────
+
+  describe('cwd', () => {
+    it('create 不带 cwd → session.cwd === null', async () => {
+      const { svc, fs } = newSvc();
+      const c = await svc.create({ title: 'no-cwd' });
+      if (!c.ok) throw new Error('create failed');
+      expect(c.value.cwd).toBeNull();
+      // Persisted JSON also has cwd=null
+      const path = `${chatSessionsDir()}/${c.value.id}.json`;
+      const persisted = JSON.parse(fs.readFile(path));
+      expect(persisted.cwd).toBeNull();
+    });
+
+    it('create 带合法绝对路径 → session.cwd 保留', async () => {
+      const { svc, fs } = newSvc();
+      fs.mkdir('/home/user/project', { recursive: true });
+      const c = await svc.create({ title: 't', cwd: '/home/user/project' });
+      if (!c.ok) throw new Error('create failed');
+      expect(c.value.cwd).toBe('/home/user/project');
+    });
+
+    it('create 带相对路径 → CHAT_CWD_NOT_ABSOLUTE', async () => {
+      const { svc } = newSvc();
+      const c = await svc.create({ cwd: 'projects/foo' });
+      expect(c.ok).toBe(false);
+      if (!c.ok) expect(c.error.code).toBe('CHAT_CWD_NOT_ABSOLUTE');
+    });
+
+    it('create 带不存在路径 → CHAT_CWD_NOT_FOUND', async () => {
+      const { svc } = newSvc();
+      const c = await svc.create({ cwd: '/no/such/dir' });
+      expect(c.ok).toBe(false);
+      if (!c.ok) expect(c.error.code).toBe('CHAT_CWD_NOT_FOUND');
+    });
+
+    it('create 带空字符串 → 当作未提供（null）', async () => {
+      const { svc } = newSvc();
+      const c = await svc.create({ cwd: '' });
+      if (!c.ok) throw new Error('create failed');
+      expect(c.value.cwd).toBeNull();
+    });
+
+    it('create cwd 前后空格 → trim 后通过', async () => {
+      const { svc, fs } = newSvc();
+      fs.mkdir('/repo', { recursive: true });
+      const c = await svc.create({ cwd: '  /repo  ' });
+      if (!c.ok) throw new Error('create failed');
+      expect(c.value.cwd).toBe('/repo');
+    });
+
+    it('list 返回的 summary 含 cwd 字段', async () => {
+      const { svc, fs } = newSvc();
+      fs.mkdir('/a', { recursive: true });
+      fs.mkdir('/b', { recursive: true });
+      await svc.create({ title: 'X', cwd: '/a' });
+      await svc.create({ title: 'Y', cwd: '/b' });
+      await svc.create({ title: 'Z' }); // no cwd
+      const r = await svc.list();
+      if (!r.ok) throw new Error('list failed');
+      const cwds = r.value.map((s) => s.cwd ?? '__null__').sort();
+      expect(cwds).toEqual(['/a', '/b', '__null__']);
+    });
+
+    it('get 返回 session 含 cwd 字段', async () => {
+      const { svc, fs } = newSvc();
+      fs.mkdir('/x', { recursive: true });
+      const c = await svc.create({ cwd: '/x' });
+      if (!c.ok) throw new Error();
+      const got = await svc.get(c.value.id);
+      if (!got.ok) throw new Error();
+      expect(got.value.cwd).toBe('/x');
+    });
+  });
 });

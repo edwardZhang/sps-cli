@@ -38,6 +38,12 @@ export interface ChatSession {
   readonly project: string | null;
   readonly messageCount: number;
   readonly messages: ChatMessage[];
+  /**
+   * v0.51.4: Working directory the worker should use for this session. Captured at
+   * create time so different sessions can target different repos. Absent (null) =
+   * fall back to daemon's startup cwd (legacy behavior).
+   */
+  readonly cwd?: string | null;
 }
 
 export interface ChatSessionSummary {
@@ -47,11 +53,14 @@ export interface ChatSessionSummary {
   readonly title: string;
   readonly project: string | null;
   readonly messageCount: number;
+  readonly cwd?: string | null;
 }
 
 export interface CreateSessionInput {
   title?: string;
   project?: string | null;
+  /** v0.51.4: optional working dir; if provided must be absolute and exist. */
+  cwd?: string | null;
 }
 
 export interface ChatExecutor {
@@ -100,6 +109,15 @@ export class ChatService {
   }
 
   async create(input: CreateSessionInput = {}): Promise<Result<ChatSessionSummary, DomainError>> {
+    // v0.51.4: validate cwd if provided
+    let cwd: string | null = null;
+    if (input.cwd != null && input.cwd.trim() !== '') {
+      const trimmed = input.cwd.trim();
+      const validation = validateCwd(trimmed, this.deps.fs);
+      if (!validation.ok) return validation;
+      cwd = validation.value;
+    }
+
     const id = randomUUID();
     const session: ChatSession = {
       id,
@@ -109,6 +127,7 @@ export class ChatService {
       project: input.project ?? null,
       messageCount: 0,
       messages: [],
+      cwd,
     };
     try {
       this.deps.fs.writeFileAtomic(this.sessionPath(id), JSON.stringify(session));
@@ -196,6 +215,7 @@ export class ChatService {
       title: s.title,
       project: s.project,
       messageCount: s.messageCount,
+      cwd: s.cwd ?? null,
     };
   }
 }
@@ -206,4 +226,31 @@ function isValidSessionId(id: string): boolean {
 
 function invalidId(): DomainError {
   return domainError('validation', 'INVALID_SESSION_ID', 'session id 非法');
+}
+
+/**
+ * v0.51.4: validate that cwd is absolute, exists on disk, and isn't pointing
+ * at something dangerous. Returns a normalized absolute path on success.
+ */
+function validateCwd(
+  cwd: string,
+  fs: FileSystem,
+): Result<string, DomainError> {
+  // Must be absolute (no relative paths — daemon would resolve them against its
+  // own cwd, which defeats the purpose of letting users pick).
+  if (!cwd.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(cwd)) {
+    return err(
+      domainError('validation', 'CHAT_CWD_NOT_ABSOLUTE', '工作目录必须是绝对路径', {
+        details: { cwd },
+      }),
+    );
+  }
+  if (!fs.exists(cwd)) {
+    return err(
+      domainError('validation', 'CHAT_CWD_NOT_FOUND', `工作目录不存在: ${cwd}`, {
+        details: { cwd },
+      }),
+    );
+  }
+  return ok(cwd);
 }

@@ -58,6 +58,8 @@ interface ChatSessionPersisted {
   project: string | null;
   messageCount: number;
   messages: ChatMessage[];
+  /** v0.51.4: per-session working directory; null = use daemon's startup cwd */
+  cwd?: string | null;
 }
 
 function sessionPath(id: string): string {
@@ -112,8 +114,14 @@ async function streamAssistantResponse(
   const slot = chatSlot(sessionId);
   activeSessions.add(slot);
 
+  // v0.51.4: read per-session cwd; falls back to daemon's startup cwd when unset.
+  // ACPWorkerRuntime resets the slot's session if cwdOverride differs from
+  // existing.cwd, so switching cwd between sessions is safe.
+  const persisted = readSession(sessionId);
+  const sessionCwd = persisted?.cwd ?? undefined;
+
   try {
-    await client.ensureSession(slot, 'claude');
+    await client.ensureSession(slot, 'claude', sessionCwd);
   } catch (err) {
     activeSessions.delete(slot);
     persistAndEmitComplete(
@@ -214,7 +222,7 @@ async function streamAssistantResponse(
   })();
 
   try {
-    await client.startRun(slot, userContent, 'claude');
+    await client.startRun(slot, userContent, 'claude', sessionCwd);
   } catch (err) {
     subscription.cancel();
     activeSessions.delete(slot);
@@ -273,8 +281,16 @@ export function createChatRoute(log: Logger, chat: ChatService): Hono {
   });
 
   app.post('/sessions', async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { title?: string; project?: string };
-    const r = await chat.create({ title: body.title, project: body.project });
+    const body = (await c.req.json().catch(() => ({}))) as {
+      title?: string;
+      project?: string;
+      cwd?: string;
+    };
+    const r = await chat.create({
+      title: body.title,
+      project: body.project,
+      cwd: body.cwd,
+    });
     if (!r.ok) return c.json(toProblemJson(r.error), toHttpStatus(r.error) as 400);
     chatBus.emit('chat.session.created', { sessionId: r.value.id });
     return c.json(r.value, 201);

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, MessageCircle, Trash2, Send, Loader2, ChevronRight, Wrench, CheckCircle2, XCircle, Square } from 'lucide-react';
+import { Plus, MessageCircle, Trash2, Send, Loader2, ChevronRight, Wrench, CheckCircle2, XCircle, Square, Folder, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -49,6 +49,9 @@ export function ChatPage() {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const streamRef = useRef<HTMLDivElement>(null);
+
+  // v0.51.4: 新建对话 dialog 状态（指定 cwd）
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
 
   // 订阅 SSE，仅当 sessionId 存在
   useEffect(() => {
@@ -288,11 +291,25 @@ export function ChatPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [currentQ.data, pending]);
 
-  const handleNewSession = useCallback(async (): Promise<void> => {
-    const s = await createSession();
-    qc.invalidateQueries({ queryKey: ['chat-sessions'] });
-    nav(`/chat/${s.id}`);
-  }, [qc, nav]);
+  const handleNewSession = useCallback(
+    async (opts: { cwd?: string; title?: string } = {}): Promise<void> => {
+      try {
+        const s = await createSession({
+          cwd: opts.cwd?.trim() || undefined,
+          title: opts.title?.trim() || undefined,
+        });
+        qc.invalidateQueries({ queryKey: ['chat-sessions'] });
+        nav(`/chat/${s.id}`);
+        setNewSessionOpen(false);
+      } catch (err) {
+        void alert({
+          title: '新建对话失败',
+          body: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [qc, nav, alert],
+  );
 
   const handleSend = useCallback(async (): Promise<void> => {
     const content = draft.trim();
@@ -384,7 +401,7 @@ export function ChatPage() {
       <aside className="nb-card p-3 overflow-auto flex flex-col gap-2">
         <button
           className="nb-btn nb-btn-primary w-full justify-center"
-          onClick={handleNewSession}
+          onClick={() => setNewSessionOpen(true)}
           type="button"
         >
           <Plus size={14} strokeWidth={3} />
@@ -408,7 +425,7 @@ export function ChatPage() {
             >
               <button
                 type="button"
-                aria-label={`打开对话 ${s.title}`}
+                aria-label={`打开对话 ${s.title}${s.cwd ? `（工作目录 ${s.cwd}）` : ''}`}
                 onClick={() => nav(`/chat/${s.id}`)}
                 className="flex items-start gap-2 flex-1 min-w-0 text-left"
               >
@@ -418,6 +435,15 @@ export function ChatPage() {
                   <p className="text-[10px] text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] truncate">
                     {s.messageCount} msg · {formatTimeAgo(s.lastMessageAt ?? s.createdAt)}
                   </p>
+                  {s.cwd && (
+                    <p
+                      className="text-[10px] text-[var(--color-text-subtle)] font-[family-name:var(--font-mono)] truncate flex items-center gap-1"
+                      title={s.cwd}
+                    >
+                      <Folder size={9} strokeWidth={2.5} className="flex-shrink-0" />
+                      <span className="truncate" dir="rtl">{s.cwd}</span>
+                    </p>
+                  )}
                 </div>
               </button>
               <button
@@ -451,6 +477,15 @@ export function ChatPage() {
               <p className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">
                 {sessionId}
               </p>
+              {currentQ.data?.cwd && (
+                <p
+                  className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] flex items-center gap-1 mt-1"
+                  title={currentQ.data.cwd}
+                >
+                  <Folder size={11} strokeWidth={2.5} className="flex-shrink-0" />
+                  <span className="truncate">{currentQ.data.cwd}</span>
+                </p>
+              )}
             </header>
             <div ref={streamRef} className="flex-1 overflow-auto p-4 flex flex-col gap-4">
               {(currentQ.data?.messages ?? []).map((m) => (
@@ -528,6 +563,128 @@ export function ChatPage() {
             </div>
           </div>
         )}
+      </div>
+
+      {newSessionOpen && (
+        <NewSessionDialog
+          onCancel={() => setNewSessionOpen(false)}
+          onCreate={(input) => handleNewSession(input)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── New session dialog (v0.51.4) ──────────────────────────────────────
+
+function NewSessionDialog({
+  onCancel,
+  onCreate,
+}: {
+  onCancel: () => void;
+  onCreate: (input: { title?: string; cwd?: string }) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [cwd, setCwd] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (): Promise<void> => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      onCreate({ title: title.trim() || undefined, cwd: cwd.trim() || undefined });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(45,55,72,0.4)] p-4"
+      onClick={onCancel}
+      role="presentation"
+    >
+      <div
+        className="nb-card bg-[var(--color-bg)] max-w-md w-full p-5"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="新建对话"
+      >
+        <header className="flex items-center justify-between mb-4">
+          <h2 className="font-[family-name:var(--font-heading)] font-bold text-lg">
+            新建对话
+          </h2>
+          <button
+            type="button"
+            className="p-1 hover:bg-[var(--color-bg-cream)] rounded"
+            onClick={onCancel}
+            aria-label="关闭"
+          >
+            <X size={16} strokeWidth={3} />
+          </button>
+        </header>
+
+        <div className="flex flex-col gap-4">
+          <div>
+            <label
+              htmlFor="new-session-title"
+              className="block text-xs font-bold mb-1.5 uppercase tracking-wider"
+            >
+              标题（可选）
+            </label>
+            <input
+              id="new-session-title"
+              type="text"
+              className="nb-input w-full"
+              placeholder="留空 = 自动用首条消息生成"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="new-session-cwd"
+              className="block text-xs font-bold mb-1.5 uppercase tracking-wider"
+            >
+              工作目录（可选）
+            </label>
+            <input
+              id="new-session-cwd"
+              type="text"
+              className="nb-input w-full font-[family-name:var(--font-mono)] text-sm"
+              placeholder="/home/coral/projects/my-app"
+              value={cwd}
+              onChange={(e) => setCwd(e.target.value)}
+            />
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
+              <Folder size={10} strokeWidth={2.5} className="inline mr-1 -mt-0.5" />
+              Agent 在该目录下读写文件。绝对路径，必须存在。
+              留空则用 daemon 启动时的目录。
+            </p>
+          </div>
+
+          <div className="flex gap-2 justify-end pt-2">
+            <button type="button" className="nb-btn" onClick={onCancel}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="nb-btn nb-btn-primary"
+              onClick={submit}
+              disabled={submitting}
+            >
+              {submitting ? (
+                <Loader2 size={14} strokeWidth={3} className="animate-spin" />
+              ) : (
+                <Plus size={14} strokeWidth={3} />
+              )}
+              创建
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

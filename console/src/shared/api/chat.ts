@@ -23,6 +23,8 @@ export interface ChatSessionSummary {
   title: string;
   project: string | null;
   messageCount: number;
+  /** v0.51.4: per-session working directory; null = use daemon's startup cwd */
+  cwd?: string | null;
 }
 
 export interface ChatSessionDetail extends ChatSessionSummary {
@@ -37,7 +39,9 @@ export function getSession(id: string) {
   return apiGet<ChatSessionDetail>(`/api/chat/sessions/${id}`);
 }
 
-export async function createSession(body: { title?: string; project?: string } = {}) {
+export async function createSession(
+  body: { title?: string; project?: string; cwd?: string } = {},
+) {
   const res = await fetch('/api/chat/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
