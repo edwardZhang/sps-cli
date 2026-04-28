@@ -6,7 +6,7 @@
  *
  * v0.51.5 起从 ChatPage 抽出，供 chat / project / 其他 cwd 选择场景复用。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowUp,
@@ -45,16 +45,26 @@ export function DirectoryPicker({
   const parent = browseQ.data?.parent ?? null;
   const home = browseQ.data?.home ?? null;
 
+  // v0.51.7: ESC 关闭；不再 backdrop 点击关闭，避免误点丢失浏览状态。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(45,55,72,0.5)] p-4"
-      onClick={onCancel}
       role="presentation"
     >
       <div
         className="nb-card bg-[var(--color-bg)] max-w-lg w-full p-5 flex flex-col"
         style={{ maxHeight: '70vh' }}
-        onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label={title}

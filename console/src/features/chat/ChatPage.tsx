@@ -590,6 +590,20 @@ function NewSessionDialog({
   const [submitting, setSubmitting] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
+  // v0.51.7: ESC 关闭（仅当子 picker 没开）；不再用 backdrop 点击关闭，
+  // 避免用户敲到一半误点空白丢失草稿。
+  useEffect(() => {
+    if (pickerOpen) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel, pickerOpen]);
+
   const submit = async (): Promise<void> => {
     if (submitting) return;
     setSubmitting(true);
@@ -603,12 +617,10 @@ function NewSessionDialog({
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(45,55,72,0.4)] p-4"
-      onClick={onCancel}
       role="presentation"
     >
       <div
         className="nb-card bg-[var(--color-bg)] max-w-md w-full p-5"
-        onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="新建对话"
