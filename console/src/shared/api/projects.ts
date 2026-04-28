@@ -18,6 +18,8 @@ export interface CreateProjectInput {
   enableGit?: boolean;
   /** v0.51.0：是否启用 wiki/。true → 自动 scaffold + 写 WIKI_ENABLED=true 到 conf */
   enableWiki?: boolean;
+  /** v0.51.6：projectDir 不存在时自动创建（console 默认 true，CLI 互动模式默认 false） */
+  createIfMissing?: boolean;
   mergeBranch?: string;
   maxWorkers?: string;
   gitlabProject?: string;

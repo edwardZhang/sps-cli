@@ -170,6 +170,13 @@ export interface ProjectInitOpts {
    * 调用 initWiki() 在 PROJECT_DIR 下建 wiki/ 骨架（含 .gitignore 维护）。
    */
   enableWiki?: boolean;
+  /**
+   * v0.51.6：projectDir 不存在时是否自动 mkdir -p。
+   * - Console 表单创建项目：默认 true（用户填了路径就是要建）
+   * - CLI `sps project init` 交互式：默认 false（用户可能打算 clone 再装）
+   *   接老行为：projectDir 不存在 → 跳过 .claude/ 与 wiki/ 安装
+   */
+  createIfMissing?: boolean;
 }
 
 export async function executeProjectInit(
@@ -552,6 +559,21 @@ stages:
     const match = confContent.match(/export\s+PROJECT_DIR=["']?([^"'\n]+)/);
     resolvedProjectDir = match?.[1]?.trim();
     if (resolvedProjectDir) {
+      // v0.51.6: 如果调用方明确要求 createIfMissing，且目录不存在，先 mkdir -p
+      // 这样 .claude/ + wiki/ 安装可以一次性完成（console 表单创建是这个路径）
+      if (
+        nonInteractive?.createIfMissing &&
+        !existsSync(resolvedProjectDir)
+      ) {
+        try {
+          mkdirSync(resolvedProjectDir, { recursive: true });
+          log.ok(`Created project repo dir: ${resolvedProjectDir}`);
+        } catch (err) {
+          log.warn(
+            `Failed to create ${resolvedProjectDir}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       installClaudePreset(resolvedProjectDir, project, log);
     }
   } catch (err) {

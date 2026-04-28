@@ -35,6 +35,7 @@ export function createProjectsRoute(deps: ProjectsRouteDeps): Hono {
           projectDir?: string;
           enableGit?: boolean;
           enableWiki?: boolean;
+          createIfMissing?: boolean;
           mergeBranch?: string;
           maxWorkers?: string;
           gitlabProject?: string;
@@ -60,6 +61,8 @@ export function createProjectsRoute(deps: ProjectsRouteDeps): Hono {
       projectDir: body.projectDir,
       enableGit: body.enableGit !== false, // 默认 true
       enableWiki: body.enableWiki === true, // 默认 false（v0.51.0）
+      // v0.51.6: console 表单创建项目默认 true（用户填了路径就是要在那建项目）
+      createIfMissing: body.createIfMissing !== false,
       mergeBranch: body.mergeBranch || 'main',
       maxWorkers: body.maxWorkers || '1',
       gitlabProject: body.gitlabProject,

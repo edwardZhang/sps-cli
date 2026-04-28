@@ -74,6 +74,8 @@ export interface ProjectInitOpts {
   ackTimeoutS?: number;
   /** v0.51.0：启用 wiki/ 知识库（默认 false）。true → conf 写 WIKI_ENABLED=true 并自动 scaffold。 */
   enableWiki?: boolean;
+  /** v0.51.6：projectDir 不存在时自动 mkdir -p（Console 表单创建路径默认 true） */
+  createIfMissing?: boolean;
 }
 
 export interface CreateProjectInput extends ProjectInitOpts {

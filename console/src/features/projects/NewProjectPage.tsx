@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Loader2, Plus } from 'lucide-react';
+import { ArrowLeft, FolderOpen, Loader2, Plus } from 'lucide-react';
 import { createProject, type CreateProjectInput } from '../../shared/api/projects';
+import { DirectoryPicker } from '../../shared/components/DirectoryPicker';
 import { useDialog } from '../../shared/components/DialogProvider';
 
 /**
@@ -22,10 +23,15 @@ export function NewProjectPage() {
     name: '',
     projectDir: '',
     enableGit: true,
+    // v0.51.6: 默认 true — 用户填了路径就是要在那里建项目；
+    // 不存在时自动 mkdir -p 后再装 .claude/ 与 wiki/。
+    createIfMissing: true,
     mergeBranch: 'main',
     maxWorkers: '1',
     ackTimeoutMin: '5',
   });
+
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const mutation = useMutation({
     mutationFn: (input: CreateProjectInput) => createProject(input),
@@ -92,14 +98,37 @@ export function NewProjectPage() {
           </Field>
 
           <Field label="项目目录" hint="本机绝对路径（代码或文档都可）。和是否启用 git 无关。">
-            <input
-              type="text"
-              className="nb-input w-full font-[family-name:var(--font-mono)]"
-              placeholder="/home/coral/code/acme"
-              value={form.projectDir}
-              onChange={(e) => setForm({ ...form, projectDir: e.target.value })}
-              required
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                className="nb-input flex-1 font-[family-name:var(--font-mono)]"
+                placeholder="/home/coral/code/acme"
+                value={form.projectDir}
+                onChange={(e) => setForm({ ...form, projectDir: e.target.value })}
+                required
+              />
+              <button
+                type="button"
+                className="nb-btn flex-shrink-0"
+                onClick={() => setPickerOpen(true)}
+                aria-label="浏览选择项目目录"
+                title="浏览选择项目目录"
+              >
+                <FolderOpen size={14} strokeWidth={2.5} />
+                浏览
+              </button>
+            </div>
+            <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.createIfMissing !== false}
+                onChange={(e) => setForm({ ...form, createIfMissing: e.target.checked })}
+                className="w-4 h-4 cursor-pointer"
+              />
+              <span className="text-xs text-[var(--color-text-muted)]">
+                目录不存在时自动创建（推荐 — 否则 .claude/ 和 wiki/ 安装会被跳过）
+              </span>
+            </label>
           </Field>
 
           <div className="grid grid-cols-2 gap-4">
@@ -236,6 +265,18 @@ export function NewProjectPage() {
           </div>
         </form>
       </div>
+
+      {pickerOpen && (
+        <DirectoryPicker
+          title="选择项目目录"
+          initialPath={form.projectDir.trim() || undefined}
+          onCancel={() => setPickerOpen(false)}
+          onSelect={(picked) => {
+            setForm({ ...form, projectDir: picked });
+            setPickerOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

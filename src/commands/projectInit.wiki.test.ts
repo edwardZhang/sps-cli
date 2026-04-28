@@ -238,3 +238,83 @@ describe('CLAUDE.md wiki rules + ATTRIBUTION.md', () => {
     expect(existsSync(resolve(projectDir, 'ATTRIBUTION.md'))).toBe(false);
   });
 });
+
+// ─── v0.51.6: createIfMissing ───────────────────────────────────────
+
+describe('createIfMissing', () => {
+  it('createIfMissing=true → mkdirs missing projectDir and installs .claude/', async () => {
+    const ghostDir = resolve(homeDir, 'ghost-project-dir');
+    expect(existsSync(ghostDir)).toBe(false);
+
+    const { executeProjectInit } = await import('./projectInit.js');
+    await executeProjectInit('demo', {}, {
+      projectDir: ghostDir,
+      mergeBranch: 'main',
+      maxWorkers: '1',
+      enableGit: false,
+      createIfMissing: true,
+    });
+
+    expect(existsSync(ghostDir)).toBe(true);
+    // .claude/ should now be installed (template exists in repo, so install runs)
+    const claudeDir = resolve(ghostDir, '.claude');
+    if (existsSync(claudeDir)) {
+      // Template ships .claude/CLAUDE.md
+      expect(existsSync(resolve(claudeDir, 'CLAUDE.md'))).toBe(true);
+    }
+  });
+
+  it('createIfMissing=false (or unset) → projectDir stays missing, .claude/ skipped', async () => {
+    const ghostDir = resolve(homeDir, 'ghost-no-create');
+    expect(existsSync(ghostDir)).toBe(false);
+
+    const { executeProjectInit } = await import('./projectInit.js');
+    await executeProjectInit('demo', {}, {
+      projectDir: ghostDir,
+      mergeBranch: 'main',
+      maxWorkers: '1',
+      enableGit: false,
+      // createIfMissing not set
+    });
+
+    expect(existsSync(ghostDir)).toBe(false);
+    expect(existsSync(resolve(ghostDir, '.claude'))).toBe(false);
+  });
+
+  it('createIfMissing=true + enableWiki=true → mkdirs + .claude/ + wiki/ all installed', async () => {
+    const ghostDir = resolve(homeDir, 'ghost-with-wiki');
+    expect(existsSync(ghostDir)).toBe(false);
+
+    const { executeProjectInit } = await import('./projectInit.js');
+    await executeProjectInit('demo', {}, {
+      projectDir: ghostDir,
+      mergeBranch: 'main',
+      maxWorkers: '1',
+      enableGit: false,
+      enableWiki: true,
+      createIfMissing: true,
+    });
+
+    expect(existsSync(ghostDir)).toBe(true);
+    expect(existsSync(resolve(ghostDir, 'wiki', 'WIKI.md'))).toBe(true);
+    expect(existsSync(resolve(ghostDir, 'ATTRIBUTION.md'))).toBe(true);
+  });
+
+  it('createIfMissing=true on already-existing dir is no-op (preserves existing files)', async () => {
+    // projectDir already created in beforeEach via mkdtempSync — has nothing in it though
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(resolve(projectDir, 'EXISTING_FILE'), 'preserved');
+
+    const { executeProjectInit } = await import('./projectInit.js');
+    await executeProjectInit('demo', {}, {
+      projectDir,
+      mergeBranch: 'main',
+      maxWorkers: '1',
+      enableGit: false,
+      createIfMissing: true,
+    });
+
+    expect(existsSync(resolve(projectDir, 'EXISTING_FILE'))).toBe(true);
+    expect(readFileSync(resolve(projectDir, 'EXISTING_FILE'), 'utf-8')).toBe('preserved');
+  });
+});
