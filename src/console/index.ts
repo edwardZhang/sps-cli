@@ -29,6 +29,7 @@ import { SseEventBus } from '../infra/sseBus.js';
 import { createContainer } from '../services/container.js';
 import { createCardsRoute } from './routes/cards.js';
 import { createChatRoute, createChatStreamRoute } from './routes/chat.js';
+import { createFsRoute } from './routes/fs.js';
 import { createLogsRoute, createLogsStreamRoute } from './routes/logs.js';
 import { createPipelineRoute } from './routes/pipeline.js';
 import { createProjectsRoute } from './routes/projects.js';
@@ -120,6 +121,7 @@ export async function startConsoleServer(
   app.route('/api/skills', createSkillsRoute(services.skills));
   app.route('/api/system', createSystemRoute(services.system));
   app.route('/api/chat', createChatRoute(log, services.chat));
+  app.route('/api/fs', createFsRoute());
 
   // ─── SSE ─────────────────────────────────────────────────────────────
   app.route('/stream/projects', createProjectStreamRoute(bus));

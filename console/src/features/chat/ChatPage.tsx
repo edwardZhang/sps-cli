@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, MessageCircle, Trash2, Send, Loader2, ChevronRight, Wrench, CheckCircle2, XCircle, Square, Folder, X } from 'lucide-react';
+import { Plus, MessageCircle, Trash2, Send, Loader2, ChevronRight, Wrench, CheckCircle2, XCircle, Square, Folder, FolderOpen, X, ArrowUp, Home } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -18,6 +18,7 @@ import {
   type ChatMessageBlock,
   type ChatSessionDetail,
 } from '../../shared/api/chat';
+import { browseDirectory } from '../../shared/api/fs';
 import { useDialog } from '../../shared/components/DialogProvider';
 
 export function ChatPage() {
@@ -587,6 +588,7 @@ function NewSessionDialog({
   const [title, setTitle] = useState('');
   const [cwd, setCwd] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const submit = async (): Promise<void> => {
     if (submitting) return;
@@ -651,14 +653,26 @@ function NewSessionDialog({
             >
               工作目录（可选）
             </label>
-            <input
-              id="new-session-cwd"
-              type="text"
-              className="nb-input w-full font-[family-name:var(--font-mono)] text-sm"
-              placeholder="/home/coral/projects/my-app"
-              value={cwd}
-              onChange={(e) => setCwd(e.target.value)}
-            />
+            <div className="flex gap-2">
+              <input
+                id="new-session-cwd"
+                type="text"
+                className="nb-input flex-1 font-[family-name:var(--font-mono)] text-sm"
+                placeholder="/home/coral/projects/my-app"
+                value={cwd}
+                onChange={(e) => setCwd(e.target.value)}
+              />
+              <button
+                type="button"
+                className="nb-btn flex-shrink-0"
+                onClick={() => setPickerOpen(true)}
+                aria-label="浏览选择目录"
+                title="浏览选择目录"
+              >
+                <FolderOpen size={14} strokeWidth={2.5} />
+                浏览
+              </button>
+            </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
               <Folder size={10} strokeWidth={2.5} className="inline mr-1 -mt-0.5" />
               Agent 在该目录下读写文件。绝对路径，必须存在。
@@ -684,6 +698,184 @@ function NewSessionDialog({
               创建
             </button>
           </div>
+        </div>
+      </div>
+
+      {pickerOpen && (
+        <DirectoryPicker
+          initialPath={cwd.trim() || undefined}
+          onCancel={() => setPickerOpen(false)}
+          onSelect={(picked) => {
+            setCwd(picked);
+            setPickerOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Directory picker (v0.51.5) ────────────────────────────────────
+
+function DirectoryPicker({
+  initialPath,
+  onCancel,
+  onSelect,
+}: {
+  initialPath?: string;
+  onCancel: () => void;
+  onSelect: (path: string) => void;
+}) {
+  const [path, setPath] = useState<string | null>(initialPath ?? null);
+
+  const browseQ = useQuery({
+    queryKey: ['fs-browse', path],
+    queryFn: () => browseDirectory(path ?? undefined),
+    // 不缓存 — 文件系统会变；每次开 picker 都拉新
+    staleTime: 0,
+    gcTime: 0,
+  });
+
+  // 初次进入用 server 返回的 home（没指定 path 时）
+  const currentPath = browseQ.data?.path ?? path ?? '';
+  const parent = browseQ.data?.parent ?? null;
+  const home = browseQ.data?.home ?? null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(45,55,72,0.5)] p-4"
+      onClick={onCancel}
+      role="presentation"
+    >
+      <div
+        className="nb-card bg-[var(--color-bg)] max-w-lg w-full p-5 flex flex-col"
+        style={{ maxHeight: '70vh' }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="选择目录"
+      >
+        <header className="flex items-center justify-between mb-3 shrink-0">
+          <h3 className="font-[family-name:var(--font-heading)] font-bold text-base">
+            选择目录
+          </h3>
+          <button
+            type="button"
+            className="p-1 hover:bg-[var(--color-bg-cream)] rounded"
+            onClick={onCancel}
+            aria-label="关闭"
+          >
+            <X size={14} strokeWidth={3} />
+          </button>
+        </header>
+
+        {/* 当前路径 + 导航按钮 */}
+        <div className="flex items-center gap-2 mb-3 shrink-0">
+          <button
+            type="button"
+            className="nb-btn flex-shrink-0"
+            style={{ padding: '4px 10px', fontSize: 12 }}
+            onClick={() => parent && setPath(parent)}
+            disabled={!parent || browseQ.isLoading}
+            aria-label="上级目录"
+            title="上级目录"
+          >
+            <ArrowUp size={12} strokeWidth={3} />
+          </button>
+          <button
+            type="button"
+            className="nb-btn flex-shrink-0"
+            style={{ padding: '4px 10px', fontSize: 12 }}
+            onClick={() => home && setPath(home)}
+            disabled={!home || browseQ.isLoading}
+            aria-label="回到 Home"
+            title="回到 Home"
+          >
+            <Home size={12} strokeWidth={3} />
+          </button>
+          <div
+            className="flex-1 min-w-0 nb-input font-[family-name:var(--font-mono)] text-xs px-2 py-1.5 truncate"
+            title={currentPath}
+            dir="rtl"
+          >
+            {currentPath || '...'}
+          </div>
+        </div>
+
+        {/* 条目列表 */}
+        <div className="flex-1 overflow-y-auto border-2 border-[var(--color-text)] rounded-lg bg-[var(--color-bg-cream)] min-h-0">
+          {browseQ.isLoading && (
+            <div className="flex items-center justify-center py-12 text-[var(--color-text-muted)]">
+              <Loader2 size={16} strokeWidth={3} className="animate-spin mr-2" />
+              加载中...
+            </div>
+          )}
+          {browseQ.isError && (
+            <div className="p-4 text-sm text-[var(--color-crashed)]">
+              <p className="font-bold mb-1">读取失败</p>
+              <p className="text-xs font-[family-name:var(--font-mono)] break-all">
+                {browseQ.error instanceof Error ? browseQ.error.message : String(browseQ.error)}
+              </p>
+            </div>
+          )}
+          {browseQ.data && (
+            <ul className="divide-y-2 divide-[var(--color-text)]/20">
+              {browseQ.data.entries.length === 0 && (
+                <li className="p-4 text-xs text-[var(--color-text-subtle)] italic text-center">
+                  — 空目录 —
+                </li>
+              )}
+              {browseQ.data.entries.map((entry) => (
+                <li key={entry.name}>
+                  <button
+                    type="button"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--color-accent-mint)] disabled:opacity-50 disabled:cursor-not-allowed font-[family-name:var(--font-mono)]"
+                    disabled={!entry.isDirectory}
+                    onClick={() => {
+                      if (!entry.isDirectory) return;
+                      // 进入子目录（拼绝对路径）
+                      const sep = currentPath.endsWith('/') || currentPath.endsWith('\\') ? '' : '/';
+                      setPath(`${currentPath}${sep}${entry.name}`);
+                    }}
+                    title={entry.isDirectory ? `进入 ${entry.name}/` : '文件不可选'}
+                  >
+                    {entry.isDirectory ? (
+                      <Folder
+                        size={14}
+                        strokeWidth={2.5}
+                        className="flex-shrink-0 text-[var(--color-text)]"
+                      />
+                    ) : (
+                      <span className="w-3.5 h-3.5 flex-shrink-0" />
+                    )}
+                    <span className="truncate">{entry.name}</span>
+                    {entry.isDirectory && (
+                      <ChevronRight
+                        size={12}
+                        strokeWidth={2.5}
+                        className="ml-auto flex-shrink-0 text-[var(--color-text-muted)]"
+                      />
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="flex gap-2 justify-end pt-3 shrink-0">
+          <button type="button" className="nb-btn" onClick={onCancel}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="nb-btn nb-btn-primary"
+            onClick={() => onSelect(currentPath)}
+            disabled={!currentPath || browseQ.isLoading || browseQ.isError}
+          >
+            <CheckCircle2 size={14} strokeWidth={3} />
+            选此目录
+          </button>
         </div>
       </div>
     </div>
