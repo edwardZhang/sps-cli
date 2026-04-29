@@ -178,19 +178,19 @@ card pipelines; see `sample.yaml.example` for syntax.
 ## 4. Card state machine
 
 ```
-v0.51.9 起：
+Since v0.51.9:
 
 Backlog → Todo → Inprogress → [QA / Review] → Done
    ↑↓
-Planning（用户手动暂存；不自动派发）
+Planning (manual staging by the user; not auto-dispatched)
                                   ↓ fail
                             NEEDS-FIX (halt)
 ```
 
 Default states (configurable in YAML `pm.card_states`):
-- **Planning** — v0.51.10+：人工暂存 / 草稿。**console "新卡片" 表单**默认入此状态；用户拖到 Backlog 才会跑。
-- **Backlog** — **`sps card add`（CLI / agent）**默认入此状态；StageEngine 抢卡执行。
-- **Todo** — StageEngine 已 prep（建分支 / worktree），下次 tick 派 worker
+- **Planning** — v0.51.10+: manual staging / draft. The **console "New card" form** defaults here; the user drags to Backlog to run.
+- **Backlog** — **`sps card add` (CLI / agent)** defaults here; StageEngine claims and runs the card.
+- **Todo** — StageEngine has prepped (branch / worktree); the next tick dispatches a worker.
 - **Inprogress** — worker active
 - **QA** (or **Review**) — code complete, awaiting human/auto verification
 - **Done** — finished
@@ -206,22 +206,22 @@ Stop hook reads this to detect which card the worker just finished.
 
 ### Where new cards land — depends on caller (v0.51.10+)
 
-| 调用方 | 默认入场 state | 行为 |
+| Caller | Default entry state | Behavior |
 |---|---|---|
-| **`sps card add`** (CLI / Worker / agent) | **Backlog** | 下次 tick 立即被 StageEngine 抢卡跑 |
-| **Console "新卡片" 表单** | **Planning** | 暂存；用户在看板拖到 Backlog 才会跑 |
-| **`POST /api/projects/<p>/cards`** 直接调 API | **Planning** | 默认人工语义；body 传 `initialState: 'Backlog'` 立即跑 |
+| **`sps card add`** (CLI / Worker / agent) | **Backlog** | StageEngine claims it on the next tick and runs |
+| **Console "New card" form** | **Planning** | Staged; runs only when the user drags it to Backlog on the board |
+| **`POST /api/projects/<p>/cards`** (direct API call) | **Planning** | Defaults to the manual semantics; pass `initialState: 'Backlog'` in the body to run immediately |
 
-**Agent 调 `sps card add` → 卡进 Backlog → 自动跑。** 这是 SPS 的主路径。Worker 在某个卡里需要"派生子任务"时用 `sps card add`，子任务会被下一个 tick 自动 pickup。
+**Agent calls `sps card add` → card lands in Backlog → runs automatically.** This is the main SPS path. When a Worker inside one card needs to "spawn a sub-task," it calls `sps card add` — the sub-task is auto-picked up on the next tick.
 
 ```bash
-# Agent / Worker 主路径 — 直接进 Backlog 自动跑
+# Agent / Worker main path — lands in Backlog and runs automatically
 sps card add <project> "Title" "Description"
 sps card add <project> "T" "D" --skills python,backend --labels feature
 
-# 想暂存（让用户审核 / 自己稍后拖派发）
+# Stage instead (let the user review / drag to dispatch later)
 sps card add <project> "Title" "Description" --draft
-                                  # → 卡进 Planning，等手动拖到 Backlog
+                                  # → card lands in Planning, awaits manual drag to Backlog
 ```
 
 ### View
@@ -241,13 +241,13 @@ sps reset <p> --card 5,6,7         # reset specific seq
 sps reset <p> --all                # full reset incl. Done
 ```
 
-注：`sps reset` 把卡退回 **Planning**（不是 Backlog） — 重置 = 退回人工控制，需手动拖回 Backlog 才会再跑。这是 v0.51.9 起的语义。
+Note: `sps reset` returns the card to **Planning** (not Backlog) — reset = back to manual control; you must drag to Backlog again to re-run. This semantic applies since v0.51.9.
 
 ### Card label vocabulary
 
 | Label | Meaning | Who sets |
 |---|---|---|
-| `AI-PIPELINE` | "SPS pipeline 卡" 的标记（v0.51.9+ 不再触发任何自动行为，仅识别） | `sps card add` 自动加 |
+| `AI-PIPELINE` | Marker for "SPS pipeline cards" (since v0.51.9+ no auto behavior is triggered — purely identification) | Auto-added by `sps card add` |
 | `STARTED-<stage>` | ACK signal — Claude received the prompt | UserPromptSubmit hook |
 | `COMPLETED-<stage>` | Worker finished a stage | Stop hook |
 | `CLAIMED` | StageEngine reserved a worker slot | Engine |
@@ -278,7 +278,7 @@ sps doctor <project>               # health check
 sps doctor <project> --fix         # auto-repair drift
 
 # One-off ticks (each engine separately, useful for cron / debugging)
-sps scheduler tick <p>             # v0.51.9 起为 no-op（dormant，保留接口）
+sps scheduler tick <p>             # No-op since v0.51.9 (dormant; interface kept for compatibility)
 sps pipeline tick <p>              # full StageEngine pass
 sps qa tick <p>                    # QA → Done finalization
 sps monitor tick <p>               # health probe (ACK timeout, stale runtime)
@@ -371,7 +371,7 @@ Live at `~/.coral/projects/<name>/conf` (shell `export VAR="value"` syntax).
 | `GITLAB_PROJECT` | — | `user/repo` (optional, for GitLab API) |
 | `GITLAB_MERGE_BRANCH` | `main` | Worker pushes here |
 | `PM_TOOL` | `markdown` | **Only `markdown` supported as of v0.42.0**. Plane/Trello removed. Cards live in `~/.coral/projects/<n>/cards/<state>/<seq>.md` |
-| `PIPELINE_LABEL` | `AI-PIPELINE` | Marker label auto-added by `sps card add` — identifies SPS-managed cards. v0.51.9+ 不再触发自动状态提升（卡按入场 state 决定是否跑） |
+| `PIPELINE_LABEL` | `AI-PIPELINE` | Marker label auto-added by `sps card add` — identifies SPS-managed cards. Since v0.51.9, no automatic state promotion is triggered (cards run based on their entry state) |
 | `MR_MODE` | `none` | `none` (push direct) / `create` (open MR; needs `GITLAB_PROJECT_ID`) |
 | `WORKER_TRANSPORT` | `acp-sdk` | Fixed; do not change |
 | `MAX_CONCURRENT_WORKERS` | `1` | Slot count; cards still serial within a project |
@@ -407,7 +407,7 @@ Infrastructure (manager/, providers/, daemon/)
 
 ### Engines
 
-- **SchedulerEngine** — v0.51.9 起 dormant（卡 add 直接进 Backlog，无需提升）
+- **SchedulerEngine** — dormant since v0.51.9 (cards added directly to Backlog; no promotion needed)
 - **StageEngine** — drives card through stages; builds prompt (skill + projectRules
   + memory + **wikiContext** + task description + **wikiUpdateReminder**); kicks
   Worker via ACP
@@ -447,7 +447,7 @@ Common issues:
 - **Worker not starting** — `sps worker ps`, then check `sps logs --err`. Often
   Claude API key missing or `claude-agent-acp` adapter not installed (`sps setup`
   reinstalls it).
-- **Cards stuck in Planning (v0.51.9+)** — Planning 是人工暂存。**Console 表单建卡默认到这里**，需手动拖到 Backlog 派发。Agent / `sps card add` 默认进 Backlog 自动跑（不会卡在 Planning）。
+- **Cards stuck in Planning (v0.51.9+)** — Planning is manual staging. **The Console form creates cards here by default**; drag to Backlog to dispatch. Agent / `sps card add` defaults to Backlog and auto-runs (won't get stuck in Planning).
 - **ACK timeout on every card** — Claude cold-start is slow with many skills/memory
   files. Raise `WORKER_ACK_TIMEOUT_S` in conf (default 300s as of v0.50.24).
 - **Console shows stale data** — SSE may have dropped; reload page; if persistent,

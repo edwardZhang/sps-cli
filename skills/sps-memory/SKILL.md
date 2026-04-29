@@ -87,7 +87,7 @@ load.
 
 - At the start of a card or task — auto-injected for you in pipeline mode
 - Before answering a question that could conflict with prior decisions
-- When the user says "do you remember", "we agreed", "我们之前说过"
+- When the user says "do you remember", "we agreed", or any equivalent phrasing in their language
 - Before recommending a pattern that might violate a known convention
 
 ```bash
