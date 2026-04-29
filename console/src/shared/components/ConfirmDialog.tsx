@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export function ConfirmDialog({
   title,
@@ -15,6 +16,7 @@ export function ConfirmDialog({
   onCancel: () => void;
   danger?: boolean;
 }) {
+  const { t } = useTranslation('common');
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onCancel();
@@ -37,7 +39,7 @@ export function ConfirmDialog({
         <p className="text-sm text-[var(--color-text-muted)] mb-5">{body}</p>
         <div className="flex gap-3 justify-end">
           <button className="nb-btn" onClick={onCancel} type="button">
-            取消
+            {t('actions.cancel')}
           </button>
           <button
             className={danger ? 'nb-btn nb-btn-danger' : 'nb-btn nb-btn-yellow'}

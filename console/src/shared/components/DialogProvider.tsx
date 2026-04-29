@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ConfirmDialog } from './ConfirmDialog';
 
 /**
@@ -104,6 +105,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const { t } = useTranslation('common');
   return (
     <DialogCtx.Provider value={{ confirm, alert, prompt }}>
       {children}
@@ -111,7 +113,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
         <ConfirmDialog
           title={state.opts.title}
           body={state.opts.body}
-          confirm={state.opts.confirm ?? '确定'}
+          confirm={state.opts.confirm ?? t('actions.ok')}
           danger={state.opts.danger}
           onConfirm={() => state.resolve(true)}
           onCancel={() => state.resolve(false)}
@@ -121,7 +123,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
         <AlertDialog
           title={state.opts.title}
           body={state.opts.body}
-          confirm={state.opts.confirm ?? '知道了'}
+          confirm={state.opts.confirm ?? t('actions.ok')}
           onClose={() => state.resolve()}
         />
       )}
@@ -131,8 +133,8 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           body={state.opts.body}
           placeholder={state.opts.placeholder}
           defaultValue={state.opts.defaultValue}
-          confirm={state.opts.confirm ?? '确定'}
-          cancel={state.opts.cancel ?? '取消'}
+          confirm={state.opts.confirm ?? t('actions.ok')}
+          cancel={state.opts.cancel ?? t('actions.cancel')}
           onConfirm={(v) => state.resolve(v)}
           onCancel={() => state.resolve(null)}
         />

@@ -67,7 +67,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
         <div className="p-6">
           <div className="nb-card max-w-2xl bg-[var(--color-crashed-bg)]">
             <h2 className="font-[family-name:var(--font-heading)] text-2xl font-bold mb-2">
-              💥 UI 崩了
+              💥 UI crashed
             </h2>
             <p className="text-sm mb-3 text-[var(--color-text-muted)]">
               {this.state.error.message}
@@ -86,7 +86,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
                 window.location.reload();
               }}
             >
-              刷新页面
+              Reload page
             </button>
           </div>
         </div>
