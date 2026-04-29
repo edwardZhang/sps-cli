@@ -74,6 +74,15 @@ export function chatSessionsDir(): string {
   return resolve(coralRoot(), 'chat-sessions');
 }
 
+/** $HOME/.coral/chat-attachments —— chat 附件上传目录（per-session 子目录） */
+export function chatAttachmentsDir(): string {
+  return resolve(coralRoot(), 'chat-attachments');
+}
+
+export function chatAttachmentsDirFor(sessionId: string): string {
+  return resolve(chatAttachmentsDir(), sessionId);
+}
+
 /** $HOME/.coral/skills —— user-level skills */
 export function userSkillsDir(): string {
   return resolve(coralRoot(), 'skills');

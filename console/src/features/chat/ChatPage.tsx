@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, MessageCircle, Trash2, Send, Loader2, ChevronRight, Wrench, CheckCircle2, XCircle, Square, Folder, FolderOpen, X } from 'lucide-react';
+import { Plus, MessageCircle, Trash2, Send, Loader2, ChevronRight, Wrench, CheckCircle2, XCircle, Square, Folder, FolderOpen, X, Paperclip, Image as ImageIcon, FileText, Eye } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -18,6 +18,11 @@ import {
   type ChatMessageBlock,
   type ChatSessionDetail,
 } from '../../shared/api/chat';
+import {
+  ATTACHMENT_MAX_BYTES,
+  attachmentUrl,
+  uploadAttachment,
+} from '../../shared/api/fs';
 import { DirectoryPicker } from '../../shared/components/DirectoryPicker';
 import { useDialog } from '../../shared/components/DialogProvider';
 
@@ -53,6 +58,18 @@ export function ChatPage() {
 
   // v0.51.4: 新建对话 dialog 状态（指定 cwd）
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+
+  // v0.51.8: 当前 draft 的附件（绝对路径数组）+ 上传中状态
+  const [draftAttachments, setDraftAttachments] = useState<
+    Array<{ path: string; name: string }>
+  >([]);
+  const [uploading, setUploading] = useState(false);
+  // 浏览本机文件 picker（用 mode=file 的 DirectoryPicker）
+  const [filePickerOpen, setFilePickerOpen] = useState(false);
+  // 拖拽进 input 区的视觉反馈
+  const [dragOver, setDragOver] = useState(false);
+  // 预览模态：点 chip / 消息附件触发
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
 
   // 订阅 SSE，仅当 sessionId 存在
   useEffect(() => {
@@ -314,7 +331,9 @@ export function ChatPage() {
 
   const handleSend = useCallback(async (): Promise<void> => {
     const content = draft.trim();
-    if (!content || sending) return;
+    // v0.51.8: 允许仅含附件无文本的发送（content 至少一个附件名替代）
+    if (!content && draftAttachments.length === 0) return;
+    if (sending) return;
 
     let id = sessionId;
     if (!id) {
@@ -325,12 +344,14 @@ export function ChatPage() {
     }
 
     // 乐观 UI: 立刻把 user msg 塞进 cache（临时 id 前缀 optim- 便于之后识别替换）
+    const attachmentPaths = draftAttachments.map((a) => a.path);
     const optimisticUser: ChatMessage = {
       id: `optim-${Date.now()}`,
       role: 'user',
-      content,
+      content: content || '(附件)',
       ts: new Date().toISOString(),
       status: 'complete',
+      attachments: attachmentPaths.length > 0 ? attachmentPaths : undefined,
     };
     qc.setQueryData<ChatSessionDetail | undefined>(['chat-session', id], (old) => {
       if (!old) {
@@ -338,7 +359,7 @@ export function ChatPage() {
           id,
           createdAt: optimisticUser.ts,
           lastMessageAt: optimisticUser.ts,
-          title: content.slice(0, 60),
+          title: content.slice(0, 60) || '附件',
           project: null,
           messageCount: 1,
           messages: [optimisticUser],
@@ -353,9 +374,10 @@ export function ChatPage() {
     });
 
     setDraft('');
+    setDraftAttachments([]);
     setSending(true);
     try {
-      await postMessage(id, content);
+      await postMessage(id, content || '(请查看附件)', attachmentPaths.length > 0 ? attachmentPaths : undefined);
       // 不用 await response — assistant chunks 走 SSE
     } catch (err) {
       setSending(false);
@@ -366,7 +388,47 @@ export function ChatPage() {
         body: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [draft, sending, sessionId, qc, nav, alert]);
+  }, [draft, draftAttachments, sending, sessionId, qc, nav, alert]);
+
+  // v0.51.8: 拖拽 / 粘贴文件统一走这条路径（上传 → 加 chip）
+  const ingestFile = useCallback(
+    async (file: File): Promise<void> => {
+      // 1. 大小预校验
+      if (file.size > ATTACHMENT_MAX_BYTES) {
+        void alert({
+          title: '文件超过上限',
+          body: `单文件上限 50 MB；当前 ${(file.size / 1024 / 1024).toFixed(2)} MB（${file.name}）`,
+        });
+        return;
+      }
+      // 2. 确保 session 存在（拖到尚未建 session 的 chat 区时自动建）
+      let id = sessionId;
+      if (!id) {
+        const s = await createSession();
+        qc.invalidateQueries({ queryKey: ['chat-sessions'] });
+        id = s.id;
+        nav(`/chat/${id}`, { replace: true });
+      }
+      // 3. 上传
+      setUploading(true);
+      try {
+        const r = await uploadAttachment(id, file);
+        setDraftAttachments((prev) => [...prev, { path: r.path, name: r.name }]);
+      } catch (err) {
+        void alert({
+          title: '附件上传失败',
+          body: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        setUploading(false);
+      }
+    },
+    [sessionId, qc, nav, alert],
+  );
+
+  const removeAttachment = useCallback((path: string): void => {
+    setDraftAttachments((prev) => prev.filter((a) => a.path !== path));
+  }, []);
 
   const handleDelete = useCallback(
     async (id: string): Promise<void> => {
@@ -490,7 +552,12 @@ export function ChatPage() {
             </header>
             <div ref={streamRef} className="flex-1 overflow-auto p-4 flex flex-col gap-4">
               {(currentQ.data?.messages ?? []).map((m) => (
-                <MessageBubble key={m.id} msg={m} />
+                <MessageBubble
+                  key={m.id}
+                  msg={m}
+                  sessionId={sessionId ?? null}
+                  onPreviewAttachment={(p) => setPreviewPath(p)}
+                />
               ))}
               {pending && (
                 <StreamingBubble pending={pending} />
@@ -501,11 +568,83 @@ export function ChatPage() {
                 </p>
               )}
             </div>
-            <div className="border-t-2 border-[var(--color-text)] p-3 bg-[var(--color-bg-cream)]">
+            <div
+              className={[
+                'border-t-2 border-[var(--color-text)] p-3 bg-[var(--color-bg-cream)] transition-colors',
+                dragOver ? 'bg-[var(--color-accent-mint)]' : '',
+              ].join(' ')}
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes('Files')) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                if (!dragOver) setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                if (!e.dataTransfer.types.includes('Files')) return;
+                e.preventDefault();
+                setDragOver(false);
+                const files = Array.from(e.dataTransfer.files ?? []);
+                for (const f of files) void ingestFile(f);
+              }}
+            >
+              {/* v0.51.8: 附件 chips */}
+              {(draftAttachments.length > 0 || uploading) && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {draftAttachments.map((a) => (
+                    <button
+                      key={a.path}
+                      type="button"
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--color-bg)] border-2 border-[var(--color-text)] text-xs font-[family-name:var(--font-mono)] hover:bg-[var(--color-accent-mint)] group"
+                      onClick={() => setPreviewPath(a.path)}
+                      title={`${a.name}\n${a.path}\n点击预览`}
+                    >
+                      {isImagePath(a.path) ? (
+                        <ImageIcon size={11} strokeWidth={2.5} className="flex-shrink-0" />
+                      ) : (
+                        <FileText size={11} strokeWidth={2.5} className="flex-shrink-0" />
+                      )}
+                      <span className="truncate max-w-[180px]">{a.name}</span>
+                      <span
+                        role="button"
+                        aria-label={`移除 ${a.name}`}
+                        className="ml-1 hover:text-[var(--color-crashed)] cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeAttachment(a.path);
+                        }}
+                      >
+                        <X size={11} strokeWidth={3} />
+                      </span>
+                    </button>
+                  ))}
+                  {uploading && (
+                    <span className="flex items-center gap-1.5 px-2 py-1 text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">
+                      <Loader2 size={11} strokeWidth={2.5} className="animate-spin" />
+                      上传中...
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="flex gap-2 items-end">
+                {/* v0.51.8: 附件按钮 → 浏览本机文件 picker */}
+                <button
+                  type="button"
+                  className="nb-btn flex-shrink-0"
+                  onClick={() => setFilePickerOpen(true)}
+                  disabled={sending}
+                  aria-label="附加本地文件"
+                  title="附加本地文件（也可拖拽 / 粘贴图片）"
+                >
+                  <Paperclip size={14} strokeWidth={2.5} />
+                </button>
                 <textarea
                   className="nb-input flex-1 resize-none"
-                  placeholder="说点什么… (Enter 发送，Shift+Enter 换行)"
+                  placeholder={
+                    dragOver
+                      ? '松开鼠标以附加文件…'
+                      : '说点什么… (Enter 发送，Shift+Enter 换行，可拖入文件 / 粘贴图片)'
+                  }
                   rows={2}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
@@ -513,6 +652,17 @@ export function ChatPage() {
                     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                       e.preventDefault();
                       handleSend();
+                    }
+                  }}
+                  onPaste={(e) => {
+                    // 图片：捕获并上传；文本：保持默认（粘进 textarea）
+                    const items = Array.from(e.clipboardData.items ?? []);
+                    const imageItems = items.filter((it) => it.kind === 'file' && it.type.startsWith('image/'));
+                    if (imageItems.length === 0) return;
+                    e.preventDefault();
+                    for (const it of imageItems) {
+                      const f = it.getAsFile();
+                      if (f) void ingestFile(f);
                     }
                   }}
                   aria-label="消息输入"
@@ -531,7 +681,7 @@ export function ChatPage() {
                   <button
                     className="nb-btn nb-btn-primary"
                     onClick={handleSend}
-                    disabled={!draft.trim() || sending}
+                    disabled={(!draft.trim() && draftAttachments.length === 0) || sending}
                     type="button"
                     aria-label="发送"
                   >
@@ -572,6 +722,183 @@ export function ChatPage() {
           onCreate={(input) => handleNewSession(input)}
         />
       )}
+
+      {/* v0.51.8: 浏览本机文件 picker（mode=file） */}
+      {filePickerOpen && (
+        <DirectoryPicker
+          mode="file"
+          title="选择附件文件"
+          initialPath={currentQ.data?.cwd ?? undefined}
+          onCancel={() => setFilePickerOpen(false)}
+          onSelect={(picked) => {
+            // 同名 / 已加过 → 跳过
+            setDraftAttachments((prev) => {
+              if (prev.some((a) => a.path === picked)) return prev;
+              const name = picked.split(/[\\/]/).pop() || picked;
+              return [...prev, { path: picked, name }];
+            });
+            setFilePickerOpen(false);
+          }}
+        />
+      )}
+
+      {/* v0.51.8: 附件预览模态 */}
+      {previewPath && sessionId && (
+        <AttachmentPreview
+          sessionId={sessionId}
+          path={previewPath}
+          onClose={() => setPreviewPath(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function isImagePath(path: string): boolean {
+  return /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(path);
+}
+
+function isPdfPath(path: string): boolean {
+  return /\.pdf$/i.test(path);
+}
+
+function isTextPath(path: string): boolean {
+  return /\.(txt|md|log|json|yaml|yml|csv|html|xml|tsx?|jsx?|css|sh|ya?ml|conf|toml|ini|env|gitignore|sql|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp)$/i.test(
+    path,
+  );
+}
+
+// ─── Attachment preview modal (v0.51.8) ────────────────────────────
+
+function AttachmentPreview({
+  sessionId,
+  path,
+  onClose,
+}: {
+  sessionId: string;
+  path: string;
+  onClose: () => void;
+}) {
+  const [textContent, setTextContent] = useState<string | null>(null);
+  const [textErr, setTextErr] = useState<string | null>(null);
+
+  // ESC 关闭
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  // 文本类型 → fetch 并展示文本
+  useEffect(() => {
+    if (!isTextPath(path)) return;
+    let aborted = false;
+    fetch(attachmentUrl(sessionId, path))
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status}`);
+        return res.text();
+      })
+      .then((txt) => {
+        if (aborted) return;
+        // 截断展示，避免巨型文件吃 DOM
+        setTextContent(txt.length > 200_000 ? txt.slice(0, 200_000) + '\n\n…(truncated)' : txt);
+      })
+      .catch((err) => {
+        if (aborted) return;
+        setTextErr(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      aborted = true;
+    };
+  }, [sessionId, path]);
+
+  const url = attachmentUrl(sessionId, path);
+  const name = path.split(/[\\/]/).pop() ?? path;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(45,55,72,0.6)] p-4"
+      role="presentation"
+    >
+      <div
+        className="nb-card bg-[var(--color-bg)] max-w-3xl w-full p-5 flex flex-col"
+        style={{ maxHeight: '85vh' }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`预览 ${name}`}
+      >
+        <header className="flex items-center justify-between mb-3 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <Eye size={16} strokeWidth={2.5} className="flex-shrink-0" />
+            <h3 className="font-[family-name:var(--font-heading)] font-bold text-base truncate">
+              {name}
+            </h3>
+          </div>
+          <button
+            type="button"
+            className="p-1 hover:bg-[var(--color-bg-cream)] rounded flex-shrink-0"
+            onClick={onClose}
+            aria-label="关闭"
+          >
+            <X size={16} strokeWidth={3} />
+          </button>
+        </header>
+        <p
+          className="text-[10px] text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] truncate mb-2 shrink-0"
+          title={path}
+          dir="rtl"
+        >
+          {path}
+        </p>
+        <div className="flex-1 overflow-auto border-2 border-[var(--color-text)] rounded-lg bg-[var(--color-bg-cream)] min-h-0">
+          {isImagePath(path) && (
+            <div className="flex items-center justify-center p-4">
+              {/* eslint-disable-next-line jsx-a11y/img-redundant-alt */}
+              <img
+                src={url}
+                alt={`Preview: ${name}`}
+                className="max-w-full max-h-[60vh] object-contain"
+              />
+            </div>
+          )}
+          {isPdfPath(path) && (
+            <iframe
+              src={url}
+              title={`PDF: ${name}`}
+              className="w-full"
+              style={{ height: '60vh', border: 0 }}
+            />
+          )}
+          {isTextPath(path) && (
+            <pre className="p-3 text-xs font-[family-name:var(--font-mono)] whitespace-pre-wrap break-words">
+              {textErr ? (
+                <span className="text-[var(--color-crashed)]">读取失败: {textErr}</span>
+              ) : textContent === null ? (
+                <span className="text-[var(--color-text-muted)]">加载中...</span>
+              ) : (
+                textContent
+              )}
+            </pre>
+          )}
+          {!isImagePath(path) && !isPdfPath(path) && !isTextPath(path) && (
+            <div className="p-6 text-center text-sm text-[var(--color-text-muted)]">
+              <p className="mb-3">此文件类型不支持内联预览。</p>
+              <a
+                href={url}
+                download={name}
+                className="nb-btn nb-btn-primary inline-flex"
+              >
+                下载
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -727,13 +1054,22 @@ function NewSessionDialog({
   );
 }
 
-function MessageBubble({ msg }: { msg: ChatMessage }) {
+function MessageBubble({
+  msg,
+  sessionId,
+  onPreviewAttachment,
+}: {
+  msg: ChatMessage;
+  sessionId: string | null;
+  onPreviewAttachment: (path: string) => void;
+}) {
   const isUser = msg.role === 'user';
   const isError = msg.role === 'error';
   const blocks: ChatMessageBlock[] =
     msg.blocks && msg.blocks.length > 0
       ? msg.blocks
       : [{ type: 'text', text: msg.content }];
+  const attachments = msg.attachments ?? [];
   return (
     <div className={isUser ? 'self-end max-w-3xl' : 'self-start max-w-3xl'}>
       <div
@@ -756,6 +1092,19 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             <BlockRenderer key={i} block={b} />
           ))}
         </div>
+        {/* v0.51.8: 附件展示（缩略图 / chip） */}
+        {attachments.length > 0 && sessionId && (
+          <div className="mt-3 pt-3 border-t-2 border-dashed border-[var(--color-text)]/30 flex flex-wrap gap-2">
+            {attachments.map((p) => (
+              <AttachmentThumb
+                key={p}
+                sessionId={sessionId}
+                path={p}
+                onPreview={() => onPreviewAttachment(p)}
+              />
+            ))}
+          </div>
+        )}
         {msg.truncated && (
           <p className="mt-3 px-3 py-2 bg-[var(--color-stuck-bg)] border-2 border-[var(--color-stuck)] rounded-lg text-xs text-[var(--color-stuck)] font-bold">
             ⚠ 输出超过 10MB，已截断
@@ -763,6 +1112,51 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * 消息气泡内的附件展示：
+ *   - 图片：缩略图（点击放大预览）
+ *   - 其它：chip + icon
+ */
+function AttachmentThumb({
+  sessionId,
+  path,
+  onPreview,
+}: {
+  sessionId: string;
+  path: string;
+  onPreview: () => void;
+}) {
+  const name = path.split(/[\\/]/).pop() ?? path;
+  if (isImagePath(path)) {
+    return (
+      <button
+        type="button"
+        onClick={onPreview}
+        className="block rounded-md overflow-hidden border-2 border-[var(--color-text)] hover:shadow-[2px_2px_0_var(--color-text)] transition-shadow"
+        title={`${name}\n点击放大`}
+      >
+        <img
+          src={attachmentUrl(sessionId, path)}
+          alt={name}
+          className="block max-h-40 max-w-[12rem] object-cover"
+          loading="lazy"
+        />
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onPreview}
+      className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--color-bg)] border-2 border-[var(--color-text)] text-xs font-[family-name:var(--font-mono)] hover:bg-[var(--color-accent-mint)]"
+      title={`${name}\n${path}\n点击预览`}
+    >
+      <FileText size={11} strokeWidth={2.5} className="flex-shrink-0" />
+      <span className="truncate max-w-[200px]">{name}</span>
+    </button>
   );
 }
 

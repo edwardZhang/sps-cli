@@ -14,6 +14,12 @@ export interface ChatMessage {
   truncated?: boolean;
   ts: string;
   status?: 'streaming' | 'complete' | 'error';
+  /**
+   * v0.51.8: 用户消息附件（绝对路径数组）。
+   * - 拖拽 / 粘贴 / 上传按钮加进去的会先 POST /api/fs/upload，路径指向 chat-attachments/
+   * - 浏览本地文件挑的会保留原路径
+   */
+  attachments?: string[];
 }
 
 export interface ChatSessionSummary {
@@ -58,12 +64,18 @@ export async function deleteSession(id: string): Promise<void> {
 
 /**
  * 非阻塞：立刻返回 user 和 assistantId（pending），assistant 内容通过 SSE chunk + complete 推送。
+ *
+ * v0.51.8：支持附件（绝对路径数组）。后端会校验路径存在 + 拼到 prompt 末尾。
  */
-export async function postMessage(sessionId: string, content: string) {
+export async function postMessage(
+  sessionId: string,
+  content: string,
+  attachments?: string[],
+) {
   const res = await fetch(`/api/chat/sessions/${sessionId}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, attachments }),
   });
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return (await res.json()) as { user: ChatMessage; assistantId: string };

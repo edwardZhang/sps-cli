@@ -24,13 +24,21 @@ export function DirectoryPicker({
   onCancel,
   onSelect,
   title = '选择目录',
+  mode = 'directory',
 }: {
   initialPath?: string;
   onCancel: () => void;
   onSelect: (path: string) => void;
   title?: string;
+  /**
+   * v0.51.8：选什么
+   *  - 'directory'（默认）：仅目录可选，"选此目录" 关闭
+   *  - 'file'：文件可选；目录可进入，但不能"选"；"使用此文件" 仅文件高亮时启用
+   */
+  mode?: 'directory' | 'file';
 }) {
   const [path, setPath] = useState<string | null>(initialPath ?? null);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
   const browseQ = useQuery({
     queryKey: ['fs-browse', path],
@@ -139,40 +147,70 @@ export function DirectoryPicker({
                   — 空目录 —
                 </li>
               )}
-              {browseQ.data.entries.map((entry) => (
-                <li key={entry.name}>
-                  <button
-                    type="button"
-                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--color-accent-mint)] disabled:opacity-50 disabled:cursor-not-allowed font-[family-name:var(--font-mono)]"
-                    disabled={!entry.isDirectory}
-                    onClick={() => {
-                      if (!entry.isDirectory) return;
-                      const sep =
-                        currentPath.endsWith('/') || currentPath.endsWith('\\') ? '' : '/';
-                      setPath(`${currentPath}${sep}${entry.name}`);
-                    }}
-                    title={entry.isDirectory ? `进入 ${entry.name}/` : '文件不可选'}
-                  >
-                    {entry.isDirectory ? (
-                      <Folder
-                        size={14}
-                        strokeWidth={2.5}
-                        className="flex-shrink-0 text-[var(--color-text)]"
-                      />
-                    ) : (
-                      <span className="w-3.5 h-3.5 flex-shrink-0" />
-                    )}
-                    <span className="truncate">{entry.name}</span>
-                    {entry.isDirectory && (
-                      <ChevronRight
-                        size={12}
-                        strokeWidth={2.5}
-                        className="ml-auto flex-shrink-0 text-[var(--color-text-muted)]"
-                      />
-                    )}
-                  </button>
-                </li>
-              ))}
+              {browseQ.data.entries.map((entry) => {
+                const fullPath = (() => {
+                  const s =
+                    currentPath.endsWith('/') || currentPath.endsWith('\\') ? '' : '/';
+                  return `${currentPath}${s}${entry.name}`;
+                })();
+                const isFileSelected = mode === 'file' && selectedFile === fullPath;
+                // file mode: 目录 + 文件都可点击；directory mode: 仅目录
+                const clickable = entry.isDirectory || mode === 'file';
+                return (
+                  <li key={entry.name}>
+                    <button
+                      type="button"
+                      className={[
+                        'w-full flex items-center gap-2 px-3 py-2 text-left text-sm font-[family-name:var(--font-mono)]',
+                        'disabled:opacity-50 disabled:cursor-not-allowed',
+                        isFileSelected
+                          ? 'bg-[var(--color-accent-mint)] font-bold'
+                          : 'hover:bg-[var(--color-accent-mint)]',
+                      ].join(' ')}
+                      disabled={!clickable}
+                      onClick={() => {
+                        if (entry.isDirectory) {
+                          setSelectedFile(null);
+                          setPath(fullPath);
+                        } else if (mode === 'file') {
+                          setSelectedFile(fullPath);
+                        }
+                      }}
+                      onDoubleClick={() => {
+                        // file mode + 双击文件 = 直接确认（快捷）
+                        if (mode === 'file' && !entry.isDirectory) {
+                          onSelect(fullPath);
+                        }
+                      }}
+                      title={
+                        entry.isDirectory
+                          ? `进入 ${entry.name}/`
+                          : mode === 'file'
+                            ? `选择 ${entry.name}（双击直接确认）`
+                            : '文件不可选'
+                      }
+                    >
+                      {entry.isDirectory ? (
+                        <Folder
+                          size={14}
+                          strokeWidth={2.5}
+                          className="flex-shrink-0 text-[var(--color-text)]"
+                        />
+                      ) : (
+                        <span className="w-3.5 h-3.5 flex-shrink-0" />
+                      )}
+                      <span className="truncate">{entry.name}</span>
+                      {entry.isDirectory && (
+                        <ChevronRight
+                          size={12}
+                          strokeWidth={2.5}
+                          className="ml-auto flex-shrink-0 text-[var(--color-text-muted)]"
+                        />
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -181,15 +219,28 @@ export function DirectoryPicker({
           <button type="button" className="nb-btn" onClick={onCancel}>
             取消
           </button>
-          <button
-            type="button"
-            className="nb-btn nb-btn-primary"
-            onClick={() => onSelect(currentPath)}
-            disabled={!currentPath || browseQ.isLoading || browseQ.isError}
-          >
-            <CheckCircle2 size={14} strokeWidth={3} />
-            选此目录
-          </button>
+          {mode === 'file' ? (
+            <button
+              type="button"
+              className="nb-btn nb-btn-primary"
+              onClick={() => selectedFile && onSelect(selectedFile)}
+              disabled={!selectedFile || browseQ.isLoading || browseQ.isError}
+              title={selectedFile ?? '请先点选一个文件'}
+            >
+              <CheckCircle2 size={14} strokeWidth={3} />
+              使用此文件
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="nb-btn nb-btn-primary"
+              onClick={() => onSelect(currentPath)}
+              disabled={!currentPath || browseQ.isLoading || browseQ.isError}
+            >
+              <CheckCircle2 size={14} strokeWidth={3} />
+              选此目录
+            </button>
+          )}
         </div>
       </div>
     </div>

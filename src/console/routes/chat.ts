@@ -21,7 +21,7 @@ import type { Logger } from '../../core/logger.js';
 import { DaemonClient } from '../../daemon/daemonClient.js';
 import type { ChatService } from '../../services/ChatService.js';
 import { toHttpStatus, toProblemJson } from '../../shared/errors.js';
-import { chatSessionsDir } from '../../shared/runtimePaths.js';
+import { chatAttachmentsDirFor, chatSessionsDir } from '../../shared/runtimePaths.js';
 import { sendResult } from '../lib/resultToJson.js';
 
 const MAX_CONCURRENT_SESSIONS = 5;
@@ -48,6 +48,8 @@ export interface ChatMessage {
   truncated?: boolean;
   ts: string;
   status?: 'streaming' | 'complete' | 'error';
+  /** v0.51.8: 附件绝对路径列表（仅 user 消息有） */
+  attachments?: string[];
 }
 
 interface ChatSessionPersisted {
@@ -94,7 +96,10 @@ async function streamAssistantResponse(
   assistantId: string,
   userContent: string,
   log: Logger,
+  attachments?: string[],
 ): Promise<void> {
+  // v0.51.8：把附件路径附在用户消息末尾，让 Claude 自己用 Read 工具拉
+  const fullPrompt = formatPromptWithAttachments(userContent, attachments);
   if (!(await ensureDaemon())) {
     persistAndEmitComplete(
       sessionId,
@@ -222,7 +227,7 @@ async function streamAssistantResponse(
   })();
 
   try {
-    await client.startRun(slot, userContent, 'claude', sessionCwd);
+    await client.startRun(slot, fullPrompt, 'claude', sessionCwd);
   } catch (err) {
     subscription.cancel();
     activeSessions.delete(slot);
@@ -250,6 +255,17 @@ async function streamAssistantResponse(
   } finally {
     activeSessions.delete(slot);
   }
+}
+
+/**
+ * v0.51.8：在 user 消息末尾追加附件清单。Worker（Claude Code）能用 Read 工具
+ * 自己拉文件内容；图片 / PDF / 文本 / 等都原生支持。
+ */
+function formatPromptWithAttachments(text: string, attachments?: string[]): string {
+  if (!attachments || attachments.length === 0) return text;
+  const lines = ['', '[Attachments — read with Read tool when relevant]'];
+  for (const p of attachments) lines.push(`- ${p}`);
+  return text + '\n' + lines.join('\n');
 }
 
 function persistAndEmitComplete(sessionId: string, msg: ChatMessage, log: Logger): void {
@@ -309,6 +325,14 @@ export function createChatRoute(log: Logger, chat: ChatService): Hono {
     const id = c.req.param('id');
     const r = await chat.delete(id);
     if (!r.ok) return c.json(toProblemJson(r.error), toHttpStatus(r.error) as 400);
+    // v0.51.8：删除该 session 的附件目录（best effort）
+    try {
+      const { rmSync } = await import('node:fs');
+      const dir = chatAttachmentsDirFor(id);
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* non-fatal */
+    }
     chatBus.emit('chat.session.deleted', { sessionId: id });
     return c.body(null, 204);
   });
@@ -329,9 +353,34 @@ export function createChatRoute(log: Logger, chat: ChatService): Hono {
     if (!session) {
       return c.json({ type: 'not-found', title: 'Session not found', status: 404 }, 404);
     }
-    const body = (await c.req.json().catch(() => null)) as { content?: string } | null;
+    const body = (await c.req.json().catch(() => null)) as
+      | { content?: string; attachments?: string[] }
+      | null;
     if (!body?.content || typeof body.content !== 'string') {
       return c.json({ type: 'validation', title: 'content required', status: 422 }, 422);
+    }
+    // v0.51.8：附件路径校验 — 必须绝对、必须存在；空数组 = 无附件
+    let attachments: string[] | undefined;
+    if (Array.isArray(body.attachments) && body.attachments.length > 0) {
+      const valid: string[] = [];
+      for (const p of body.attachments) {
+        if (typeof p !== 'string' || p.trim() === '') continue;
+        const trimmed = p.trim();
+        if (!/^([a-zA-Z]:[\\/]|\/)/.test(trimmed)) {
+          return c.json(
+            { type: 'validation', title: 'attachment must be absolute path', status: 422, detail: trimmed },
+            422,
+          );
+        }
+        if (!existsSync(trimmed)) {
+          return c.json(
+            { type: 'validation', title: 'attachment not found', status: 422, detail: trimmed },
+            422,
+          );
+        }
+        valid.push(trimmed);
+      }
+      if (valid.length > 0) attachments = valid;
     }
 
     if (activeSessions.has(chatSlot(id))) {
@@ -363,6 +412,7 @@ export function createChatRoute(log: Logger, chat: ChatService): Hono {
       content: body.content,
       ts: new Date().toISOString(),
       status: 'complete',
+      attachments,
     };
     session.messages.push(userMsg);
     session.lastMessageAt = userMsg.ts;
@@ -378,7 +428,7 @@ export function createChatRoute(log: Logger, chat: ChatService): Hono {
       ts: new Date().toISOString(),
     });
 
-    streamAssistantResponse(id, assistantId, body.content, log).catch((err) => {
+    streamAssistantResponse(id, assistantId, body.content, log, attachments).catch((err) => {
       log.error(`chat[${id}] stream error: ${err instanceof Error ? err.message : String(err)}`);
     });
 

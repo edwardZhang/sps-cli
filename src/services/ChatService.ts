@@ -28,6 +28,13 @@ export interface ChatMessage {
   readonly content: string;
   readonly ts: string;
   readonly blocks?: unknown[];
+  /**
+   * v0.51.8：用户消息可携带附件（绝对路径数组）。
+   * - 上传文件落在 ~/.coral/chat-attachments/<sessionId>/<stamped-name>
+   * - 本地挑选文件保留原始路径
+   * Worker prompt 拼接时会附在 user 消息末尾，让 Claude 自己 Read。
+   */
+  readonly attachments?: string[];
 }
 
 export interface ChatSession {
