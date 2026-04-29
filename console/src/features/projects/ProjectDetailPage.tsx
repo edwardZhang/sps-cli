@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { ArrowLeft, FolderGit2, Settings, Workflow, Trash2, Save, RefreshCw, Loader2, Check, Edit3, Plus } from 'lucide-react';
 import {
   createPipelineFile,
@@ -19,6 +20,7 @@ import { NewPipelineDialog } from './NewPipelineDialog';
 type Tab = 'overview' | 'config' | 'pipelines' | 'danger';
 
 export function ProjectDetailPage() {
+  const { t } = useTranslation('projects');
   const { name = '' } = useParams();
   const nav = useNavigate();
   const [tab, setTab] = useState<Tab>('overview');
@@ -37,24 +39,24 @@ export function ProjectDetailPage() {
           onClick={() => nav('/projects')}
           className="nb-btn"
           style={{ padding: '6px 12px' }}
-          aria-label="Back to projects"
+          aria-label={t('detail.backAria')}
         >
           <ArrowLeft size={14} strokeWidth={3} />
-          Back
+          {t('detail.back')}
         </button>
         <h1 className="font-[family-name:var(--font-heading)] text-3xl font-bold flex-1">
           {name}
         </h1>
         <Link to={`/board?project=${encodeURIComponent(name)}`} className="nb-btn nb-btn-mint">
-          Board
+          {t('detail.board')}
         </Link>
       </header>
 
       <nav className="flex gap-2 flex-wrap">
-        <TabBtn current={tab} value="overview" onSelect={setTab} icon={FolderGit2}>Overview</TabBtn>
-        <TabBtn current={tab} value="config" onSelect={setTab} icon={Settings}>Config</TabBtn>
+        <TabBtn current={tab} value="overview" onSelect={setTab} icon={FolderGit2}>{t('detail.tabs.overview')}</TabBtn>
+        <TabBtn current={tab} value="config" onSelect={setTab} icon={Settings}>{t('detail.tabs.config')}</TabBtn>
         <TabBtn current={tab} value="pipelines" onSelect={setTab} icon={Workflow}>Pipelines</TabBtn>
-        <TabBtn current={tab} value="danger" onSelect={setTab} icon={Trash2}>Danger zone</TabBtn>
+        <TabBtn current={tab} value="danger" onSelect={setTab} icon={Trash2}>{t('detail.tabs.danger')}</TabBtn>
       </nav>
 
       {tab === 'overview' && <OverviewTab name={name} data={projectQ.data} loading={projectQ.isLoading} />}
@@ -105,36 +107,37 @@ function OverviewTab({
   data: ReturnType<typeof useQuery<typeof getProject extends (n: string) => Promise<infer R> ? R : never>>['data'] | undefined;
   loading: boolean;
 }) {
+  const { t } = useTranslation('projects');
   if (loading) {
-    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">Loading…</p></div>;
+    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">{t('detail.loading')}</p></div>;
   }
   if (!data) {
     return (
       <div className="nb-card bg-[var(--color-crashed-bg)]">
-        <p>Project {name} not found or unreadable.</p>
+        <p>{t('detail.notFound', { name })}</p>
       </div>
     );
   }
   return (
     <div className="nb-card">
       <dl className="grid grid-cols-[160px_1fr] gap-y-3 text-sm">
-        <dt className="font-bold">Repository</dt>
+        <dt className="font-bold">{t('detail.repo')}</dt>
         <dd className="font-[family-name:var(--font-mono)]">{data.repoDir ?? '—'}</dd>
-        <dt className="font-bold">PM backend</dt>
+        <dt className="font-bold">{t('detail.pmBackend')}</dt>
         <dd className="font-[family-name:var(--font-mono)]">{data.pmBackend}</dd>
         <dt className="font-bold">Agent</dt>
         <dd className="font-[family-name:var(--font-mono)]">{data.agentProvider}</dd>
-        <dt className="font-bold">Cards</dt>
+        <dt className="font-bold">{t('detail.cards')}</dt>
         <dd className="font-[family-name:var(--font-mono)]">
-          {data.cards.total} total · {data.cards.inprogress} in progress · {data.cards.done} done
+          {t('detail.cardsSummary', { total: data.cards.total, ip: data.cards.inprogress, done: data.cards.done })}
         </dd>
-        <dt className="font-bold">Worker</dt>
+        <dt className="font-bold">{t('detail.workers')}</dt>
         <dd className="font-[family-name:var(--font-mono)]">
-          {data.workers.total} ({data.workers.active} active)
+          {t('detail.workersSummary', { total: data.workers.total, active: data.workers.active })}
         </dd>
         <dt className="font-bold">Pipeline</dt>
         <dd className="font-[family-name:var(--font-mono)]">{data.pipelineStatus}</dd>
-        <dt className="font-bold">Last activity</dt>
+        <dt className="font-bold">{t('detail.lastActivity')}</dt>
         <dd className="font-[family-name:var(--font-mono)]">
           {data.lastActivityAt ? new Date(data.lastActivityAt).toLocaleString() : '—'}
         </dd>
@@ -144,6 +147,7 @@ function OverviewTab({
 }
 
 function ConfigTab({ name }: { name: string }) {
+  const { t } = useTranslation('projects');
   const qc = useQueryClient();
   const { alert } = useDialog();
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -176,22 +180,22 @@ function ConfigTab({ name }: { name: string }) {
     onError: (err) => {
       const status = (err as Error & { status?: number }).status;
       void alert({
-        title: status === 409 ? 'Config was modified elsewhere' : 'Save failed',
+        title: status === 409 ? t('detail.config.etagConflict') : t('detail.config.saveFailed'),
         body:
           status === 409
-            ? 'The conf file was modified while you were editing. Click "Reload" before editing again.'
+            ? t('detail.config.etagConflictBody')
             : err instanceof Error ? err.message : String(err),
       });
     },
   });
 
   if (isLoading) {
-    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">Loading…</p></div>;
+    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">{t('detail.config.loading')}</p></div>;
   }
   if (isError) {
     return (
       <div className="nb-card bg-[var(--color-crashed-bg)]">
-        <p>Load failed: {error instanceof Error ? error.message : String(error)}</p>
+        <p>{t('detail.config.loadFailed', { error: error instanceof Error ? error.message : String(error) })}</p>
       </div>
     );
   }
@@ -221,10 +225,10 @@ function ConfigTab({ name }: { name: string }) {
               refetch();
             }}
             disabled={saveMutation.isPending}
-            aria-label="Reload"
+            aria-label={t('detail.config.reloadAria')}
           >
             <RefreshCw size={13} strokeWidth={2.5} />
-            Reload
+            {t('detail.config.reload')}
           </button>
           <button
             type="button"
@@ -232,7 +236,7 @@ function ConfigTab({ name }: { name: string }) {
             style={{ padding: '6px 12px' }}
             onClick={() => saveMutation.mutate()}
             disabled={!dirty || saveMutation.isPending}
-            aria-label="Save config"
+            aria-label={t('detail.config.saveAria')}
           >
             {saveMutation.isPending ? (
               <Loader2 size={13} strokeWidth={3} className="animate-spin" />
@@ -241,7 +245,7 @@ function ConfigTab({ name }: { name: string }) {
             ) : (
               <Save size={13} strokeWidth={3} />
             )}
-            Save
+            {t('detail.config.save')}
           </button>
         </div>
       </div>
@@ -251,11 +255,11 @@ function ConfigTab({ name }: { name: string }) {
         value={draft ?? ''}
         onChange={(e) => setDraft(e.target.value)}
         spellCheck={false}
-        aria-label="Conf file editor"
+        aria-label={t('detail.config.editorAria')}
       />
       {dirty && (
         <p className="text-xs text-[var(--color-stuck)] mt-2 font-bold">
-          ● unsaved changes
+          {t('detail.config.unsaved')}
         </p>
       )}
     </div>
@@ -263,6 +267,7 @@ function ConfigTab({ name }: { name: string }) {
 }
 
 function PipelinesTab({ name }: { name: string }) {
+  const { t } = useTranslation('projects');
   const qc = useQueryClient();
   const { confirm, alert } = useDialog();
   const { data, isLoading } = useQuery({
@@ -277,7 +282,7 @@ function PipelinesTab({ name }: { name: string }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project-pipelines', name] }),
     onError: (err) => {
       void alert({
-        title: 'Switch failed',
+        title: t('detail.pipeline.switchFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -288,7 +293,7 @@ function PipelinesTab({ name }: { name: string }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project-pipelines', name] }),
     onError: (err) => {
       void alert({
-        title: 'Delete failed',
+        title: t('detail.pipeline.deleteFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -300,18 +305,18 @@ function PipelinesTab({ name }: { name: string }) {
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['project-pipelines', name] });
       setNewDialogOpen(false);
-      setEditingFile(res.name); // 新建后直接打开编辑器
+      setEditingFile(res.name);
     },
     onError: (err) => {
       void alert({
-        title: 'Create failed',
+        title: t('detail.pipeline.createFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
   });
 
   if (isLoading) {
-    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">Loading…</p></div>;
+    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">{t('detail.loading')}</p></div>;
   }
 
   // 合并 active + available 成一个统一列表显示
@@ -336,16 +341,16 @@ function PipelinesTab({ name }: { name: string }) {
             style={{ padding: '6px 12px', fontSize: 12 }}
             onClick={() => setNewDialogOpen(true)}
             disabled={createMutation.isPending}
-            aria-label="New pipeline"
+            aria-label={t('detail.pipeline.newAria')}
           >
             <Plus size={12} strokeWidth={3} />
-            New pipeline
+            {t('detail.pipeline.new')}
           </button>
         </div>
 
         {allRows.length === 0 ? (
           <p className="text-sm text-[var(--color-text-muted)] italic p-4 border-2 border-dashed border-[var(--color-text)] rounded-lg text-center">
-            No pipeline files yet. Click "New pipeline" to start.
+            {t('detail.pipeline.empty')}
           </p>
         ) : (
           <ul className="flex flex-col gap-2">
@@ -369,10 +374,10 @@ function PipelinesTab({ name }: { name: string }) {
                     className="nb-btn"
                     style={{ padding: '4px 10px', fontSize: 11 }}
                     onClick={() => setEditingFile(p.name)}
-                    aria-label={`Edit ${p.name}`}
+                    aria-label={t('detail.pipeline.editAria', { name: p.name })}
                   >
                     <Edit3 size={11} strokeWidth={2.5} />
-                    Edit
+                    {t('detail.pipeline.edit')}
                   </button>
                   {!p.isActive && (
                     <>
@@ -382,17 +387,17 @@ function PipelinesTab({ name }: { name: string }) {
                         style={{ padding: '4px 10px', fontSize: 11 }}
                         onClick={async () => {
                           const ok = await confirm({
-                            title: `Switch to ${p.name}`,
-                            body: `Current project.yaml will be overwritten with the contents of ${p.name}. Continue?`,
-                            confirm: 'Switch',
+                            title: t('detail.pipeline.switchTitle', { name: p.name }),
+                            body: t('detail.pipeline.switchBody', { name: p.name }),
+                            confirm: t('detail.pipeline.switchConfirm'),
                           });
                           if (!ok) return;
                           switchMutation.mutate(p.name);
                         }}
                         disabled={switchMutation.isPending}
-                        aria-label={`Switch to ${p.name}`}
+                        aria-label={t('detail.pipeline.switchAria', { name: p.name })}
                       >
-                        Switch
+                        {t('detail.pipeline.switch')}
                       </button>
                       <button
                         type="button"
@@ -400,16 +405,16 @@ function PipelinesTab({ name }: { name: string }) {
                         style={{ padding: '4px 10px', fontSize: 11 }}
                         onClick={async () => {
                           const ok = await confirm({
-                            title: `Delete ${p.name}`,
-                            body: 'This pipeline file will be permanently deleted.',
-                            confirm: 'Delete',
+                            title: t('detail.pipeline.deleteTitle', { name: p.name }),
+                            body: t('detail.pipeline.deleteBody'),
+                            confirm: t('detail.pipeline.deleteConfirm'),
                             danger: true,
                           });
                           if (!ok) return;
                           deleteMutation.mutate(p.name);
                         }}
                         disabled={deleteMutation.isPending}
-                        aria-label={`Delete ${p.name}`}
+                        aria-label={t('detail.pipeline.deleteAria', { name: p.name })}
                       >
                         <Trash2 size={11} strokeWidth={2.5} />
                       </button>
@@ -447,6 +452,7 @@ function PipelinesTab({ name }: { name: string }) {
 }
 
 function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) {
+  const { t } = useTranslation('projects');
   const nav = useNavigate();
   const qc = useQueryClient();
   const { alert } = useDialog();
@@ -459,16 +465,16 @@ function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) 
       qc.invalidateQueries({ queryKey: ['projects'] });
       const removed = result.claudeRemoved.filter((r) => r.ok).map((r) => r.path);
       void alert({
-        title: 'Deleted',
+        title: t('detail.danger.deletedTitle'),
         body:
           removed.length > 0
-            ? `Project deleted. Also cleaned up:\n${removed.join('\n')}`
-            : 'Project deleted.',
+            ? t('detail.danger.deletedBodyClean', { paths: removed.join('\n') })
+            : t('detail.danger.deletedBody'),
       }).then(() => nav('/projects'));
     },
     onError: (err) => {
       void alert({
-        title: 'Delete failed',
+        title: t('detail.danger.deleteFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -477,10 +483,10 @@ function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) 
   return (
     <div className="nb-card bg-[var(--color-crashed-bg)]">
       <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold mb-2 text-[var(--color-crashed)]">
-        Delete project
+        {t('detail.danger.delete')}
       </h2>
       <p className="text-sm mb-4">
-        This will clean up <code className="font-[family-name:var(--font-mono)] bg-[var(--color-bg)] border-2 border-[var(--color-text)] px-1.5 py-0.5 rounded">~/.coral/projects/{name}/</code>(including all cards, runtime, logs).
+        {t('detail.danger.deleteHint', { path: `~/.coral/projects/${name}/` })}
       </p>
 
       {repoDir && (
@@ -492,12 +498,12 @@ function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) 
             className="mt-0.5"
           />
           <div className="flex-1">
-            <div className="text-sm font-bold">Also clean up the repo's .claude/</div>
+            <div className="text-sm font-bold">{t('detail.danger.alsoCleanRepo')}</div>
             <div className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">
               {repoDir}/.claude/
             </div>
             <div className="text-xs text-[var(--color-text-muted)] mt-1">
-              The repo itself is untouched; only this directory is cleaned.
+              {t('detail.danger.repoUntouched')}
             </div>
           </div>
         </label>
@@ -506,7 +512,7 @@ function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) 
       <div className="mb-4">
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-bold">
-            Type the project name <code className="font-[family-name:var(--font-mono)] text-xs">{name}</code> to confirm:
+            {t('detail.danger.confirmType', { name })}
           </span>
           <input
             type="text"
@@ -523,14 +529,14 @@ function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) 
         className="nb-btn nb-btn-danger"
         disabled={confirmName !== name || deleteMutation.isPending}
         onClick={() => deleteMutation.mutate()}
-        aria-label="Permanently delete project"
+        aria-label={t('detail.danger.deleteAria')}
       >
         {deleteMutation.isPending ? (
           <Loader2 size={14} strokeWidth={3} className="animate-spin" />
         ) : (
           <Trash2 size={14} strokeWidth={3} />
         )}
-        Permanently delete
+        {t('detail.danger.deleteBtn')}
       </button>
     </div>
   );

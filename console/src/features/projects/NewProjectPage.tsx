@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { ArrowLeft, FolderOpen, Loader2, Plus } from 'lucide-react';
 import { createProject, type CreateProjectInput } from '../../shared/api/projects';
 import { DirectoryPicker } from '../../shared/components/DirectoryPicker';
@@ -15,6 +16,7 @@ import { useDialog } from '../../shared/components/DialogProvider';
  *   - ACK 超时分钟数加入配置（默认 5 分钟）
  */
 export function NewProjectPage() {
+  const { t } = useTranslation('projects');
   const nav = useNavigate();
   const qc = useQueryClient();
   const { alert } = useDialog();
@@ -41,7 +43,7 @@ export function NewProjectPage() {
     },
     onError: (err) => {
       void alert({
-        title: 'Create failed',
+        title: t('newProject.createFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -58,13 +60,13 @@ export function NewProjectPage() {
           onClick={() => nav('/projects')}
           className="nb-btn"
           style={{ padding: '6px 12px' }}
-          aria-label="Back to projects"
+          aria-label={t('newProject.backAria')}
         >
           <ArrowLeft size={14} strokeWidth={3} />
-          Back
+          {t('newProject.back')}
         </button>
         <h1 className="font-[family-name:var(--font-heading)] text-3xl font-bold">
-          New project
+          {t('newProject.title')}
         </h1>
       </header>
 
@@ -78,13 +80,13 @@ export function NewProjectPage() {
           className="flex flex-col gap-5"
         >
           <Field
-            label="Project name"
-            hint="Letters, digits, _ and - only. e.g. acme-web"
+            label={t('newProject.name')}
+            hint={t('newProject.nameHint')}
           >
             <input
               type="text"
               className="nb-input w-full font-[family-name:var(--font-mono)]"
-              placeholder="e.g. acme-web"
+              placeholder={t('newProject.namePlaceholder')}
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               autoFocus
@@ -92,12 +94,12 @@ export function NewProjectPage() {
             />
             {form.name && !nameValid && (
               <p className="text-xs text-[var(--color-crashed)] mt-1">
-                Name may only contain a-z A-Z 0-9 _ -
+                {t('newProject.nameInvalid')}
               </p>
             )}
           </Field>
 
-          <Field label="Project directory" hint="Absolute path on this machine (code or docs are both fine). Independent of the git toggle.">
+          <Field label={t('newProject.dir')} hint={t('newProject.dirHint')}>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -111,11 +113,11 @@ export function NewProjectPage() {
                 type="button"
                 className="nb-btn flex-shrink-0"
                 onClick={() => setPickerOpen(true)}
-                aria-label="Browse for project directory"
-                title="Browse for project directory"
+                aria-label={t('newProject.dirBrowseAria')}
+                title={t('newProject.dirBrowseAria')}
               >
                 <FolderOpen size={14} strokeWidth={2.5} />
-                Browse
+                {t('newProject.dirBrowse')}
               </button>
             </div>
             <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
@@ -126,13 +128,13 @@ export function NewProjectPage() {
                 className="w-4 h-4 cursor-pointer"
               />
               <span className="text-xs text-[var(--color-text-muted)]">
-                Auto-create the directory if missing (recommended — otherwise .claude/ and wiki/ install are skipped)
+                {t('newProject.dirAutoCreate')}
               </span>
             </label>
           </Field>
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Max workers">
+            <Field label={t('newProject.maxWorkers')}>
               <input
                 type="number"
                 min="1"
@@ -142,7 +144,7 @@ export function NewProjectPage() {
                 onChange={(e) => setForm({ ...form, maxWorkers: e.target.value })}
               />
             </Field>
-            <Field label="ACK timeout (minutes)" hint="How long after launch with no ACK before the worker is treated as failed">
+            <Field label={t('newProject.ackTimeout')} hint={t('newProject.ackTimeoutHint')}>
               <input
                 type="number"
                 min="1"
@@ -154,7 +156,6 @@ export function NewProjectPage() {
             </Field>
           </div>
 
-          {/* Git 开关 + 相关字段 */}
           <div className="pt-3 border-t-2 border-[var(--color-text)] border-dashed">
             <label className="flex items-center gap-3 mb-3 cursor-pointer select-none">
               <input
@@ -163,15 +164,15 @@ export function NewProjectPage() {
                 onChange={(e) => setForm({ ...form, enableGit: e.target.checked })}
                 className="w-4 h-4 cursor-pointer"
               />
-              <span className="text-sm font-bold">Enable Git (Worker auto-commits + pushes)</span>
+              <span className="text-sm font-bold">{t('newProject.enableGit')}</span>
             </label>
             <p className="text-xs text-[var(--color-text-muted)] mb-3">
-              When off, the Worker just runs the task without version control; good for docs/data projects.
+              {t('newProject.enableGitHint')}
             </p>
 
             {form.enableGit !== false && (
               <div className="flex flex-col gap-4 bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4">
-                <Field label="Merge branch">
+                <Field label={t('newProject.mergeBranch')}>
                   <input
                     type="text"
                     className="nb-input w-full font-[family-name:var(--font-mono)]"
@@ -179,7 +180,7 @@ export function NewProjectPage() {
                     onChange={(e) => setForm({ ...form, mergeBranch: e.target.value })}
                   />
                 </Field>
-                <Field label="Git remote project path" hint="e.g. user/repo. Empty skips the remote API (local commit/push only).">
+                <Field label={t('newProject.remotePath')} hint={t('newProject.remotePathHint')}>
                   <input
                     type="text"
                     className="nb-input w-full font-[family-name:var(--font-mono)]"
@@ -189,7 +190,7 @@ export function NewProjectPage() {
                   />
                 </Field>
                 {form.gitlabProject && (
-                  <Field label="GitLab project ID" hint="numeric; GitHub users leave empty">
+                  <Field label={t('newProject.gitlabId')} hint={t('newProject.gitlabIdHint')}>
                     <input
                       type="text"
                       className="nb-input w-full font-[family-name:var(--font-mono)]"
@@ -203,7 +204,6 @@ export function NewProjectPage() {
             )}
           </div>
 
-          {/* Wiki 知识库开关 (v0.51.0) */}
           <div className="pt-3 border-t-2 border-[var(--color-text)] border-dashed">
             <label className="flex items-center gap-3 mb-3 cursor-pointer select-none">
               <input
@@ -212,19 +212,18 @@ export function NewProjectPage() {
                 onChange={(e) => setForm({ ...form, enableWiki: e.target.checked })}
                 className="w-4 h-4 cursor-pointer"
               />
-              <span className="text-sm font-bold">Enable Wiki knowledge base (per-project)</span>
+              <span className="text-sm font-bold">{t('newProject.enableWiki')}</span>
             </label>
             <p className="text-xs text-[var(--color-text-muted)]">
-              Scaffolds <code className="font-mono">wiki/</code> dir and injects 5-layer retrieval context plus wiki-update hints into Worker prompts. You can also enable later with <code className="font-mono">sps wiki init</code> .
+              {t('newProject.enableWikiHintPrefix')}<code className="font-mono">wiki/</code>{t('newProject.enableWikiHintMid')}<code className="font-mono">sps wiki init</code>{t('newProject.enableWikiHintSuffix')}
             </p>
           </div>
 
-          {/* 通知 */}
           <div className="pt-3 border-t-2 border-[var(--color-text)] border-dashed">
             <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider mb-3 text-[var(--color-text-muted)]">
-              Notifications
+              {t('newProject.notifications')}
             </h3>
-            <Field label="Matrix room ID" hint="empty = use global config; blank = no notifications">
+            <Field label={t('newProject.matrixRoom')} hint={t('newProject.matrixRoomHint')}>
               <input
                 type="text"
                 className="nb-input w-full font-[family-name:var(--font-mono)]"
@@ -242,23 +241,23 @@ export function NewProjectPage() {
               onClick={() => nav('/projects')}
               disabled={mutation.isPending}
             >
-              Cancel
+              {t('newProject.cancel')}
             </button>
             <button
               type="submit"
               className="nb-btn nb-btn-primary"
               disabled={!canSubmit}
-              aria-label="Create project"
+              aria-label={t('newProject.createAria')}
             >
               {mutation.isPending ? (
                 <>
                   <Loader2 size={14} strokeWidth={3} className="animate-spin" />
-                  Creating…
+                  {t('newProject.creating')}
                 </>
               ) : (
                 <>
                   <Plus size={14} strokeWidth={3} />
-                  Create
+                  {t('newProject.create')}
                 </>
               )}
             </button>
@@ -268,7 +267,7 @@ export function NewProjectPage() {
 
       {pickerOpen && (
         <DirectoryPicker
-          title="Select project directory"
+          title={t('newProject.pickerTitle')}
           initialPath={form.projectDir.trim() || undefined}
           onCancel={() => setPickerOpen(false)}
           onSelect={(picked) => {

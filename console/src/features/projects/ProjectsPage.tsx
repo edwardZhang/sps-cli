@@ -1,9 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Activity, Plus, Users } from 'lucide-react';
 import { listProjects, type ProjectSummary } from '../../shared/api/projects';
 
 export function ProjectsPage() {
+  const { t } = useTranslation('projects');
   const nav = useNavigate();
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['projects'],
@@ -15,29 +17,29 @@ export function ProjectsPage() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold tracking-tight">
-            Projects 🎯
+            {t('title')}
           </h1>
           <p className="text-[var(--color-text-muted)] text-sm mt-1">
             {data
-              ? `${data.data.length} local projects`
+              ? t('list.summary', { count: data.data.length })
               : isLoading
-                ? 'Loading…'
-                : 'Click refresh to retry'}
+                ? t('list.loading')
+                : t('list.loadFailed')}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <button className="nb-btn nb-btn-yellow" onClick={() => refetch()} type="button">
             <Activity size={16} strokeWidth={2.5} />
-            Refresh
+            {t('list.refresh')}
           </button>
           <button
             className="nb-btn nb-btn-primary"
             type="button"
             onClick={() => nav('/projects/new')}
-            aria-label="New project"
+            aria-label={t('list.newProjectAria')}
           >
             <Plus size={16} strokeWidth={3} />
-            New project
+            {t('list.newProject')}
           </button>
         </div>
       </header>
@@ -47,7 +49,7 @@ export function ProjectsPage() {
       {isError && (
         <div className="nb-card bg-[var(--color-crashed-bg)]">
           <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold mb-2">
-            Load failed
+            {t('list.loadError')}
           </h2>
           <p className="text-sm text-[var(--color-text)]">
             {error instanceof Error ? error.message : String(error)}
@@ -57,7 +59,7 @@ export function ProjectsPage() {
             onClick={() => refetch()}
             type="button"
           >
-            Retry
+            {t('list.retry')}
           </button>
         </div>
       )}
@@ -185,6 +187,7 @@ function Skeleton() {
 }
 
 function EmptyState() {
+  const { t } = useTranslation('projects');
   return (
     <div className="nb-card bg-[var(--color-accent-yellow)] flex items-center gap-6 p-8">
       <div className="w-20 h-20 rounded-2xl bg-[var(--color-accent-mint)] border-[3px] border-[var(--color-text)] shadow-[3px_3px_0_var(--color-text)] flex items-center justify-center">
@@ -192,14 +195,15 @@ function EmptyState() {
       </div>
       <div className="flex-1">
         <h2 className="font-[family-name:var(--font-heading)] text-2xl font-bold mb-2">
-          No projects yet ✨
+          {t('list.empty')}
         </h2>
         <p className="text-sm text-[var(--color-text)] mb-4">
-          Run <code className="bg-[var(--color-bg)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded-md font-[family-name:var(--font-mono)]">sps project init &lt;name&gt;</code> to create your first project.
+          {t('list.emptyHint', { cmd: '' })}
+          <code className="bg-[var(--color-bg)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded-md font-[family-name:var(--font-mono)]">sps project init &lt;name&gt;</code>
         </p>
         <button className="nb-btn nb-btn-primary" type="button">
           <Plus size={16} strokeWidth={3} />
-          New project
+          {t('list.newProject')}
         </button>
       </div>
     </div>
