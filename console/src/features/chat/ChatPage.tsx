@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { Plus, MessageCircle, Trash2, Send, Loader2, ChevronRight, Wrench, CheckCircle2, XCircle, Square, Folder, FolderOpen, X, Paperclip, Image as ImageIcon, FileText, Eye } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -27,6 +28,7 @@ import { DirectoryPicker } from '../../shared/components/DirectoryPicker';
 import { useDialog } from '../../shared/components/DialogProvider';
 
 export function ChatPage() {
+  const { t } = useTranslation('chat');
   const { sessionId } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -321,7 +323,7 @@ export function ChatPage() {
         setNewSessionOpen(false);
       } catch (err) {
         void alert({
-          title: '新建对话失败',
+          title: t('session.createFailed'),
           body: err instanceof Error ? err.message : String(err),
         });
       }
@@ -348,7 +350,7 @@ export function ChatPage() {
     const optimisticUser: ChatMessage = {
       id: `optim-${Date.now()}`,
       role: 'user',
-      content: content || '(附件)',
+      content: content || '(attachment)',
       ts: new Date().toISOString(),
       status: 'complete',
       attachments: attachmentPaths.length > 0 ? attachmentPaths : undefined,
@@ -359,7 +361,7 @@ export function ChatPage() {
           id,
           createdAt: optimisticUser.ts,
           lastMessageAt: optimisticUser.ts,
-          title: content.slice(0, 60) || '附件',
+          title: content.slice(0, 60) || 'Attachment',
           project: null,
           messageCount: 1,
           messages: [optimisticUser],
@@ -377,14 +379,14 @@ export function ChatPage() {
     setDraftAttachments([]);
     setSending(true);
     try {
-      await postMessage(id, content || '(请查看附件)', attachmentPaths.length > 0 ? attachmentPaths : undefined);
+      await postMessage(id, content || '(see attachments)', attachmentPaths.length > 0 ? attachmentPaths : undefined);
       // 不用 await response — assistant chunks 走 SSE
     } catch (err) {
       setSending(false);
       // eslint-disable-next-line no-console
       console.error('sendMessage failed', err);
       void alert({
-        title: '发送失败',
+        title: 'Send failed',
         body: err instanceof Error ? err.message : String(err),
       });
     }
@@ -396,8 +398,8 @@ export function ChatPage() {
       // 1. 大小预校验
       if (file.size > ATTACHMENT_MAX_BYTES) {
         void alert({
-          title: '文件超过上限',
-          body: `单文件上限 50 MB；当前 ${(file.size / 1024 / 1024).toFixed(2)} MB（${file.name}）`,
+          title: 'File too large',
+          body: `Per-file limit is 50 MB; current ${(file.size / 1024 / 1024).toFixed(2)} MB (${file.name})`,
         });
         return;
       }
@@ -416,7 +418,7 @@ export function ChatPage() {
         setDraftAttachments((prev) => [...prev, { path: r.path, name: r.name }]);
       } catch (err) {
         void alert({
-          title: '附件上传失败',
+          title: 'Attachment upload failed',
           body: err instanceof Error ? err.message : String(err),
         });
       } finally {
@@ -433,9 +435,9 @@ export function ChatPage() {
   const handleDelete = useCallback(
     async (id: string): Promise<void> => {
       const ok = await confirm({
-        title: '删除对话',
-        body: '对话记录会永久删除，不可恢复。',
-        confirm: '删除',
+        title: 'Delete session',
+        body: 'The session will be permanently deleted and cannot be recovered.',
+        confirm: 'Delete',
         danger: true,
       });
       if (!ok) return;
@@ -453,7 +455,7 @@ export function ChatPage() {
       // SSE 'complete' event with stopReason='cancelled' will commit pending + clear it
     } catch (err) {
       void alert({
-        title: '中断失败',
+        title: 'Cancel failed',
         body: err instanceof Error ? err.message : String(err),
       });
     }
@@ -468,10 +470,10 @@ export function ChatPage() {
           type="button"
         >
           <Plus size={14} strokeWidth={3} />
-          新建对话
+          New chat
         </button>
         <div className="mt-2 text-xs font-[family-name:var(--font-heading)] uppercase tracking-wider text-[var(--color-text-muted)] px-2">
-          历史 {sessionsQ.data?.data.length ?? 0}
+          History {sessionsQ.data?.data.length ?? 0}
         </div>
         <div className="flex flex-col gap-1.5 mt-1">
           {(sessionsQ.data?.data ?? []).map((s) => (
@@ -488,7 +490,7 @@ export function ChatPage() {
             >
               <button
                 type="button"
-                aria-label={`打开对话 ${s.title}${s.cwd ? `（工作目录 ${s.cwd}）` : ''}`}
+                aria-label={`Open session ${s.title}${s.cwd ? ` (cwd: ${s.cwd})` : ''}`}
                 onClick={() => nav(`/chat/${s.id}`)}
                 className="flex items-start gap-2 flex-1 min-w-0 text-left"
               >
@@ -511,7 +513,7 @@ export function ChatPage() {
               </button>
               <button
                 type="button"
-                aria-label="删除对话"
+                aria-label="Delete session"
                 className="opacity-0 group-hover:opacity-100 p-1 hover:text-[var(--color-crashed)]"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -524,7 +526,7 @@ export function ChatPage() {
           ))}
           {(sessionsQ.data?.data ?? []).length === 0 && (
             <p className="text-xs text-[var(--color-text-subtle)] italic text-center py-4">
-              还没对话。点上面新建。
+              No sessions yet. Click above to create one.
             </p>
           )}
         </div>
@@ -535,7 +537,7 @@ export function ChatPage() {
           <>
             <header className="px-4 py-3 border-b-2 border-[var(--color-text)] bg-[var(--color-bg-cream)]">
               <h2 className="font-[family-name:var(--font-heading)] font-bold text-lg">
-                {currentQ.data?.title ?? '新对话'}
+                {currentQ.data?.title ?? 'New chat'}
               </h2>
               <p className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">
                 {sessionId}
@@ -564,7 +566,7 @@ export function ChatPage() {
               )}
               {!currentQ.isLoading && (currentQ.data?.messages ?? []).length === 0 && !pending && !sending && (
                 <p className="text-center text-[var(--color-text-subtle)] italic mt-12">
-                  下方输入问题开始对话 · Enter 发送 · Shift+Enter 换行
+                  Type below to start a chat · Enter to send · Shift+Enter for newline
                 </p>
               )}
             </div>
@@ -597,7 +599,7 @@ export function ChatPage() {
                       type="button"
                       className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--color-bg)] border-2 border-[var(--color-text)] text-xs font-[family-name:var(--font-mono)] hover:bg-[var(--color-accent-mint)] group"
                       onClick={() => setPreviewPath(a.path)}
-                      title={`${a.name}\n${a.path}\n点击预览`}
+                      title={`${a.name}\n${a.path}\nClick to preview`}
                     >
                       {isImagePath(a.path) ? (
                         <ImageIcon size={11} strokeWidth={2.5} className="flex-shrink-0" />
@@ -607,7 +609,7 @@ export function ChatPage() {
                       <span className="truncate max-w-[180px]">{a.name}</span>
                       <span
                         role="button"
-                        aria-label={`移除 ${a.name}`}
+                        aria-label={`Remove ${a.name}`}
                         className="ml-1 hover:text-[var(--color-crashed)] cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -621,7 +623,7 @@ export function ChatPage() {
                   {uploading && (
                     <span className="flex items-center gap-1.5 px-2 py-1 text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">
                       <Loader2 size={11} strokeWidth={2.5} className="animate-spin" />
-                      上传中...
+                      Uploading…
                     </span>
                   )}
                 </div>
@@ -633,8 +635,8 @@ export function ChatPage() {
                   className="nb-btn flex-shrink-0"
                   onClick={() => setFilePickerOpen(true)}
                   disabled={sending}
-                  aria-label="附加本地文件"
-                  title="附加本地文件（也可拖拽 / 粘贴图片）"
+                  aria-label="Attach local file"
+                  title="Attach local file (or drop / paste an image)"
                 >
                   <Paperclip size={14} strokeWidth={2.5} />
                 </button>
@@ -642,8 +644,8 @@ export function ChatPage() {
                   className="nb-input flex-1 resize-none"
                   placeholder={
                     dragOver
-                      ? '松开鼠标以附加文件…'
-                      : '说点什么… (Enter 发送，Shift+Enter 换行，可拖入文件 / 粘贴图片)'
+                      ? 'Release to attach…'
+                      : 'Say something… (Enter to send · Shift+Enter newline · drop or paste files)'
                   }
                   rows={2}
                   value={draft}
@@ -665,17 +667,17 @@ export function ChatPage() {
                       if (f) void ingestFile(f);
                     }
                   }}
-                  aria-label="消息输入"
+                  aria-label="Message input"
                 />
                 {pending ? (
                   <button
                     className="nb-btn nb-btn-danger"
                     onClick={handleInterrupt}
                     type="button"
-                    aria-label="中断生成"
+                    aria-label="Cancel streaming"
                   >
                     <Square size={14} strokeWidth={3} />
-                    中断
+                    {t('input.stop')}
                   </button>
                 ) : (
                   <button
@@ -683,14 +685,14 @@ export function ChatPage() {
                     onClick={handleSend}
                     disabled={(!draft.trim() && draftAttachments.length === 0) || sending}
                     type="button"
-                    aria-label="发送"
+                    aria-label="Send"
                   >
                     {sending ? (
                       <Loader2 size={14} strokeWidth={3} className="animate-spin" />
                     ) : (
                       <Send size={14} strokeWidth={3} />
                     )}
-                    发送
+                    {t('input.send')}
                   </button>
                 )}
               </div>
@@ -703,13 +705,13 @@ export function ChatPage() {
                 <MessageCircle size={32} strokeWidth={2.5} />
               </div>
               <h1 className="font-[family-name:var(--font-heading)] text-2xl font-bold mb-2">
-                对话 💬
+                Chat 💬
               </h1>
               <p className="text-sm text-[var(--color-text-muted)] mb-4">
-                点左上角"新建对话"开始一个 session。或直接在下方输入，会自动建 session。
+                Click "New chat" above to start a session, or just type below to auto-create one.
               </p>
               <p className="text-xs text-[var(--color-text-subtle)] italic">
-                Enter 发送 · Shift+Enter 换行 · 内容流式返回
+                Enter to send · Shift+Enter for newline · streaming output
               </p>
             </div>
           </div>
@@ -727,7 +729,7 @@ export function ChatPage() {
       {filePickerOpen && (
         <DirectoryPicker
           mode="file"
-          title="选择附件文件"
+          title="Select attachment"
           initialPath={currentQ.data?.cwd ?? undefined}
           onCancel={() => setFilePickerOpen(false)}
           onSelect={(picked) => {
@@ -830,7 +832,7 @@ function AttachmentPreview({
         style={{ maxHeight: '85vh' }}
         role="dialog"
         aria-modal="true"
-        aria-label={`预览 ${name}`}
+        aria-label={`Preview ${name}`}
       >
         <header className="flex items-center justify-between mb-3 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -843,7 +845,7 @@ function AttachmentPreview({
             type="button"
             className="p-1 hover:bg-[var(--color-bg-cream)] rounded flex-shrink-0"
             onClick={onClose}
-            aria-label="关闭"
+            aria-label="Close"
           >
             <X size={16} strokeWidth={3} />
           </button>
@@ -877,9 +879,9 @@ function AttachmentPreview({
           {isTextPath(path) && (
             <pre className="p-3 text-xs font-[family-name:var(--font-mono)] whitespace-pre-wrap break-words">
               {textErr ? (
-                <span className="text-[var(--color-crashed)]">读取失败: {textErr}</span>
+                <span className="text-[var(--color-crashed)]">Failed to read: {textErr}</span>
               ) : textContent === null ? (
-                <span className="text-[var(--color-text-muted)]">加载中...</span>
+                <span className="text-[var(--color-text-muted)]">Loading…</span>
               ) : (
                 textContent
               )}
@@ -887,13 +889,13 @@ function AttachmentPreview({
           )}
           {!isImagePath(path) && !isPdfPath(path) && !isTextPath(path) && (
             <div className="p-6 text-center text-sm text-[var(--color-text-muted)]">
-              <p className="mb-3">此文件类型不支持内联预览。</p>
+              <p className="mb-3">This file type cannot be previewed inline.</p>
               <a
                 href={url}
                 download={name}
                 className="nb-btn nb-btn-primary inline-flex"
               >
-                下载
+                Download
               </a>
             </div>
           )}
@@ -912,6 +914,8 @@ function NewSessionDialog({
   onCancel: () => void;
   onCreate: (input: { title?: string; cwd?: string }) => void;
 }) {
+  const { t } = useTranslation('chat');
+  const { t: tc } = useTranslation('common');
   const [title, setTitle] = useState('');
   const [cwd, setCwd] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -950,17 +954,17 @@ function NewSessionDialog({
         className="nb-card bg-[var(--color-bg)] max-w-md w-full p-5"
         role="dialog"
         aria-modal="true"
-        aria-label="新建对话"
+        aria-label="New chat"
       >
         <header className="flex items-center justify-between mb-4">
           <h2 className="font-[family-name:var(--font-heading)] font-bold text-lg">
-            新建对话
+            New chat
           </h2>
           <button
             type="button"
             className="p-1 hover:bg-[var(--color-bg-cream)] rounded"
             onClick={onCancel}
-            aria-label="关闭"
+            aria-label="Close"
           >
             <X size={16} strokeWidth={3} />
           </button>
@@ -972,13 +976,13 @@ function NewSessionDialog({
               htmlFor="new-session-title"
               className="block text-xs font-bold mb-1.5 uppercase tracking-wider"
             >
-              标题（可选）
+              Title (optional)
             </label>
             <input
               id="new-session-title"
               type="text"
               className="nb-input w-full"
-              placeholder="留空 = 自动用首条消息生成"
+              placeholder="Leave blank to auto-generate from first message"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               autoFocus
@@ -990,7 +994,7 @@ function NewSessionDialog({
               htmlFor="new-session-cwd"
               className="block text-xs font-bold mb-1.5 uppercase tracking-wider"
             >
-              工作目录（可选）
+              Working directory (optional)
             </label>
             <div className="flex gap-2">
               <input
@@ -1005,23 +1009,23 @@ function NewSessionDialog({
                 type="button"
                 className="nb-btn flex-shrink-0"
                 onClick={() => setPickerOpen(true)}
-                aria-label="浏览选择目录"
-                title="浏览选择目录"
+                aria-label="Browse for directory"
+                title="Browse for directory"
               >
                 <FolderOpen size={14} strokeWidth={2.5} />
-                浏览
+                Browse
               </button>
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
               <Folder size={10} strokeWidth={2.5} className="inline mr-1 -mt-0.5" />
-              Agent 在该目录下读写文件。绝对路径，必须存在。
-              留空则用 daemon 启动时的目录。
+              Agent will read and write files in this directory. Absolute path required, must exist.
+              Leave blank to use the daemon's startup directory.
             </p>
           </div>
 
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" className="nb-btn" onClick={onCancel}>
-              取消
+              {tc('actions.cancel')}
             </button>
             <button
               type="button"
@@ -1034,7 +1038,7 @@ function NewSessionDialog({
               ) : (
                 <Plus size={14} strokeWidth={3} />
               )}
-              创建
+              {tc('actions.create')}
             </button>
           </div>
         </div>
@@ -1083,7 +1087,7 @@ function MessageBubble({
         ].join(' ')}
       >
         <p className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
-          {isUser ? '你' : isError ? '错误' : 'assistant'}
+          {isUser ? 'You' : isError ? 'Error' : 'assistant'}
           <span className="font-normal">·</span>
           <span className="font-normal">{formatTimeAgo(msg.ts)}</span>
         </p>
@@ -1107,7 +1111,7 @@ function MessageBubble({
         )}
         {msg.truncated && (
           <p className="mt-3 px-3 py-2 bg-[var(--color-stuck-bg)] border-2 border-[var(--color-stuck)] rounded-lg text-xs text-[var(--color-stuck)] font-bold">
-            ⚠ 输出超过 10MB，已截断
+            ⚠ Output exceeds 10MB, truncated
           </p>
         )}
       </div>
@@ -1136,7 +1140,7 @@ function AttachmentThumb({
         type="button"
         onClick={onPreview}
         className="block rounded-md overflow-hidden border-2 border-[var(--color-text)] hover:shadow-[2px_2px_0_var(--color-text)] transition-shadow"
-        title={`${name}\n点击放大`}
+        title={`${name}\nClick to enlarge`}
       >
         <img
           src={attachmentUrl(sessionId, path)}
@@ -1152,7 +1156,7 @@ function AttachmentThumb({
       type="button"
       onClick={onPreview}
       className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--color-bg)] border-2 border-[var(--color-text)] text-xs font-[family-name:var(--font-mono)] hover:bg-[var(--color-accent-mint)]"
-      title={`${name}\n${path}\n点击预览`}
+      title={`${name}\n${path}\nClick to preview`}
     >
       <FileText size={11} strokeWidth={2.5} className="flex-shrink-0" />
       <span className="truncate max-w-[200px]">{name}</span>
@@ -1277,7 +1281,7 @@ function formatTimeAgo(ts: string | null): string {
   if (!ts) return '';
   const d = new Date(ts);
   const diff = Date.now() - d.getTime();
-  if (diff < 60_000) return '刚才';
+  if (diff < 60_000) return 'just now';
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
   return d.toLocaleDateString();
