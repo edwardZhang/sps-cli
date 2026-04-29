@@ -53,5 +53,31 @@
     "label": "语言",
     "en": "English",
     "zh": "中文"
+  },
+  "notFound": {
+    "title": "404 · 页面不存在",
+    "body": "没找到这个页面。可能是链接过期了。",
+    "back": "返回首页"
+  },
+  "directoryPicker": {
+    "defaultTitle": "选择目录",
+    "closeAria": "关闭",
+    "currentPath": "当前路径",
+    "parentDirAria": "上级目录",
+    "homeAria": "回到 Home",
+    "loading": "加载中...",
+    "readFailed": "读取失败",
+    "emptyDir": "— 空目录 —",
+    "enterDir": "进入 {{name}}/",
+    "selectDoubleClick": "选择 {{name}}（双击直接确认）",
+    "fileNotSelectable": "文件不可选",
+    "cancel": "取消",
+    "useFile": "使用此文件",
+    "useFileTitle": "请先点选一个文件",
+    "useDir": "选此目录"
+  },
+  "statusBar": {
+    "activePipelines": "活跃 pipeline 数",
+    "activeWorkers": "活跃 worker 数"
   }
 }

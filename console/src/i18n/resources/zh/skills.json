@@ -1,10 +1,10 @@
 {
-  "title": "Skills",
+  "title": "Skills 🔧",
+  "summary": "{{count}} 个 user-level skill",
+  "loading": "加载中…",
   "syncBundled": "同步内置",
-  "syncing": "同步中…",
-  "syncDone": "同步完成",
-  "syncFailed": "同步失败",
   "search": "搜索 skill",
+  "searchPlaceholder": "搜索 skill…",
   "filter": {
     "all": "全部",
     "language": "语言",
@@ -12,23 +12,22 @@
     "workflow": "工作流",
     "persona": "角色"
   },
-  "card": {
-    "linked": "已 link 到 {{count}} 个项目",
-    "linked_other": "已 link 到 {{count}} 个项目",
-    "freezeable": "可冻结",
-    "frozen": "已冻结",
-    "bundled": "内置",
-    "user": "用户"
-  },
-  "actions": {
-    "link": "Link",
-    "unlink": "取消 Link",
-    "freeze": "冻结",
-    "unfreeze": "解冻"
-  },
-  "errors": {
-    "loadFailed": "Skill 列表加载失败",
-    "linkFailed": "Link 失败",
-    "unlinkFailed": "取消 Link 失败"
+  "modal": {
+    "closeAria": "关闭",
+    "loading": "加载中…",
+    "loadFailed": "加载失败: {{error}}",
+    "linkStatus": "项目链接状态",
+    "noProjects": "还没有任何项目。先去创建一个项目。",
+    "preview": "SKILL.md 预览",
+    "fileToggleAria": "{{action}} {{file}}",
+    "expand": "展开",
+    "collapse": "收起",
+    "labelFailed": "{{label}}失败",
+    "removeTitle": "从 {{project}} 移除 {{name}}",
+    "removeBody": "skill 链接会被解除，项目后续运行时将无法使用该 skill。",
+    "removeConfirm": "移除",
+    "unfreezeTitle": "解冻 {{name}} @ {{project}}",
+    "unfreezeBody": "本地对这个 skill 的改动会被覆盖，回到最新共享版本。",
+    "unfreezeConfirm": "解冻"
   }
 }

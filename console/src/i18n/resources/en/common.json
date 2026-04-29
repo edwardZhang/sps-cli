@@ -53,5 +53,31 @@
     "label": "Language",
     "en": "English",
     "zh": "中文"
+  },
+  "notFound": {
+    "title": "404 · Page not found",
+    "body": "Could not find this page. The link may have expired.",
+    "back": "Back to home"
+  },
+  "directoryPicker": {
+    "defaultTitle": "Select directory",
+    "closeAria": "Close",
+    "currentPath": "Current path",
+    "parentDirAria": "Parent directory",
+    "homeAria": "Go to home",
+    "loading": "Loading…",
+    "readFailed": "Read failed",
+    "emptyDir": "— empty —",
+    "enterDir": "Enter {{name}}/",
+    "selectDoubleClick": "Select {{name}} (double-click to confirm)",
+    "fileNotSelectable": "File not selectable",
+    "cancel": "Cancel",
+    "useFile": "Use this file",
+    "useFileTitle": "Pick a file first",
+    "useDir": "Use this directory"
+  },
+  "statusBar": {
+    "activePipelines": "Active pipelines",
+    "activeWorkers": "Active workers"
   }
 }

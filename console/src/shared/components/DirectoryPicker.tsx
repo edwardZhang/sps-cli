@@ -8,6 +8,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowUp,
   CheckCircle2,
@@ -23,7 +24,7 @@ export function DirectoryPicker({
   initialPath,
   onCancel,
   onSelect,
-  title = 'Select directory',
+  title,
   mode = 'directory',
 }: {
   initialPath?: string;
@@ -48,6 +49,8 @@ export function DirectoryPicker({
     gcTime: 0,
   });
 
+  const { t } = useTranslation('common');
+  const resolvedTitle = title ?? t('directoryPicker.defaultTitle');
   // 初次进入用 server 返回的 home（没指定 path 时）
   const currentPath = browseQ.data?.path ?? path ?? '';
   const parent = browseQ.data?.parent ?? null;
@@ -75,17 +78,17 @@ export function DirectoryPicker({
         style={{ maxHeight: '70vh' }}
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-label={resolvedTitle}
       >
         <header className="flex items-center justify-between mb-3 shrink-0">
           <h3 className="font-[family-name:var(--font-heading)] font-bold text-base">
-            {title}
+            {resolvedTitle}
           </h3>
           <button
             type="button"
             className="p-1 hover:bg-[var(--color-bg-cream)] rounded"
             onClick={onCancel}
-            aria-label="Close"
+            aria-label={t('directoryPicker.closeAria')}
           >
             <X size={14} strokeWidth={3} />
           </button>
@@ -99,8 +102,8 @@ export function DirectoryPicker({
             style={{ padding: '4px 10px', fontSize: 12 }}
             onClick={() => parent && setPath(parent)}
             disabled={!parent || browseQ.isLoading}
-            aria-label="Parent directory"
-            title="Parent directory"
+            aria-label={t('directoryPicker.parentDirAria')}
+            title={t('directoryPicker.parentDirAria')}
           >
             <ArrowUp size={12} strokeWidth={3} />
           </button>
@@ -110,8 +113,8 @@ export function DirectoryPicker({
             style={{ padding: '4px 10px', fontSize: 12 }}
             onClick={() => home && setPath(home)}
             disabled={!home || browseQ.isLoading}
-            aria-label="Go to home"
-            title="Go to home"
+            aria-label={t('directoryPicker.homeAria')}
+            title={t('directoryPicker.homeAria')}
           >
             <Home size={12} strokeWidth={3} />
           </button>
@@ -129,12 +132,12 @@ export function DirectoryPicker({
           {browseQ.isLoading && (
             <div className="flex items-center justify-center py-12 text-[var(--color-text-muted)]">
               <Loader2 size={16} strokeWidth={3} className="animate-spin mr-2" />
-              Loading…
+              {t('directoryPicker.loading')}
             </div>
           )}
           {browseQ.isError && (
             <div className="p-4 text-sm text-[var(--color-crashed)]">
-              <p className="font-bold mb-1">Read failed</p>
+              <p className="font-bold mb-1">{t('directoryPicker.readFailed')}</p>
               <p className="text-xs font-[family-name:var(--font-mono)] break-all">
                 {browseQ.error instanceof Error ? browseQ.error.message : String(browseQ.error)}
               </p>
@@ -144,7 +147,7 @@ export function DirectoryPicker({
             <ul className="divide-y-2 divide-[var(--color-text)]/20">
               {browseQ.data.entries.length === 0 && (
                 <li className="p-4 text-xs text-[var(--color-text-subtle)] italic text-center">
-                  — empty —
+                  {t('directoryPicker.emptyDir')}
                 </li>
               )}
               {browseQ.data.entries.map((entry) => {
@@ -184,10 +187,10 @@ export function DirectoryPicker({
                       }}
                       title={
                         entry.isDirectory
-                          ? `Enter ${entry.name}/`
+                          ? t('directoryPicker.enterDir', { name: entry.name })
                           : mode === 'file'
-                            ? `Select ${entry.name} (double-click to confirm)`
-                            : 'File not selectable'
+                            ? t('directoryPicker.selectDoubleClick', { name: entry.name })
+                            : t('directoryPicker.fileNotSelectable')
                       }
                     >
                       {entry.isDirectory ? (
@@ -217,7 +220,7 @@ export function DirectoryPicker({
 
         <div className="flex gap-2 justify-end pt-3 shrink-0">
           <button type="button" className="nb-btn" onClick={onCancel}>
-            Cancel
+            {t('directoryPicker.cancel')}
           </button>
           {mode === 'file' ? (
             <button
@@ -225,10 +228,10 @@ export function DirectoryPicker({
               className="nb-btn nb-btn-primary"
               onClick={() => selectedFile && onSelect(selectedFile)}
               disabled={!selectedFile || browseQ.isLoading || browseQ.isError}
-              title={selectedFile ?? 'Pick a file first'}
+              title={selectedFile ?? t('directoryPicker.useFileTitle')}
             >
               <CheckCircle2 size={14} strokeWidth={3} />
-              Use this file
+              {t('directoryPicker.useFile')}
             </button>
           ) : (
             <button
@@ -238,7 +241,7 @@ export function DirectoryPicker({
               disabled={!currentPath || browseQ.isLoading || browseQ.isError}
             >
               <CheckCircle2 size={14} strokeWidth={3} />
-              Use this directory
+              {t('directoryPicker.useDir')}
             </button>
           )}
         </div>

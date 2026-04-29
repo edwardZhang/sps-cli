@@ -1,15 +1,19 @@
 {
   "title": "Logs",
-  "filter": {
-    "project": "Project",
-    "level": "Level",
-    "lines": "Lines",
-    "errOnly": "Errors only",
-    "clear": "Clear"
-  },
-  "follow": "Follow tail",
-  "paused": "Paused",
-  "noLogs": "No logs to show",
+  "header": "{{scope}}{{worker}} · {{mode}} · {{count}} lines",
+  "scopeAll": "All projects ({{count}})",
+  "modeLive": "5s polling",
+  "modeTail": "tail -f",
+  "live": "Live",
+  "history": "History",
+  "queryStartAria": "Query start time",
+  "queryAria": "Query",
+  "query": "Query",
+  "filterProjectAria": "Filter project",
+  "allProjectsOption": "All projects",
+  "filterPlaceholder": "Filter keyword…",
+  "filterAria": "Filter logs",
+  "noMatches": "No matching logs",
   "errors": {
     "loadFailed": "Failed to load logs"
   }

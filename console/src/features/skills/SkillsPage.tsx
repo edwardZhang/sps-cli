@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { Search, RefreshCw } from 'lucide-react';
 import {
   listSkills,
@@ -28,6 +29,7 @@ const CAT_COLORS: Record<SkillCategory, string> = {
 };
 
 export function SkillsPage() {
+  const { t } = useTranslation('skills');
   const [cat, setCat] = useState<SkillCategory | 'all'>('all');
   const [keyword, setKeyword] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
@@ -59,9 +61,9 @@ export function SkillsPage() {
     <div className="flex flex-col gap-4 max-w-full">
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">Skills 🎯</h1>
+          <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">{t('title')}</h1>
           <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            {isLoading ? 'Loading…' : `${data?.data.length ?? 0} user-level skills`}
+            {isLoading ? t('loading') : t('summary', { count: data?.data.length ?? 0 })}
           </p>
         </div>
         <div className="flex gap-3 items-center">
@@ -74,7 +76,7 @@ export function SkillsPage() {
             type="button"
           >
             <RefreshCw size={14} strokeWidth={2.5} />
-            Sync bundled
+            {t('syncBundled')}
           </button>
         </div>
       </header>
@@ -84,10 +86,10 @@ export function SkillsPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)]" />
           <input
             className="nb-input pl-9 w-full"
-            placeholder="Search skill…"
+            placeholder={t('searchPlaceholder')}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            aria-label="Search skill"
+            aria-label={t('search')}
           />
         </div>
         <div className="flex gap-1 p-1 bg-[var(--color-bg)] border-[2px] border-[var(--color-text)] rounded-full shadow-[2px_2px_0_var(--color-text)]">

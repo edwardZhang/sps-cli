@@ -1,6 +1,7 @@
 import { useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { Pause, Play, Search, Download, History, Radio, ChevronDown, Folder } from 'lucide-react';
 import { fetchLogs, logStreamUrl, type LogLine } from '../../shared/api/logs';
 import { listProjects } from '../../shared/api/projects';
@@ -9,6 +10,7 @@ const LEVELS: LogLine['level'][] = ['error', 'warn', 'info', 'debug'];
 const DEFAULT_ENABLED: LogLine['level'][] = ['error', 'warn', 'info'];
 
 export function LogsPage() {
+  const { t } = useTranslation('logs');
   const [params, setParams] = useSearchParams();
   const project = params.get('project');
   const worker = params.get('worker') ?? '';
@@ -96,11 +98,15 @@ export function LogsPage() {
       <header className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold tracking-tight">
-            Logs 📜
+            {t('title')} 📜
           </h1>
           <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            {isAggregate ? `All projects (${projectsQ.data?.data.length ?? 0})` : project}
-            {worker && ` · worker-${worker}`} · {isAggregate && mode === 'live' ? '5s polling' : 'tail -f'} · {lines.length} lines
+            {t('header', {
+              scope: isAggregate ? t('scopeAll', { count: projectsQ.data?.data.length ?? 0 }) : project,
+              worker: worker ? ` · worker-${worker}` : '',
+              mode: isAggregate && mode === 'live' ? t('modeLive') : t('modeTail'),
+              count: lines.length,
+            })}
             {paused && <span className="text-[var(--color-stuck)] ml-2 font-bold">⏸ PAUSED</span>}
           </p>
         </div>
@@ -120,7 +126,7 @@ export function LogsPage() {
             ].join(' ')}
           >
             <Radio size={11} strokeWidth={2.5} />
-            Live
+            {t('live')}
           </button>
           <button
             type="button"
@@ -134,7 +140,7 @@ export function LogsPage() {
             ].join(' ')}
           >
             <History size={11} strokeWidth={2.5} />
-            History
+            {t('history')}
           </button>
         </div>
         {mode === 'history' && (
@@ -145,17 +151,17 @@ export function LogsPage() {
               style={{ padding: '4px 8px', fontSize: 12 }}
               value={since}
               onChange={(e) => setSince(e.target.value)}
-              aria-label="Query start time"
+              aria-label={t('queryStartAria')}
             />
             <button
               className="nb-btn nb-btn-primary"
               style={{ padding: '6px 12px', fontSize: 12 }}
               onClick={() => refetchHistory()}
               type="button"
-              aria-label="Query"
+              aria-label={t('queryAria')}
             >
               <Search size={11} strokeWidth={3} />
-              Query
+              {t('query')}
             </button>
           </>
         )}
@@ -175,9 +181,9 @@ export function LogsPage() {
               if (!v) setParams({});
               else setParams({ project: v });
             }}
-            aria-label="Filter project"
+            aria-label={t('filterProjectAria')}
           >
-            <option value="">All projects</option>
+            <option value="">{t('allProjectsOption')}</option>
             {projectsQ.data?.data.map((p) => (
               <option key={p.name} value={p.name}>{p.name}</option>
             ))}
@@ -193,10 +199,10 @@ export function LogsPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)]" />
           <input
             className="nb-input pl-9 w-full"
-            placeholder="Filter keyword…"
+            placeholder={t('filterPlaceholder')}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            aria-label="Filter logs"
+            aria-label={t('filterAria')}
           />
         </div>
         <div className="flex items-center gap-1 p-1 bg-[var(--color-bg)] border-[2px] border-[var(--color-text)] rounded-full shadow-[2px_2px_0_var(--color-text)]">
@@ -285,7 +291,7 @@ export function LogsPage() {
           ))}
           {filtered.length === 0 && (
             <div className="text-center py-12 text-[var(--color-text-subtle)]">
-              No matching logs
+              {t('noMatches')}
             </div>
           )}
         </div>

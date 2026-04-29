@@ -1,10 +1,10 @@
 {
-  "title": "Skills",
+  "title": "Skills 🔧",
+  "summary": "{{count}} user-level skills",
+  "loading": "Loading…",
   "syncBundled": "Sync bundled",
-  "syncing": "Syncing…",
-  "syncDone": "Sync complete",
-  "syncFailed": "Sync failed",
-  "search": "Search skills",
+  "search": "Search skill",
+  "searchPlaceholder": "Search skill…",
   "filter": {
     "all": "All",
     "language": "Language",
@@ -12,23 +12,22 @@
     "workflow": "Workflow",
     "persona": "Persona"
   },
-  "card": {
-    "linked": "Linked in {{count}} project",
-    "linked_other": "Linked in {{count}} projects",
-    "freezeable": "Freezable",
-    "frozen": "Frozen",
-    "bundled": "Bundled",
-    "user": "User"
-  },
-  "actions": {
-    "link": "Link",
-    "unlink": "Unlink",
-    "freeze": "Freeze",
-    "unfreeze": "Unfreeze"
-  },
-  "errors": {
-    "loadFailed": "Failed to load skills",
-    "linkFailed": "Failed to link skill",
-    "unlinkFailed": "Failed to unlink skill"
+  "modal": {
+    "closeAria": "Close",
+    "loading": "Loading…",
+    "loadFailed": "Load failed: {{error}}",
+    "linkStatus": "Project link status",
+    "noProjects": "No projects yet. Create one first.",
+    "preview": "SKILL.md preview",
+    "fileToggleAria": "{{action}} {{file}}",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "labelFailed": "{{label}} failed",
+    "removeTitle": "Remove {{name}} from {{project}}",
+    "removeBody": "The skill link will be removed; this project will no longer load the skill on future runs.",
+    "removeConfirm": "Remove",
+    "unfreezeTitle": "Unfreeze {{name}} @ {{project}}",
+    "unfreezeBody": "Local edits to this skill will be overwritten; it returns to the latest shared version.",
+    "unfreezeConfirm": "Unfreeze"
   }
 }

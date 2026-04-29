@@ -1,15 +1,19 @@
 {
   "title": "日志",
-  "filter": {
-    "project": "项目",
-    "level": "级别",
-    "lines": "行数",
-    "errOnly": "仅错误",
-    "clear": "清空"
-  },
-  "follow": "实时跟随",
-  "paused": "已暂停",
-  "noLogs": "暂无日志",
+  "header": "{{scope}}{{worker}} · {{mode}} · {{count}} lines",
+  "scopeAll": "全部项目（{{count}}）",
+  "modeLive": "5s 轮询",
+  "modeTail": "tail -f",
+  "live": "实时",
+  "history": "历史",
+  "queryStartAria": "查询起始时间",
+  "queryAria": "查询",
+  "query": "查询",
+  "filterProjectAria": "筛选项目",
+  "allProjectsOption": "全部项目",
+  "filterPlaceholder": "过滤关键字…",
+  "filterAria": "过滤日志",
+  "noMatches": "没有匹配的日志",
   "errors": {
     "loadFailed": "日志加载失败"
   }

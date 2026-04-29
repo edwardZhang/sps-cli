@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { Activity, Radio, AlertCircle } from 'lucide-react';
 import { getSystemInfo } from '../api/system';
 import { listProjects } from '../api/projects';
@@ -12,6 +13,7 @@ import { listProjects } from '../api/projects';
  *   - 版本 + node
  */
 export function StatusBar() {
+  const { t } = useTranslation('common');
   const infoQ = useQuery({
     queryKey: ['system-info'],
     queryFn: getSystemInfo,
@@ -43,12 +45,12 @@ export function StatusBar() {
       </span>
       <SseBadge state={sseState} />
       <span className="text-[var(--color-text-subtle)]">·</span>
-      <span className="flex items-center gap-1" title="Active pipelines">
+      <span className="flex items-center gap-1" title={t('statusBar.activePipelines')}>
         <Activity size={10} strokeWidth={2.5} />
         <span className="font-bold text-[var(--color-text)]">{runningPipelines}</span> pipeline
       </span>
       <span className="text-[var(--color-text-subtle)]">·</span>
-      <span className="flex items-center gap-1" title="Active workers">
+      <span className="flex items-center gap-1" title={t('statusBar.activeWorkers')}>
         <Radio size={10} strokeWidth={2.5} />
         <span className="font-bold text-[var(--color-text)]">{activeWorkers}</span> worker
       </span>

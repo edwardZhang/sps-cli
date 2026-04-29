@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { X, Link as LinkIcon, Snowflake, Flame, ChevronRight, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -25,6 +26,7 @@ export function SkillDetailModal({
   onClose: () => void;
   onChange: () => void;
 }) {
+  const { t } = useTranslation('skills');
   const { confirm, alert } = useDialog();
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['skill', name],
@@ -48,7 +50,7 @@ export function SkillDetailModal({
       onChange();
     } catch (err) {
       void alert({
-        title: `${label} failed`,
+        title: t('modal.labelFailed', { label }),
         body: err instanceof Error ? err.message : String(err),
       });
     }
@@ -59,9 +61,9 @@ export function SkillDetailModal({
 
   const handleUnlink = async (project: string): Promise<void> => {
     const ok = await confirm({
-      title: `Remove ${name} from ${project}`,
-      body: 'The skill link will be removed; this project will no longer load the skill on future runs.',
-      confirm: 'Remove',
+      title: t('modal.removeTitle', { name, project }),
+      body: t('modal.removeBody'),
+      confirm: t('modal.removeConfirm'),
       danger: true,
     });
     if (!ok) return;
@@ -73,9 +75,9 @@ export function SkillDetailModal({
 
   const handleUnfreeze = async (project: string): Promise<void> => {
     const ok = await confirm({
-      title: `Unfreeze ${name} @ ${project}`,
-      body: 'Local edits to this skill will be overwritten; it returns to the latest shared version.',
-      confirm: 'Unfreeze',
+      title: t('modal.unfreezeTitle', { name, project }),
+      body: t('modal.unfreezeBody'),
+      confirm: t('modal.unfreezeConfirm'),
       danger: true,
     });
     if (!ok) return;
@@ -105,17 +107,17 @@ export function SkillDetailModal({
           <button
             onClick={onClose}
             className="nb-btn nb-btn-mint p-2"
-            aria-label="Close"
+            aria-label={t('modal.closeAria')}
             type="button"
           >
             <X size={16} strokeWidth={3} />
           </button>
         </header>
 
-        {isLoading && <p>Loading…</p>}
+        {isLoading && <p>{t('modal.loading')}</p>}
         {isError && (
           <p className="text-[var(--color-crashed)]">
-            Load failed: {error instanceof Error ? error.message : String(error)}
+            {t('modal.loadFailed', { error: error instanceof Error ? error.message : String(error) })}
           </p>
         )}
 
@@ -123,7 +125,7 @@ export function SkillDetailModal({
           <div className="flex flex-col gap-4">
             <div className="nb-card bg-[var(--color-bg-cream)] p-4">
               <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-3 uppercase tracking-wider">
-                Project link status
+                {t('modal.linkStatus')}
               </h3>
               <div className="flex flex-col gap-2">
                 {projects.map((proj) => {
@@ -210,7 +212,7 @@ export function SkillDetailModal({
                 })}
                 {projects.length === 0 && (
                   <p className="text-sm text-[var(--color-text-muted)] italic">
-                    No projects yet. Create one first.
+                    {t('modal.noProjects')}
                   </p>
                 )}
               </div>
@@ -218,7 +220,7 @@ export function SkillDetailModal({
 
             <div>
               <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                SKILL.md preview
+                {t('modal.preview')}
               </h3>
               <div className="prose-chat bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4 max-h-80 overflow-auto text-sm">
                 {data.body ? (
@@ -262,6 +264,7 @@ function ReferenceRow({
   file: string;
   lines: number;
 }) {
+  const { t } = useTranslation('skills');
   const [open, setOpen] = useState(false);
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['skill-ref', skillName, file],
@@ -274,7 +277,7 @@ function ReferenceRow({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={`${open ? 'Collapse' : 'Expand'} ${file}`}
+        aria-label={t('modal.fileToggleAria', { action: open ? t('modal.collapse') : t('modal.expand'), file })}
         aria-expanded={open}
         className="w-full flex items-center gap-2 px-3 py-2 text-sm font-[family-name:var(--font-mono)] hover:bg-[var(--color-accent-yellow)] transition-colors"
       >
@@ -289,10 +292,10 @@ function ReferenceRow({
       </button>
       {open && (
         <div className="px-4 py-3 border-t-2 border-[var(--color-text)] bg-[var(--color-bg)] max-h-96 overflow-auto">
-          {isLoading && <p className="text-xs text-[var(--color-text-muted)]">加载中…</p>}
+          {isLoading && <p className="text-xs text-[var(--color-text-muted)]">{t('modal.loading')}</p>}
           {isError && (
             <p className="text-xs text-[var(--color-crashed)]">
-              Load failed: {error instanceof Error ? error.message : String(error)}
+              {t('modal.loadFailed', { error: error instanceof Error ? error.message : String(error) })}
             </p>
           )}
           {data && (
