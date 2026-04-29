@@ -2,17 +2,21 @@
   "title": "SPS Console",
   "newSession": "New chat",
   "history": "History",
-  "historyCount_one": "{{count}} session",
-  "historyCount_other": "{{count}} sessions",
-  "msgCount_one": "{{count}} msg",
-  "msgCount_other": "{{count}} msgs",
   "input": {
     "placeholder": "Say something… (Enter to send · Shift+Enter newline · drop or paste files)",
+    "placeholderDragOver": "Release to attach…",
     "send": "Send",
     "stop": "Stop",
     "stopped": "Stopped",
-    "attach": "Attach",
-    "removeAttachment": "Remove"
+    "attach": "Attach local file",
+    "attachHint": "Attach local file (or drop / paste an image)",
+    "removeAttachment": "Remove",
+    "ariaInput": "Message input",
+    "ariaSend": "Send",
+    "ariaStop": "Cancel streaming",
+    "uploading": "Uploading…",
+    "ariaRemoveAttachment": "Remove {{name}}",
+    "attachmentTitle": "{{name}}\n{{path}}\nClick to preview"
   },
   "assistant": {
     "streaming": "STREAMING",
@@ -25,19 +29,70 @@
     "rename": "Rename",
     "delete": "Delete session",
     "deleteConfirm": "Delete this session permanently?",
+    "deleteBody": "The session will be permanently deleted and cannot be recovered.",
+    "deleteAria": "Delete session",
+    "deleteConfirmBtn": "Delete",
     "switch": "Switch session",
     "loadFailed": "Failed to load session",
-    "createFailed": "Failed to create session"
+    "createFailed": "Failed to create session",
+    "openAria": "Open session {{title}}",
+    "openAriaWithCwd": "Open session {{title}} (cwd: {{cwd}})",
+    "empty": "No sessions yet. Click above to create one."
   },
   "cwd": {
-    "label": "Working directory",
-    "placeholder": "Working directory (absolute path)",
-    "select": "Choose…",
+    "label": "Working directory (optional)",
+    "placeholder": "/home/coral/projects/my-app",
+    "select": "Browse",
+    "selectAria": "Browse for directory",
+    "hint1": "Agent will read and write files in this directory. Absolute path required, must exist.",
+    "hint2": "Leave blank to use the daemon's startup directory.",
     "invalidAbsolute": "Working directory must be an absolute path",
     "notFound": "Working directory not found"
   },
+  "newDialog": {
+    "title": "New chat",
+    "ariaLabel": "New chat",
+    "closeAria": "Close",
+    "titleField": "Title (optional)",
+    "titlePlaceholder": "Leave blank to auto-generate from first message",
+    "filePicker": "Select attachment"
+  },
+  "preview": {
+    "ariaLabel": "Preview {{name}}",
+    "closeAria": "Close",
+    "readFailed": "Failed to read: {{error}}",
+    "loading": "Loading…",
+    "unsupported": "This file type cannot be previewed inline.",
+    "download": "Download",
+    "thumbTitle": "{{name}}\nClick to enlarge",
+    "expandTitle": "{{name}}\n{{path}}\nClick to preview"
+  },
+  "bubble": {
+    "you": "You",
+    "error": "Error",
+    "assistant": "assistant",
+    "outputTruncated": "⚠ Output exceeds 10MB, truncated"
+  },
+  "empty": {
+    "heading": "Chat 💬",
+    "hint1": "Click \"New chat\" above to start a session, or just type below to auto-create one.",
+    "hint2": "Enter to send · Shift+Enter for newline · streaming output"
+  },
   "errors": {
     "stillStreaming": "The previous message is still streaming; wait for it or cancel.",
-    "tooManyConcurrent": "Up to {{max}} concurrent chat sessions can stream at once. Wait for others to finish or cancel them."
+    "tooManyConcurrent": "Up to {{max}} concurrent chat sessions can stream at once. Wait for others to finish or cancel them.",
+    "send": "Send failed",
+    "fileTooLarge": "File too large",
+    "fileTooLargeBody": "Per-file limit is 50 MB; current {{size}} MB ({{name}})",
+    "uploadFailed": "Attachment upload failed",
+    "cancelFailed": "Cancel failed"
+  },
+  "fallback": {
+    "attachment": "(attachment)",
+    "seeAttachments": "(see attachments)",
+    "attachmentTitle": "Attachment"
+  },
+  "time": {
+    "justNow": "just now"
   }
 }

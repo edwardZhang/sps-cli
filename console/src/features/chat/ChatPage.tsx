@@ -350,7 +350,7 @@ export function ChatPage() {
     const optimisticUser: ChatMessage = {
       id: `optim-${Date.now()}`,
       role: 'user',
-      content: content || '(attachment)',
+      content: content || t('fallback.attachment'),
       ts: new Date().toISOString(),
       status: 'complete',
       attachments: attachmentPaths.length > 0 ? attachmentPaths : undefined,
@@ -361,7 +361,7 @@ export function ChatPage() {
           id,
           createdAt: optimisticUser.ts,
           lastMessageAt: optimisticUser.ts,
-          title: content.slice(0, 60) || 'Attachment',
+          title: content.slice(0, 60) || t('fallback.attachmentTitle'),
           project: null,
           messageCount: 1,
           messages: [optimisticUser],
@@ -379,14 +379,14 @@ export function ChatPage() {
     setDraftAttachments([]);
     setSending(true);
     try {
-      await postMessage(id, content || '(see attachments)', attachmentPaths.length > 0 ? attachmentPaths : undefined);
+      await postMessage(id, content || t('fallback.seeAttachments'), attachmentPaths.length > 0 ? attachmentPaths : undefined);
       // 不用 await response — assistant chunks 走 SSE
     } catch (err) {
       setSending(false);
       // eslint-disable-next-line no-console
       console.error('sendMessage failed', err);
       void alert({
-        title: 'Send failed',
+        title: t('errors.send'),
         body: err instanceof Error ? err.message : String(err),
       });
     }
@@ -398,8 +398,8 @@ export function ChatPage() {
       // 1. 大小预校验
       if (file.size > ATTACHMENT_MAX_BYTES) {
         void alert({
-          title: 'File too large',
-          body: `Per-file limit is 50 MB; current ${(file.size / 1024 / 1024).toFixed(2)} MB (${file.name})`,
+          title: t('errors.fileTooLarge'),
+          body: t('errors.fileTooLargeBody', { size: (file.size / 1024 / 1024).toFixed(2), name: file.name }),
         });
         return;
       }
@@ -418,7 +418,7 @@ export function ChatPage() {
         setDraftAttachments((prev) => [...prev, { path: r.path, name: r.name }]);
       } catch (err) {
         void alert({
-          title: 'Attachment upload failed',
+          title: t('errors.uploadFailed'),
           body: err instanceof Error ? err.message : String(err),
         });
       } finally {
@@ -435,7 +435,7 @@ export function ChatPage() {
   const handleDelete = useCallback(
     async (id: string): Promise<void> => {
       const ok = await confirm({
-        title: 'Delete session',
+        title: t('session.delete'),
         body: 'The session will be permanently deleted and cannot be recovered.',
         confirm: 'Delete',
         danger: true,
@@ -455,7 +455,7 @@ export function ChatPage() {
       // SSE 'complete' event with stopReason='cancelled' will commit pending + clear it
     } catch (err) {
       void alert({
-        title: 'Cancel failed',
+        title: t('errors.cancelFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     }
@@ -473,7 +473,7 @@ export function ChatPage() {
           New chat
         </button>
         <div className="mt-2 text-xs font-[family-name:var(--font-heading)] uppercase tracking-wider text-[var(--color-text-muted)] px-2">
-          History {sessionsQ.data?.data.length ?? 0}
+          {t('history')} {sessionsQ.data?.data.length ?? 0}
         </div>
         <div className="flex flex-col gap-1.5 mt-1">
           {(sessionsQ.data?.data ?? []).map((s) => (
@@ -490,7 +490,7 @@ export function ChatPage() {
             >
               <button
                 type="button"
-                aria-label={`Open session ${s.title}${s.cwd ? ` (cwd: ${s.cwd})` : ''}`}
+                aria-label={s.cwd ? t('session.openAriaWithCwd', { title: s.title, cwd: s.cwd }) : t('session.openAria', { title: s.title })}
                 onClick={() => nav(`/chat/${s.id}`)}
                 className="flex items-start gap-2 flex-1 min-w-0 text-left"
               >
@@ -498,7 +498,7 @@ export function ChatPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold truncate">{s.title}</p>
                   <p className="text-[10px] text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] truncate">
-                    {s.messageCount} msg · {formatTimeAgo(s.lastMessageAt ?? s.createdAt)}
+                    {s.messageCount} msg · {formatTimeAgo(s.lastMessageAt ?? s.createdAt, t('time.justNow'))}
                   </p>
                   {s.cwd && (
                     <p
@@ -513,7 +513,7 @@ export function ChatPage() {
               </button>
               <button
                 type="button"
-                aria-label="Delete session"
+                aria-label={t('session.deleteAria')}
                 className="opacity-0 group-hover:opacity-100 p-1 hover:text-[var(--color-crashed)]"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -537,7 +537,7 @@ export function ChatPage() {
           <>
             <header className="px-4 py-3 border-b-2 border-[var(--color-text)] bg-[var(--color-bg-cream)]">
               <h2 className="font-[family-name:var(--font-heading)] font-bold text-lg">
-                {currentQ.data?.title ?? 'New chat'}
+                {currentQ.data?.title ?? t('newSession')}
               </h2>
               <p className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">
                 {sessionId}
@@ -609,7 +609,7 @@ export function ChatPage() {
                       <span className="truncate max-w-[180px]">{a.name}</span>
                       <span
                         role="button"
-                        aria-label={`Remove ${a.name}`}
+                        aria-label={t('input.ariaRemoveAttachment', { name: a.name })}
                         className="ml-1 hover:text-[var(--color-crashed)] cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -623,7 +623,7 @@ export function ChatPage() {
                   {uploading && (
                     <span className="flex items-center gap-1.5 px-2 py-1 text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">
                       <Loader2 size={11} strokeWidth={2.5} className="animate-spin" />
-                      Uploading…
+                      {t('input.uploading')}
                     </span>
                   )}
                 </div>
@@ -635,8 +635,8 @@ export function ChatPage() {
                   className="nb-btn flex-shrink-0"
                   onClick={() => setFilePickerOpen(true)}
                   disabled={sending}
-                  aria-label="Attach local file"
-                  title="Attach local file (or drop / paste an image)"
+                  aria-label={t('input.attach')}
+                  title={t('input.attachHint')}
                 >
                   <Paperclip size={14} strokeWidth={2.5} />
                 </button>
@@ -644,8 +644,8 @@ export function ChatPage() {
                   className="nb-input flex-1 resize-none"
                   placeholder={
                     dragOver
-                      ? 'Release to attach…'
-                      : 'Say something… (Enter to send · Shift+Enter newline · drop or paste files)'
+                      ? t('input.placeholderDragOver')
+                      : t('input.placeholder')
                   }
                   rows={2}
                   value={draft}
@@ -667,14 +667,14 @@ export function ChatPage() {
                       if (f) void ingestFile(f);
                     }
                   }}
-                  aria-label="Message input"
+                  aria-label={t('input.ariaInput')}
                 />
                 {pending ? (
                   <button
                     className="nb-btn nb-btn-danger"
                     onClick={handleInterrupt}
                     type="button"
-                    aria-label="Cancel streaming"
+                    aria-label={t('input.ariaStop')}
                   >
                     <Square size={14} strokeWidth={3} />
                     {t('input.stop')}
@@ -685,7 +685,7 @@ export function ChatPage() {
                     onClick={handleSend}
                     disabled={(!draft.trim() && draftAttachments.length === 0) || sending}
                     type="button"
-                    aria-label="Send"
+                    aria-label={t('input.ariaSend')}
                   >
                     {sending ? (
                       <Loader2 size={14} strokeWidth={3} className="animate-spin" />
@@ -705,13 +705,13 @@ export function ChatPage() {
                 <MessageCircle size={32} strokeWidth={2.5} />
               </div>
               <h1 className="font-[family-name:var(--font-heading)] text-2xl font-bold mb-2">
-                Chat 💬
+                {t('empty.heading')}
               </h1>
               <p className="text-sm text-[var(--color-text-muted)] mb-4">
-                Click "New chat" above to start a session, or just type below to auto-create one.
+                {t('empty.hint1')}
               </p>
               <p className="text-xs text-[var(--color-text-subtle)] italic">
-                Enter to send · Shift+Enter for newline · streaming output
+                {t('empty.hint2')}
               </p>
             </div>
           </div>
@@ -729,7 +729,7 @@ export function ChatPage() {
       {filePickerOpen && (
         <DirectoryPicker
           mode="file"
-          title="Select attachment"
+          title={t('newDialog.filePicker')}
           initialPath={currentQ.data?.cwd ?? undefined}
           onCancel={() => setFilePickerOpen(false)}
           onSelect={(picked) => {
@@ -781,6 +781,7 @@ function AttachmentPreview({
   path: string;
   onClose: () => void;
 }) {
+  const { t } = useTranslation('chat');
   const [textContent, setTextContent] = useState<string | null>(null);
   const [textErr, setTextErr] = useState<string | null>(null);
 
@@ -845,7 +846,7 @@ function AttachmentPreview({
             type="button"
             className="p-1 hover:bg-[var(--color-bg-cream)] rounded flex-shrink-0"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t('preview.closeAria')}
           >
             <X size={16} strokeWidth={3} />
           </button>
@@ -879,9 +880,9 @@ function AttachmentPreview({
           {isTextPath(path) && (
             <pre className="p-3 text-xs font-[family-name:var(--font-mono)] whitespace-pre-wrap break-words">
               {textErr ? (
-                <span className="text-[var(--color-crashed)]">Failed to read: {textErr}</span>
+                <span className="text-[var(--color-crashed)]">{t('preview.readFailed', { error: String(textErr) })}</span>
               ) : textContent === null ? (
-                <span className="text-[var(--color-text-muted)]">Loading…</span>
+                <span className="text-[var(--color-text-muted)]">{t('preview.loading')}</span>
               ) : (
                 textContent
               )}
@@ -889,13 +890,13 @@ function AttachmentPreview({
           )}
           {!isImagePath(path) && !isPdfPath(path) && !isTextPath(path) && (
             <div className="p-6 text-center text-sm text-[var(--color-text-muted)]">
-              <p className="mb-3">This file type cannot be previewed inline.</p>
+              <p className="mb-3">{t('preview.unsupported')}</p>
               <a
                 href={url}
                 download={name}
                 className="nb-btn nb-btn-primary inline-flex"
               >
-                Download
+                {t('preview.download')}
               </a>
             </div>
           )}
@@ -954,17 +955,17 @@ function NewSessionDialog({
         className="nb-card bg-[var(--color-bg)] max-w-md w-full p-5"
         role="dialog"
         aria-modal="true"
-        aria-label="New chat"
+        aria-label={t('newDialog.ariaLabel')}
       >
         <header className="flex items-center justify-between mb-4">
           <h2 className="font-[family-name:var(--font-heading)] font-bold text-lg">
-            New chat
+            {t('newDialog.title')}
           </h2>
           <button
             type="button"
             className="p-1 hover:bg-[var(--color-bg-cream)] rounded"
             onClick={onCancel}
-            aria-label="Close"
+            aria-label={t('newDialog.closeAria')}
           >
             <X size={16} strokeWidth={3} />
           </button>
@@ -976,13 +977,13 @@ function NewSessionDialog({
               htmlFor="new-session-title"
               className="block text-xs font-bold mb-1.5 uppercase tracking-wider"
             >
-              Title (optional)
+              {t('newDialog.titleField')}
             </label>
             <input
               id="new-session-title"
               type="text"
               className="nb-input w-full"
-              placeholder="Leave blank to auto-generate from first message"
+              placeholder={t('newDialog.titlePlaceholder')}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               autoFocus
@@ -994,14 +995,14 @@ function NewSessionDialog({
               htmlFor="new-session-cwd"
               className="block text-xs font-bold mb-1.5 uppercase tracking-wider"
             >
-              Working directory (optional)
+              {t('cwd.label')}
             </label>
             <div className="flex gap-2">
               <input
                 id="new-session-cwd"
                 type="text"
                 className="nb-input flex-1 font-[family-name:var(--font-mono)] text-sm"
-                placeholder="/home/coral/projects/my-app"
+                placeholder={t('cwd.placeholder')}
                 value={cwd}
                 onChange={(e) => setCwd(e.target.value)}
               />
@@ -1009,17 +1010,16 @@ function NewSessionDialog({
                 type="button"
                 className="nb-btn flex-shrink-0"
                 onClick={() => setPickerOpen(true)}
-                aria-label="Browse for directory"
-                title="Browse for directory"
+                aria-label={t('cwd.selectAria')}
+                title={t('cwd.selectAria')}
               >
                 <FolderOpen size={14} strokeWidth={2.5} />
-                Browse
+                {t('cwd.select')}
               </button>
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
               <Folder size={10} strokeWidth={2.5} className="inline mr-1 -mt-0.5" />
-              Agent will read and write files in this directory. Absolute path required, must exist.
-              Leave blank to use the daemon's startup directory.
+              {t('cwd.hint1')} {t('cwd.hint2')}
             </p>
           </div>
 
@@ -1067,6 +1067,7 @@ function MessageBubble({
   sessionId: string | null;
   onPreviewAttachment: (path: string) => void;
 }) {
+  const { t } = useTranslation('chat');
   const isUser = msg.role === 'user';
   const isError = msg.role === 'error';
   const blocks: ChatMessageBlock[] =
@@ -1087,9 +1088,9 @@ function MessageBubble({
         ].join(' ')}
       >
         <p className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
-          {isUser ? 'You' : isError ? 'Error' : 'assistant'}
+          {isUser ? t('bubble.you') : isError ? t('bubble.error') : t('bubble.assistant')}
           <span className="font-normal">·</span>
-          <span className="font-normal">{formatTimeAgo(msg.ts)}</span>
+          <span className="font-normal">{formatTimeAgo(msg.ts, t('time.justNow'))}</span>
         </p>
         <div className="flex flex-col gap-2">
           {blocks.map((b, i) => (
@@ -1111,7 +1112,7 @@ function MessageBubble({
         )}
         {msg.truncated && (
           <p className="mt-3 px-3 py-2 bg-[var(--color-stuck-bg)] border-2 border-[var(--color-stuck)] rounded-lg text-xs text-[var(--color-stuck)] font-bold">
-            ⚠ Output exceeds 10MB, truncated
+            {t('bubble.outputTruncated')}
           </p>
         )}
       </div>
@@ -1277,12 +1278,12 @@ function ToolBlock({
   );
 }
 
-function formatTimeAgo(ts: string | null): string {
+function formatTimeAgo(ts: string | null, justNow = 'just now', locale?: string): string {
   if (!ts) return '';
   const d = new Date(ts);
   const diff = Date.now() - d.getTime();
-  if (diff < 60_000) return 'just now';
+  if (diff < 60_000) return justNow;
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
-  return d.toLocaleDateString();
+  return d.toLocaleDateString(locale);
 }
