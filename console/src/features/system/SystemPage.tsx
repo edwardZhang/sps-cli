@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import {
   RefreshCw,
   CheckCircle,
@@ -29,6 +30,7 @@ import { listProjects } from '../../shared/api/projects';
 import { useDialog } from '../../shared/components/DialogProvider';
 
 export function SystemPage() {
+  const { t } = useTranslation('system');
   const infoQ = useQuery({ queryKey: ['system-info'], queryFn: getSystemInfo });
   const envQ = useQuery({ queryKey: ['system-env'], queryFn: getEnv });
   const [editingEnv, setEditingEnv] = useState(false);
@@ -36,14 +38,14 @@ export function SystemPage() {
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
       <header>
-        <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">System ⚙️</h1>
+        <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">{t('title')}</h1>
       </header>
 
       <VersionSection current={infoQ.data?.version} />
 
       <section className="nb-card">
         <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold mb-3">
-          Runtime
+          {t('runtime')}
         </h2>
         {infoQ.data ? (
           <dl className="grid grid-cols-[160px_1fr] gap-y-2 text-sm">
@@ -59,14 +61,14 @@ export function SystemPage() {
             </dd>
           </dl>
         ) : (
-          <p className="text-[var(--color-text-muted)]">Loading…</p>
+          <p className="text-[var(--color-text-muted)]">{t('loading')}</p>
         )}
       </section>
 
       <section className="nb-card">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">
-            Global config <code className="text-sm font-[family-name:var(--font-mono)] font-normal bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded">~/.coral/env</code>
+            {t('envSection')}<code className="text-sm font-[family-name:var(--font-mono)] font-normal bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded">~/.coral/env</code>
           </h2>
           {!editingEnv ? (
             <button
@@ -74,12 +76,12 @@ export function SystemPage() {
               style={{ padding: '6px 12px', fontSize: 12 }}
               onClick={() => setEditingEnv(true)}
               type="button"
-              aria-label="Edit env file"
+              aria-label={t('envEditAria')}
             >
-              <Edit3 size={12} strokeWidth={2.5} /> Edit
+              <Edit3 size={12} strokeWidth={2.5} /> {t('envEdit')}
             </button>
           ) : (
-            <span className="text-xs text-[var(--color-stuck)] font-bold">⚠ Editing</span>
+            <span className="text-xs text-[var(--color-stuck)] font-bold">{t('envEditing')}</span>
           )}
         </div>
 
@@ -104,7 +106,7 @@ export function SystemPage() {
           </dl>
         ) : (
           <p className="text-[var(--color-text-muted)] text-sm">
-            env file does not exist. Click "Edit" or run in your terminal: <code className="bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded font-[family-name:var(--font-mono)]">sps setup</code>。
+            {t('envMissing')}<code className="bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded font-[family-name:var(--font-mono)]">sps setup</code>
           </p>
         )}
       </section>
@@ -115,6 +117,7 @@ export function SystemPage() {
 }
 
 function VersionSection({ current }: { current?: string }) {
+  const { t } = useTranslation('system');
   const { confirm, alert } = useDialog();
   const [upgrading, setUpgrading] = useState(false);
   const [upgradeLog, setUpgradeLog] = useState<string | null>(null);
@@ -129,9 +132,9 @@ function VersionSection({ current }: { current?: string }) {
 
   const handleUpgrade = async (): Promise<void> => {
     const ok = await confirm({
-      title: 'Upgrade sps-cli',
-      body: `Current ${current} → ${latestQ.data?.latest}. All pipelines must be stopped. Restart sps console after upgrade.`,
-      confirm: 'Upgrade',
+      title: t('upgradeTitle'),
+      body: t('upgradeBody', { current, latest: latestQ.data?.latest }),
+      confirm: t('upgradeConfirm'),
     });
     if (!ok) return;
     setUpgrading(true);
@@ -144,19 +147,18 @@ function VersionSection({ current }: { current?: string }) {
       setUpgradeCommand(res.command);
       if (res.ok) {
         void alert({
-          title: 'Upgrade complete',
-          body: `Installed v${res.installedVersion}. Run \`pkill -f "sps console"\` and restart to apply.`,
+          title: t('upgradeDoneTitle'),
+          body: t('upgradeDoneBody', { version: res.installedVersion }),
         });
       } else {
-        // 详细错误区分：npm 跑完了但版本没变 vs npm 失败
         const reason = res.installedVersion && res.installedVersion === current
-          ? `npm finished but the version did not change (still ${res.installedVersion}) — likely permissions or registry issue. Copy the command below to run manually.`
-          : `npm did not install a new version. Copy the command to run manually, or check the log below.`;
-        void alert({ title: 'Upgrade had no effect', body: reason });
+          ? t('upgradeIneffectiveSameVersion', { version: res.installedVersion })
+          : t('upgradeIneffectiveNoInstall');
+        void alert({ title: t('upgradeIneffectiveTitle'), body: reason });
       }
     } catch (err) {
       setUpgradeLog((err as Error).message);
-      void alert({ title: 'Upgrade failed', body: (err as Error).message });
+      void alert({ title: t('upgradeFailed'), body: (err as Error).message });
     } finally {
       setUpgrading(false);
     }
@@ -168,9 +170,9 @@ function VersionSection({ current }: { current?: string }) {
       : upgradeCommand;
     try {
       await navigator.clipboard.writeText(cmd);
-      void alert({ title: 'Command copied', body: `Paste it into your terminal to run:\n${cmd}` });
+      void alert({ title: t('cmdCopiedTitle'), body: t('cmdCopiedBody', { cmd }) });
     } catch {
-      void alert({ title: 'Copy failed', body: `Copy manually:\n${cmd}` });
+      void alert({ title: t('copyFailedTitle'), body: t('copyFailedBody', { cmd }) });
     }
   };
 
@@ -178,7 +180,7 @@ function VersionSection({ current }: { current?: string }) {
     <section className="nb-card">
       <div className="flex items-center justify-between mb-3">
         <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">
-          Version
+          {t('version')}
         </h2>
         <button
           className="nb-btn"
@@ -186,27 +188,27 @@ function VersionSection({ current }: { current?: string }) {
           onClick={() => latestQ.refetch()}
           disabled={latestQ.isFetching || !current}
           type="button"
-          aria-label="Check latest version"
+          aria-label={t('checkUpdateAria')}
         >
           {latestQ.isFetching ? (
             <Loader2 size={12} strokeWidth={3} className="animate-spin" />
           ) : (
             <RefreshCw size={12} strokeWidth={2.5} />
           )}
-          Check for updates
+          {t('checkUpdate')}
         </button>
       </div>
       <dl className="grid grid-cols-[160px_1fr] gap-y-2 text-sm">
-        <dt className="font-bold">sps-cli (current)</dt>
+        <dt className="font-bold">{t('spsCliCurrent')}</dt>
         <dd className="font-[family-name:var(--font-mono)]">{current ?? '—'}</dd>
         {latestQ.data && (
           <>
-            <dt className="font-bold">npm (latest)</dt>
+            <dt className="font-bold">{t('npmLatest')}</dt>
             <dd className="font-[family-name:var(--font-mono)] flex items-center gap-2 flex-wrap">
               {latestQ.data.latest}
               {latestQ.data.upToDate ? (
                 <span className="nb-status" style={{ background: 'var(--color-running-bg)', color: 'var(--color-running)' }}>
-                  Latest
+                  {t('latestBadge')}
                 </span>
               ) : (
                 <>
@@ -216,24 +218,24 @@ function VersionSection({ current }: { current?: string }) {
                     onClick={handleUpgrade}
                     disabled={upgrading}
                     type="button"
-                    aria-label="Upgrade to latest"
+                    aria-label={t('upgradeAria')}
                   >
                     {upgrading ? (
                       <Loader2 size={11} strokeWidth={3} className="animate-spin" />
                     ) : (
                       <Download size={11} strokeWidth={2.5} />
                     )}
-                    Upgrade
+                    {t('upgrade')}
                   </button>
                   <button
                     className="nb-btn"
                     style={{ padding: '3px 10px', fontSize: 11 }}
                     onClick={handleCopyCommand}
                     type="button"
-                    aria-label="Copy upgrade command"
-                    title="Run manually if auto-upgrade fails"
+                    aria-label={t('copyCmdAria')}
+                    title={t('copyCmdTitle')}
                   >
-                    <Copy size={11} strokeWidth={2.5} /> Copy command
+                    <Copy size={11} strokeWidth={2.5} /> {t('copyCmd')}
                   </button>
                 </>
               )}
@@ -242,16 +244,16 @@ function VersionSection({ current }: { current?: string }) {
         )}
         {installedVersion && (
           <>
-            <dt className="font-bold">Installed</dt>
+            <dt className="font-bold">{t('installed')}</dt>
             <dd className="font-[family-name:var(--font-mono)] flex items-center gap-2">
               {installedVersion}
               {installedVersion === latestQ.data?.latest ? (
                 <span className="nb-status" style={{ background: 'var(--color-running-bg)', color: 'var(--color-running)' }}>
-                  Active (visible after console restart)
+                  {t('installedActive')}
                 </span>
               ) : installedVersion === current ? (
                 <span className="nb-status" style={{ background: 'var(--color-stuck-bg)', color: 'var(--color-stuck)' }}>
-                  Upgrade did not take effect
+                  {t('installedFailed')}
                 </span>
               ) : null}
             </dd>
@@ -259,7 +261,7 @@ function VersionSection({ current }: { current?: string }) {
         )}
         {latestQ.isError && (
           <>
-            <dt className="font-bold">Check</dt>
+            <dt className="font-bold">{t('checkLabel')}</dt>
             <dd className="text-[var(--color-crashed)] text-xs">
               {latestQ.error instanceof Error ? latestQ.error.message : String(latestQ.error)}
             </dd>
@@ -276,6 +278,7 @@ function VersionSection({ current }: { current?: string }) {
 }
 
 function EnvEditor({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation('system');
   const qc = useQueryClient();
   const { alert } = useDialog();
   const rawQ = useQuery({ queryKey: ['system-env-raw'], queryFn: getEnvRaw });
@@ -305,23 +308,23 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
     onError: (err) => {
       const status = (err as Error & { status?: number }).status;
       void alert({
-        title: status === 409 ? 'env was modified elsewhere' : 'Save failed',
+        title: status === 409 ? t('envEtagConflict') : t('envSaveFailed'),
         body:
           status === 409
-            ? 'Click cancel and reopen the editor.'
+            ? t('envEtagBody')
             : err instanceof Error ? err.message : String(err),
       });
     },
   });
 
   if (rawQ.isLoading) {
-    return <p className="text-[var(--color-text-muted)]">Loading…</p>;
+    return <p className="text-[var(--color-text-muted)]">{t('loading')}</p>;
   }
 
   return (
     <div>
       <p className="text-xs text-[var(--color-stuck)] font-bold mb-2">
-        ⚠ File contains plaintext credentials. 0600 permissions preserved on save.
+        {t('envWarn')}
       </p>
       <textarea
         className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -329,12 +332,12 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
         value={draft ?? ''}
         onChange={(e) => setDraft(e.target.value)}
         spellCheck={false}
-        aria-label="env file editor"
+        aria-label={t('envEditorAria')}
       />
       <div className="flex items-center justify-between mt-3">
         <span className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">
           {etag ? `etag: ${etag}` : ''}
-          {dirty ? ' · ● unsaved' : ''}
+          {dirty ? t('envUnsaved') : ''}
         </span>
         <div className="flex gap-2">
           <button
@@ -344,7 +347,7 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
             disabled={saveMutation.isPending}
             type="button"
           >
-            <X size={12} strokeWidth={3} /> Cancel
+            <X size={12} strokeWidth={3} /> {t('envCancel')}
           </button>
           <button
             className="nb-btn nb-btn-primary"
@@ -352,14 +355,14 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
             onClick={() => saveMutation.mutate()}
             disabled={!dirty || saveMutation.isPending}
             type="button"
-            aria-label="Save env"
+            aria-label={t('envSaveAria')}
           >
             {saveMutation.isPending ? (
               <Loader2 size={12} strokeWidth={3} className="animate-spin" />
             ) : (
               <Save size={12} strokeWidth={3} />
             )}
-            Save
+            {t('envSave')}
           </button>
         </div>
       </div>
@@ -370,6 +373,7 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
 // v0.50.14：真实 doctor 替代原 shallow doctorAll
 // v0.50.17：warm-load 改走 /api/projects（不再有单独的 shallow doctor 路径）
 function DoctorSection() {
+  const { t } = useTranslation('system');
   const { alert } = useDialog();
   const projectsQ = useQuery({ queryKey: ['projects'], queryFn: listProjects });
   // 存每个项目的 detailed doctor 结果
@@ -387,7 +391,7 @@ function DoctorSection() {
       setExpanded((e) => ({ ...e, [project]: true }));
     } catch (err) {
       void alert({
-        title: `doctor ${fix ? 'fix' : 'check'} failed`,
+        title: t('doctor.doctorActionFailed', { action: fix ? t('doctor.actionFix') : t('doctor.actionCheck') }),
         body: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -404,7 +408,7 @@ function DoctorSection() {
   return (
     <section className="nb-card">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">Project health check</h2>
+        <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">{t('doctor.title')}</h2>
         <button
           className="nb-btn nb-btn-mint"
           style={{ padding: '6px 12px', fontSize: 12 }}
@@ -415,11 +419,11 @@ function DoctorSection() {
           type="button"
         >
           <RefreshCw size={12} strokeWidth={2.5} />
-          Check all
+          {t('doctor.checkAll')}
         </button>
       </div>
       {projects.length === 0 ? (
-        <p className="text-[var(--color-text-muted)] text-sm">No projects yet.</p>
+        <p className="text-[var(--color-text-muted)] text-sm">{t('doctor.noProjects')}</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {projects.map((p) => {
@@ -440,7 +444,7 @@ function DoctorSection() {
                     onClick={() => setExpanded((e) => ({ ...e, [p.project]: !isExpanded }))}
                     disabled={!hasDet}
                     className="flex items-center gap-2 flex-1 text-left min-w-0"
-                    aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                    aria-label={isExpanded ? t('doctor.collapse') : t('doctor.expand')}
                   >
                     {hasDet && det.ok ? (
                       <CheckCircle size={16} className="text-[var(--color-running)] shrink-0" strokeWidth={2.5} />
@@ -460,7 +464,7 @@ function DoctorSection() {
                         </span>
                       )
                     ) : (
-                      <span className="text-xs text-[var(--color-text-muted)]">Click "Check" to run sps doctor</span>
+                      <span className="text-xs text-[var(--color-text-muted)]">{t('doctor.clickCheck')}</span>
                     )}
                   </button>
                   <button
@@ -471,14 +475,14 @@ function DoctorSection() {
                     }}
                     disabled={!!isLoading}
                     type="button"
-                    aria-label="Check"
+                    aria-label={t('doctor.checkAria')}
                   >
                     {isLoading === 'check' ? (
                       <Loader2 size={11} strokeWidth={3} className="animate-spin" />
                     ) : (
                       <RefreshCw size={11} strokeWidth={2.5} />
                     )}
-                    Check
+                    {t('doctor.check')}
                   </button>
                   {/* v0.50.22：修复按钮总是可见——老项目从没 check 过也能直接修。
                       sps doctor --fix 是幂等的：没问题时 noop，有问题才动手。
@@ -491,11 +495,11 @@ function DoctorSection() {
                     }}
                     disabled={!!isLoading || (hasDet && det.ok)}
                     type="button"
-                    aria-label="Auto-fix"
+                    aria-label={t('doctor.fixAria')}
                     title={
                       hasDet && det.ok
-                        ? 'Nothing to fix'
-                        : 'Runs sps doctor <proj> --fix: auto-creates .claude/hooks/stop.sh, state.json, etc.'
+                        ? t('doctor.fixNothing')
+                        : t('doctor.fixHint')
                     }
                   >
                     {isLoading === 'fix' ? (
@@ -503,7 +507,7 @@ function DoctorSection() {
                     ) : (
                       <Wrench size={11} strokeWidth={2.5} />
                     )}
-                    Fix
+                    {t('doctor.fix')}
                   </button>
                 </div>
                 {isExpanded && hasDet && (
@@ -515,7 +519,7 @@ function DoctorSection() {
                     </ul>
                     {det.fixes.length > 0 && (
                       <div className="mt-3 bg-[var(--color-running-bg)] border-2 border-[var(--color-running)] rounded p-2">
-                        <div className="text-xs font-bold text-[var(--color-running)] mb-1">Fixed</div>
+                        <div className="text-xs font-bold text-[var(--color-running)] mb-1">{t('doctor.fixed')}</div>
                         <ul className="text-xs list-disc pl-4">
                           {det.fixes.map((f, i) => <li key={i}>{f}</li>)}
                         </ul>
