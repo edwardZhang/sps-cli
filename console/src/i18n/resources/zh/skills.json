@@ -1,0 +1,34 @@
+{
+  "title": "Skills",
+  "syncBundled": "同步内置",
+  "syncing": "同步中…",
+  "syncDone": "同步完成",
+  "syncFailed": "同步失败",
+  "search": "搜索 skill",
+  "filter": {
+    "all": "全部",
+    "language": "语言",
+    "spec": "规范",
+    "workflow": "工作流",
+    "persona": "角色"
+  },
+  "card": {
+    "linked": "已 link 到 {{count}} 个项目",
+    "linked_other": "已 link 到 {{count}} 个项目",
+    "freezeable": "可冻结",
+    "frozen": "已冻结",
+    "bundled": "内置",
+    "user": "用户"
+  },
+  "actions": {
+    "link": "Link",
+    "unlink": "取消 Link",
+    "freeze": "冻结",
+    "unfreeze": "解冻"
+  },
+  "errors": {
+    "loadFailed": "Skill 列表加载失败",
+    "linkFailed": "Link 失败",
+    "unlinkFailed": "取消 Link 失败"
+  }
+}

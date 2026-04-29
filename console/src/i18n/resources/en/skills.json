@@ -1,0 +1,34 @@
+{
+  "title": "Skills",
+  "syncBundled": "Sync bundled",
+  "syncing": "Syncing…",
+  "syncDone": "Sync complete",
+  "syncFailed": "Sync failed",
+  "search": "Search skills",
+  "filter": {
+    "all": "All",
+    "language": "Language",
+    "spec": "Spec",
+    "workflow": "Workflow",
+    "persona": "Persona"
+  },
+  "card": {
+    "linked": "Linked in {{count}} project",
+    "linked_other": "Linked in {{count}} projects",
+    "freezeable": "Freezable",
+    "frozen": "Frozen",
+    "bundled": "Bundled",
+    "user": "User"
+  },
+  "actions": {
+    "link": "Link",
+    "unlink": "Unlink",
+    "freeze": "Freeze",
+    "unfreeze": "Unfreeze"
+  },
+  "errors": {
+    "loadFailed": "Failed to load skills",
+    "linkFailed": "Failed to link skill",
+    "unlinkFailed": "Failed to unlink skill"
+  }
+}

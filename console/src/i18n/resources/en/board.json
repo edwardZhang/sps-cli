@@ -1,0 +1,56 @@
+{
+  "title": "Board",
+  "columns": {
+    "Planning": "Planning",
+    "Backlog": "Backlog",
+    "Todo": "Todo",
+    "Inprogress": "In progress",
+    "QA": "QA Review",
+    "Done": "Done"
+  },
+  "cardCount_one": "{{count}} card",
+  "cardCount_other": "{{count}} cards",
+  "active_one": "{{count}} active",
+  "active_other": "{{count}} active",
+  "newCard": "New card",
+  "actions": {
+    "start": "Start",
+    "stop": "Stop",
+    "reset": "Reset",
+    "edit": "Edit",
+    "delete": "Delete",
+    "move": "Move",
+    "moveTo": "Move to {{state}}"
+  },
+  "card": {
+    "title": "Title",
+    "description": "Description",
+    "checklist": "Checklist",
+    "log": "Log",
+    "skills": "Skills",
+    "labels": "Labels",
+    "created": "Created",
+    "claimed": "Claimed by",
+    "seq": "Seq"
+  },
+  "modal": {
+    "create": "Create card",
+    "edit": "Edit card",
+    "delete": "Delete card",
+    "deleteConfirm": "Delete card #{{seq}}?",
+    "deleteCannotUndo": "This action cannot be undone.",
+    "titleRequired": "Title is required",
+    "titlePlaceholder": "Short, imperative title",
+    "descPlaceholder": "Describe the task (optional)",
+    "checklistPlaceholder": "Add a checklist item",
+    "addItem": "Add item"
+  },
+  "errors": {
+    "loadFailed": "Failed to load cards",
+    "createFailed": "Failed to create card",
+    "updateFailed": "Failed to update card",
+    "deleteFailed": "Failed to delete card",
+    "moveFailed": "Failed to move card",
+    "isRunning": "Card is running; kill the worker or move it out of In progress first."
+  }
+}

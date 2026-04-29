@@ -1,0 +1,58 @@
+{
+  "title": "Projects",
+  "list": {
+    "empty": "No projects yet — create one to get started.",
+    "create": "New project",
+    "name": "Name",
+    "repo": "Repository",
+    "status": "Status",
+    "cards": "Cards",
+    "lastTick": "Last tick"
+  },
+  "newProject": {
+    "title": "Create project",
+    "name": "Project name",
+    "namePlaceholder": "e.g. my-app",
+    "nameHint": "Letters, digits, _ and - only.",
+    "repo": "Repository path",
+    "repoPlaceholder": "Absolute path to existing git repo",
+    "branch": "Default branch",
+    "enableGit": "Enable Git integration",
+    "enableWiki": "Enable Wiki knowledge base",
+    "enableWikiHint": "Adds wiki/ to the repo and auto-injects context into prompts.",
+    "create": "Create",
+    "cancel": "Cancel",
+    "creating": "Creating…",
+    "createFailed": "Failed to create project"
+  },
+  "detail": {
+    "overview": "Overview",
+    "config": "Configuration",
+    "pipeline": "Pipeline",
+    "danger": "Danger zone",
+    "delete": "Delete project",
+    "deleteConfirm": "Delete project {{name}}? This cannot be undone.",
+    "deleteHint": "Removes ~/.coral/projects/{{name}}/ but leaves the repo untouched.",
+    "deleteFailed": "Failed to delete project",
+    "deleteRunningPipeline": "Pipeline is running; stop it before deleting.",
+    "edit": "Edit conf",
+    "save": "Save",
+    "reload": "Reload",
+    "etagConflict": "Conf was modified by another editor; please reload."
+  },
+  "pipelineEditor": {
+    "title": "Pipeline editor",
+    "active": "Active pipeline",
+    "switch": "Switch active",
+    "newPipeline": "New pipeline",
+    "namePlaceholder": "pipeline name (no extension)",
+    "namespaces": "Pipelines",
+    "save": "Save",
+    "delete": "Delete",
+    "deleteConfirm": "Delete pipeline {{name}}?",
+    "yamlInvalid": "Invalid YAML syntax",
+    "saveFailed": "Save failed",
+    "etagConflict": "Pipeline was modified by someone else; please reload.",
+    "filenameInvalid": "Invalid pipeline filename, or it must not be project.yaml"
+  }
+}

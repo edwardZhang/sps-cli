@@ -1,0 +1,43 @@
+{
+  "title": "SPS Console",
+  "newSession": "新建对话",
+  "history": "历史",
+  "historyCount_one": "{{count}} 个会话",
+  "historyCount_other": "{{count}} 个会话",
+  "msgCount_one": "{{count}} 条消息",
+  "msgCount_other": "{{count}} 条消息",
+  "input": {
+    "placeholder": "说点什么…（Enter 发送，Shift+Enter 换行，可拖入文件 / 粘贴图片）",
+    "send": "发送",
+    "stop": "中断",
+    "stopped": "已停止",
+    "attach": "附件",
+    "removeAttachment": "移除"
+  },
+  "assistant": {
+    "streaming": "STREAMING",
+    "thinking": "思考中…",
+    "tool": "工具",
+    "toolResult": "工具结果"
+  },
+  "session": {
+    "untitled": "新对话",
+    "rename": "重命名",
+    "delete": "删除会话",
+    "deleteConfirm": "永久删除该会话？",
+    "switch": "切换会话",
+    "loadFailed": "会话加载失败",
+    "createFailed": "会话创建失败"
+  },
+  "cwd": {
+    "label": "工作目录",
+    "placeholder": "工作目录（绝对路径）",
+    "select": "选择…",
+    "invalidAbsolute": "工作目录必须是绝对路径",
+    "notFound": "工作目录不存在"
+  },
+  "errors": {
+    "stillStreaming": "上一条消息还在生成中，先等完成或点中断",
+    "tooManyConcurrent": "最多同时 {{max}} 个 chat 会话在生成。先等其它完成或中断。"
+  }
+}

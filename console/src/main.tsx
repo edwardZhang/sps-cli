@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { DialogProvider } from './shared/components/DialogProvider';
 import { installGlobalErrorReporters } from './shared/components/ErrorBoundary';
+import './i18n';
 import './index.css';
 
 // v0.49 front-end error telemetry — hook window.error + unhandledrejection

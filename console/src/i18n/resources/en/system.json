@@ -1,0 +1,37 @@
+{
+  "title": "System",
+  "version": {
+    "current": "Current version",
+    "latest": "Latest on npm",
+    "upgradeAvailable": "Upgrade available",
+    "upToDate": "Up to date",
+    "checking": "Checking…",
+    "upgrade": "Upgrade",
+    "upgrading": "Upgrading…"
+  },
+  "env": {
+    "title": "Environment (~/.coral/env)",
+    "edit": "Edit",
+    "save": "Save",
+    "reload": "Reload",
+    "etagConflict": "Env was modified by another editor; please reload.",
+    "saveFailed": "Failed to save env"
+  },
+  "doctor": {
+    "title": "Doctor",
+    "run": "Run health check",
+    "running": "Running…",
+    "lastRun": "Last run",
+    "passed": "passed",
+    "failed": "failed",
+    "warnings": "warnings"
+  },
+  "locale": {
+    "title": "Language",
+    "description": "Choose the console language. The CLI is always English."
+  },
+  "errors": {
+    "loadFailed": "Failed to load system info",
+    "pipelineRunning": "A pipeline is running; stop it before upgrading."
+  }
+}

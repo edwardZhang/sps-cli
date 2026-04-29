@@ -1,0 +1,56 @@
+{
+  "title": "看板",
+  "columns": {
+    "Planning": "Planning",
+    "Backlog": "Backlog",
+    "Todo": "Todo",
+    "Inprogress": "进行中",
+    "QA": "QA Review",
+    "Done": "已完成"
+  },
+  "cardCount_one": "{{count}} 张卡",
+  "cardCount_other": "{{count}} 张卡",
+  "active_one": "{{count}} 活跃",
+  "active_other": "{{count}} 活跃",
+  "newCard": "新建卡片",
+  "actions": {
+    "start": "启动",
+    "stop": "停止",
+    "reset": "重置",
+    "edit": "编辑",
+    "delete": "删除",
+    "move": "移动",
+    "moveTo": "移动到 {{state}}"
+  },
+  "card": {
+    "title": "标题",
+    "description": "描述",
+    "checklist": "检查清单",
+    "log": "日志",
+    "skills": "Skills",
+    "labels": "标签",
+    "created": "创建时间",
+    "claimed": "认领者",
+    "seq": "Seq"
+  },
+  "modal": {
+    "create": "新建卡片",
+    "edit": "编辑卡片",
+    "delete": "删除卡片",
+    "deleteConfirm": "删除卡片 #{{seq}}？",
+    "deleteCannotUndo": "此操作无法撤销。",
+    "titleRequired": "标题不能为空",
+    "titlePlaceholder": "简短的、动词开头的标题",
+    "descPlaceholder": "描述任务（可选）",
+    "checklistPlaceholder": "添加一项检查",
+    "addItem": "添加"
+  },
+  "errors": {
+    "loadFailed": "卡片加载失败",
+    "createFailed": "卡片创建失败",
+    "updateFailed": "卡片更新失败",
+    "deleteFailed": "卡片删除失败",
+    "moveFailed": "卡片移动失败",
+    "isRunning": "卡片正在运行，请先 kill worker 或移出 Inprogress"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "title": "Logs",
+  "filter": {
+    "project": "Project",
+    "level": "Level",
+    "lines": "Lines",
+    "errOnly": "Errors only",
+    "clear": "Clear"
+  },
+  "follow": "Follow tail",
+  "paused": "Paused",
+  "noLogs": "No logs to show",
+  "errors": {
+    "loadFailed": "Failed to load logs"
+  }
+}

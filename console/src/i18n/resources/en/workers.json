@@ -1,0 +1,23 @@
+{
+  "title": "Workers",
+  "capacity": "Capacity",
+  "running": "Running",
+  "free": "Free",
+  "total": "Total",
+  "stage": "Stage",
+  "pid": "PID",
+  "started": "Started",
+  "runtime": "Runtime",
+  "marker": "Marker",
+  "kill": "Kill worker",
+  "killConfirm": "Kill worker {{slot}}?",
+  "launch": "Launch worker",
+  "log": "Log",
+  "noWorkers": "No active workers",
+  "selectProject": "Select a project",
+  "errors": {
+    "loadFailed": "Failed to load workers",
+    "killFailed": "Failed to kill worker",
+    "launchFailed": "Failed to launch worker"
+  }
+}

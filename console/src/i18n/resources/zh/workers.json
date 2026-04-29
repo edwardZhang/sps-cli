@@ -1,0 +1,23 @@
+{
+  "title": "Workers",
+  "capacity": "容量",
+  "running": "运行中",
+  "free": "空闲",
+  "total": "总数",
+  "stage": "阶段",
+  "pid": "PID",
+  "started": "启动时间",
+  "runtime": "运行时长",
+  "marker": "Marker",
+  "kill": "Kill worker",
+  "killConfirm": "终止 worker {{slot}}？",
+  "launch": "启动 worker",
+  "log": "日志",
+  "noWorkers": "没有活跃的 worker",
+  "selectProject": "请选择项目",
+  "errors": {
+    "loadFailed": "Worker 列表加载失败",
+    "killFailed": "Worker 终止失败",
+    "launchFailed": "Worker 启动失败"
+  }
+}

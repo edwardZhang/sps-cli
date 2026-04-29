@@ -1,0 +1,37 @@
+{
+  "title": "系统",
+  "version": {
+    "current": "当前版本",
+    "latest": "npm 最新版",
+    "upgradeAvailable": "有更新可用",
+    "upToDate": "已是最新",
+    "checking": "检查中…",
+    "upgrade": "升级",
+    "upgrading": "升级中…"
+  },
+  "env": {
+    "title": "环境变量（~/.coral/env）",
+    "edit": "编辑",
+    "save": "保存",
+    "reload": "重新加载",
+    "etagConflict": "Env 已被其它编辑修改，请重新加载",
+    "saveFailed": "Env 保存失败"
+  },
+  "doctor": {
+    "title": "Doctor",
+    "run": "运行健康检查",
+    "running": "运行中…",
+    "lastRun": "上次运行",
+    "passed": "通过",
+    "failed": "失败",
+    "warnings": "警告"
+  },
+  "locale": {
+    "title": "语言",
+    "description": "选择 Console 语言。CLI 始终为英文。"
+  },
+  "errors": {
+    "loadFailed": "系统信息加载失败",
+    "pipelineRunning": "有 pipeline 在跑，升级前请先停止"
+  }
+}

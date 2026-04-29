@@ -1,0 +1,16 @@
+{
+  "title": "日志",
+  "filter": {
+    "project": "项目",
+    "level": "级别",
+    "lines": "行数",
+    "errOnly": "仅错误",
+    "clear": "清空"
+  },
+  "follow": "实时跟随",
+  "paused": "已暂停",
+  "noLogs": "暂无日志",
+  "errors": {
+    "loadFailed": "日志加载失败"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "title": "项目",
+  "list": {
+    "empty": "还没有项目 —— 创建一个开始吧。",
+    "create": "新建项目",
+    "name": "名称",
+    "repo": "仓库",
+    "status": "状态",
+    "cards": "卡片",
+    "lastTick": "上次 tick"
+  },
+  "newProject": {
+    "title": "创建项目",
+    "name": "项目名",
+    "namePlaceholder": "例如 my-app",
+    "nameHint": "只允许字母、数字、_ 和 -。",
+    "repo": "仓库路径",
+    "repoPlaceholder": "已存在的 git 仓库的绝对路径",
+    "branch": "默认分支",
+    "enableGit": "启用 Git 集成",
+    "enableWiki": "启用 Wiki 知识库",
+    "enableWikiHint": "在仓库下加 wiki/，并自动注入上下文到 prompt。",
+    "create": "创建",
+    "cancel": "取消",
+    "creating": "创建中…",
+    "createFailed": "项目创建失败"
+  },
+  "detail": {
+    "overview": "概览",
+    "config": "配置",
+    "pipeline": "流水线",
+    "danger": "危险操作",
+    "delete": "删除项目",
+    "deleteConfirm": "删除项目 {{name}}？此操作无法撤销。",
+    "deleteHint": "会移除 ~/.coral/projects/{{name}}/，但仓库本身不动。",
+    "deleteFailed": "项目删除失败",
+    "deleteRunningPipeline": "项目 pipeline 正在运行，先停止再删除",
+    "edit": "编辑 conf",
+    "save": "保存",
+    "reload": "重新加载",
+    "etagConflict": "Conf 已被其它编辑修改，请重新加载"
+  },
+  "pipelineEditor": {
+    "title": "Pipeline 编辑器",
+    "active": "当前 pipeline",
+    "switch": "切换",
+    "newPipeline": "新建 pipeline",
+    "namePlaceholder": "pipeline 名（不带后缀）",
+    "namespaces": "Pipeline 列表",
+    "save": "保存",
+    "delete": "删除",
+    "deleteConfirm": "删除 pipeline {{name}}？",
+    "yamlInvalid": "YAML 语法错误",
+    "saveFailed": "保存失败",
+    "etagConflict": "Pipeline 被其它人修改，请重新加载",
+    "filenameInvalid": "pipeline 文件名非法或不能是 project.yaml"
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "actions": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "create": "Create",
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "loading": "Loading…",
+    "search": "Search",
+    "more": "More",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "yes": "Yes",
+    "no": "No",
+    "ok": "OK"
+  },
+  "status": {
+    "online": "online",
+    "offline": "offline",
+    "connecting": "connecting",
+    "ready": "ready",
+    "running": "running",
+    "stopped": "stopped",
+    "error": "error",
+    "idle": "idle"
+  },
+  "nav": {
+    "chat": "Chat",
+    "projects": "Projects",
+    "board": "Board",
+    "workers": "Workers",
+    "logs": "Logs",
+    "skills": "Skills",
+    "system": "System"
+  },
+  "errors": {
+    "generic": "Something went wrong",
+    "networkOffline": "Network is offline",
+    "notFound": "Not found",
+    "unauthorized": "Unauthorized",
+    "badRequest": "Bad request"
+  },
+  "empty": {
+    "noData": "No data",
+    "noResults": "No results"
+  },
+  "locale": {
+    "label": "Language",
+    "en": "English",
+    "zh": "中文"
+  }
+}

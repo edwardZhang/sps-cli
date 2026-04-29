@@ -1,0 +1,57 @@
+{
+  "actions": {
+    "cancel": "取消",
+    "confirm": "确认",
+    "save": "保存",
+    "delete": "删除",
+    "edit": "编辑",
+    "close": "关闭",
+    "create": "创建",
+    "refresh": "刷新",
+    "retry": "重试",
+    "loading": "加载中…",
+    "search": "搜索",
+    "more": "更多",
+    "back": "返回",
+    "next": "下一步",
+    "previous": "上一步",
+    "yes": "是",
+    "no": "否",
+    "ok": "确定"
+  },
+  "status": {
+    "online": "在线",
+    "offline": "离线",
+    "connecting": "连接中",
+    "ready": "就绪",
+    "running": "运行中",
+    "stopped": "已停止",
+    "error": "错误",
+    "idle": "空闲"
+  },
+  "nav": {
+    "chat": "对话",
+    "projects": "项目",
+    "board": "看板",
+    "workers": "Workers",
+    "logs": "日志",
+    "skills": "Skills",
+    "system": "系统"
+  },
+  "errors": {
+    "generic": "出错了",
+    "networkOffline": "网络未连接",
+    "notFound": "未找到",
+    "unauthorized": "未授权",
+    "badRequest": "请求无效"
+  },
+  "empty": {
+    "noData": "暂无数据",
+    "noResults": "没有结果"
+  },
+  "locale": {
+    "label": "语言",
+    "en": "English",
+    "zh": "中文"
+  }
+}
