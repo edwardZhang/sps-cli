@@ -10,9 +10,9 @@ function ConfirmHarness({ onResult }: { onResult: (v: boolean) => void }) {
       type="button"
       onClick={async () => {
         const ok = await confirm({
-          title: '删除?',
-          body: '确定吗?',
-          confirm: '删除',
+          title: 'Delete?',
+          body: 'Sure?',
+          confirm: 'Delete',
           danger: true,
         });
         onResult(ok);
@@ -29,7 +29,7 @@ function PromptHarness({ onResult }: { onResult: (v: string | null) => void }) {
     <button
       type="button"
       onClick={async () => {
-        const v = await prompt({ title: '名字?', placeholder: 'xx' });
+        const v = await prompt({ title: 'Name?', placeholder: 'xx' });
         onResult(v);
       }}
     >
@@ -51,16 +51,16 @@ describe('DialogProvider', () => {
 
     // First: click confirm
     await user.click(screen.getByText('trigger'));
-    expect(screen.getByRole('heading', { name: '删除?' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '删除' }));
+    expect(screen.getByRole('heading', { name: 'Delete?' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
     expect(results).toEqual([true]);
 
     // Dialog should be gone
-    expect(screen.queryByRole('heading', { name: '删除?' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Delete?' })).not.toBeInTheDocument();
 
     // Second: click cancel
     await user.click(screen.getByText('trigger'));
-    await user.click(screen.getByRole('button', { name: '取消' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(results).toEqual([true, false]);
   });
 
@@ -93,12 +93,12 @@ describe('DialogProvider', () => {
     await user.click(screen.getByText('trigger'));
     const input = screen.getByPlaceholderText('xx');
     await user.type(input, '  acme  ');
-    await user.click(screen.getByRole('button', { name: '确定' }));
+    await user.click(screen.getByRole('button', { name: 'OK' }));
     expect(results).toEqual(['acme']);
 
     // Cancel path
     await user.click(screen.getByText('trigger'));
-    await user.click(screen.getByRole('button', { name: '取消' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(results).toEqual(['acme', null]);
   });
 
@@ -113,7 +113,7 @@ describe('DialogProvider', () => {
     );
 
     await user.click(screen.getByText('trigger'));
-    const submit = screen.getByRole('button', { name: '确定' });
+    const submit = screen.getByRole('button', { name: 'OK' });
     expect(submit).toBeDisabled();
 
     await user.type(screen.getByPlaceholderText('xx'), 'x');

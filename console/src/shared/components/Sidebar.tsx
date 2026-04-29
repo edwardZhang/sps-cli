@@ -9,6 +9,7 @@ import {
   Globe,
   Settings,
 } from 'lucide-react';
+import { LocaleSwitcher } from './LocaleSwitcher';
 
 const NAV_ITEMS = [
   { to: '/chat', key: 'chat', icon: MessageSquare },
@@ -51,6 +52,9 @@ export function Sidebar() {
           );
         })}
       </nav>
+      <div className="mt-auto pt-4 px-1">
+        <LocaleSwitcher />
+      </div>
     </>
   );
 }
