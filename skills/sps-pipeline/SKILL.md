@@ -188,8 +188,8 @@ Planning（用户手动暂存；不自动派发）
 ```
 
 Default states (configurable in YAML `pm.card_states`):
-- **Planning** — v0.51.9+：人工暂存 / 草稿（不自动入队，需用户手动拖到 Backlog 才会跑）
-- **Backlog** — `sps card add` 默认入此状态；StageEngine 抢卡执行
+- **Planning** — v0.51.10+：人工暂存 / 草稿。**console "新卡片" 表单**默认入此状态；用户拖到 Backlog 才会跑。
+- **Backlog** — **`sps card add`（CLI / agent）**默认入此状态；StageEngine 抢卡执行。
 - **Todo** — StageEngine 已 prep（建分支 / worktree），下次 tick 派 worker
 - **Inprogress** — worker active
 - **QA** (or **Review**) — code complete, awaiting human/auto verification

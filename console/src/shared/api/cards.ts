@@ -76,7 +76,17 @@ export function launchCard(project: string, seq: number) {
 export function createCard(
   project: string,
   input:
-    | { title: string; description?: string; skills?: string[]; labels?: string[] }
+    | {
+        title: string;
+        description?: string;
+        skills?: string[];
+        labels?: string[];
+        /**
+         * v0.51.10：入场状态，默认 'Planning'（console 表单语义：人创建 → 暂存等派发）。
+         * 想立即派发执行，传 'Backlog'。
+         */
+        initialState?: string;
+      }
     | string,
 ) {
   const body = typeof input === 'string' ? { title: input } : input;

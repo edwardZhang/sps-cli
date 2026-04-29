@@ -242,6 +242,28 @@ describe('CardService.create', () => {
     const card = await backend.getBySeq('1');
     expect(card?.skills).toEqual(['ts', 'frontend']);
   });
+
+  // v0.51.10：默认入场状态 + initialState 路由
+  it('默认 initialState=Backlog（CLI / agent 路径）', async () => {
+    const { svc, backend } = newService();
+    await svc.create('p', { title: 'auto-run' });
+    const card = await backend.getBySeq('1');
+    expect(card?.state).toBe('Backlog');
+  });
+
+  it('initialState=Planning 显式传入（console 表单路径）', async () => {
+    const { svc, backend } = newService();
+    await svc.create('p', { title: 'manual-park', initialState: 'Planning' });
+    const card = await backend.getBySeq('1');
+    expect(card?.state).toBe('Planning');
+  });
+
+  it('initialState=Backlog 显式传入与默认等价', async () => {
+    const { svc, backend } = newService();
+    await svc.create('p', { title: 'explicit', initialState: 'Backlog' });
+    const card = await backend.getBySeq('1');
+    expect(card?.state).toBe('Backlog');
+  });
 });
 
 describe('CardService.update', () => {

@@ -201,7 +201,12 @@ Planning           NEEDS-FIX (halt)
 (manual park, v0.51.9+)
 ```
 
-**v0.51.9 change**: `sps card add` puts cards directly in **Backlog** (used to go through Planning + auto-promote). Planning is now a manual parking lot — drag a card there to defer; drag back to Backlog to dispatch. Cards order strictly by seq.
+**v0.51.10**: caller-aware default state.
+- **`sps card add` (CLI / agent / API default)** → **Backlog**（自动跑）
+- **Console "新卡片" 表单（人在 UI 操作）** → **Planning**（暂存，等用户拖到 Backlog）
+
+CLI 用户想暂存：`sps card add ... --draft`。Console 用户想立即跑：勾"立即派发执行"。
+卡片严格按 seq 排序；不再有 pipeline_order.json。
 
 Default states (configurable via YAML `pm.card_states`).
 

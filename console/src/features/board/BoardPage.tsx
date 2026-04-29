@@ -126,6 +126,7 @@ export function BoardPage() {
       description: string;
       skills: string[];
       labels: string[];
+      initialState: 'Planning' | 'Backlog';
     }) => createCard(project!, input),
     onSuccess: () => {
       refetchAll();

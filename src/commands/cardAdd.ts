@@ -31,15 +31,25 @@ export async function executeCardAdd(
     : undefined;
 
   if (!title) {
-    console.error('Usage: sps card add <project> "<title>" ["description"] [--skill name1,name2]');
+    console.error('Usage: sps card add <project> "<title>" ["description"] [--skill name1,name2] [--draft]');
     process.exit(2);
   }
+
+  // v0.51.10：默认入 Backlog（CLI 主要被 agent / 自动化调用，期望立即跑）。
+  // --draft 把卡放 Planning 等手动派发（人在终端建卡、想稍后再决定时用）。
+  const isDraft = !!flags.draft;
+  const initialState = isDraft ? 'Planning' : 'Backlog';
 
   // PIPELINE_LABEL 副作用：Service 创建后 CLI 自己补 AI-PIPELINE 标签（标签是
   // "SPS pipeline 卡"的标记，不再触发 SchedulerEngine — 因 v0.51.9 起卡直接进 Backlog）
   // v0.51.9：删去 pipeline_order.json 副作用（统一按 seq 排序）
   const services = createContainer();
-  const result = await services.cards.create(project, { title, description: desc, skills });
+  const result = await services.cards.create(project, {
+    title,
+    description: desc,
+    skills,
+    initialState,
+  });
   if (!result.ok) {
     const msg = result.error.message;
     if (jsonOutput) {

@@ -43,7 +43,20 @@ export function createCardsRoute(deps: CardsRouteDeps): Hono {
 
   app.post('/:project/cards', async (c) => {
     const body = (await c.req.json().catch(() => null)) as
-      | { title?: string; description?: string; skills?: string[]; labels?: string[] }
+      | {
+          title?: string;
+          description?: string;
+          skills?: string[];
+          labels?: string[];
+          /**
+           * v0.51.10: 入场状态。
+           *   - 不传 → 'Planning'（console "新卡片" 表单的语义：人在 UI 上加，
+           *     等他确认派发再进 Backlog）
+           *   - 'Backlog' → 立即派发（agent / 外部自动化想直接跑用这个）
+           *   - 任意自定义 state → 项目用 mode: project YAML 自定义状态名时用
+           */
+          initialState?: string;
+        }
       | null;
     if (!body || typeof body.title !== 'string' || !body.title.trim()) {
       return c.json(
@@ -57,11 +70,18 @@ export function createCardsRoute(deps: CardsRouteDeps): Hono {
     const labels = Array.isArray(body.labels)
       ? body.labels.filter((l) => typeof l === 'string' && l.trim().length > 0)
       : undefined;
+    // v0.51.10: 默认入 Planning（console 表单是主要调用方）；调用方显式传
+    // initialState 可覆盖（agent / 自动化用 'Backlog' 立即跑）
+    const initialState =
+      typeof body.initialState === 'string' && body.initialState.trim()
+        ? body.initialState.trim()
+        : 'Planning';
     const r = await deps.cards.create(c.req.param('project'), {
       title: body.title,
       description: body.description,
       skills,
       labels,
+      initialState,
     });
     if (!r.ok) return c.json(toProblemJson(r.error), toHttpStatus(r.error) as 400);
     return c.json({ ok: true, output: `Created card #${r.value.seq}` });

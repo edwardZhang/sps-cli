@@ -201,7 +201,12 @@ Planning           NEEDS-FIX (halt)
 (人工暂存，v0.51.9+)
 ```
 
-**v0.51.9 变化**：`sps card add` 直接把卡放到 **Backlog**（不再走 Planning + 自动提升）。Planning 改为人工暂存 — 拖卡进 Planning = 暂停；拖回 Backlog = 重新派发。卡顺序严格按 seq。
+**v0.51.10**：按调用方区分默认入场状态。
+- **`sps card add`（CLI / agent / 直接调 API）** → **Backlog**（自动跑）
+- **Console "新卡片" 表单（人在 UI 操作）** → **Planning**（暂存，等用户拖到 Backlog 派发）
+
+CLI 用户想暂存：`sps card add ... --draft`。Console 用户想立即跑：勾"立即派发执行"。
+卡片严格按 seq 排序；不再有 pipeline_order.json。
 
 默认状态（可在 YAML `pm.card_states` 自定义）。
 
