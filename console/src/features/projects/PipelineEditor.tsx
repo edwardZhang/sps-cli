@@ -87,10 +87,10 @@ export function PipelineEditor({
       void alert({
         title:
           status === 409
-            ? '文件已被其他地方修改'
+            ? 'File was modified elsewhere'
             : status === 422
-              ? 'YAML 语法错'
-              : '保存失败',
+              ? 'Invalid YAML syntax'
+              : 'Save failed',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -118,7 +118,7 @@ export function PipelineEditor({
       setDraft(yaml);
     } catch (err) {
       void alert({
-        title: 'YAML 序列化失败',
+        title: 'YAML serialization failed',
         body: err instanceof Error ? err.message : String(err),
       });
     }
@@ -162,16 +162,16 @@ export function PipelineEditor({
             className="nb-btn nb-btn-mint p-2"
             onClick={onClose}
             type="button"
-            aria-label="关闭"
+            aria-label="Close"
           >
             <X size={14} strokeWidth={3} />
           </button>
         </header>
 
-        {isLoading && <p className="text-[var(--color-text-muted)]">加载中…</p>}
+        {isLoading && <p className="text-[var(--color-text-muted)]">Loading…</p>}
         {isError && (
           <p className="text-[var(--color-crashed)]">
-            加载失败: {error instanceof Error ? error.message : String(error)}
+            Load failed: {error instanceof Error ? error.message : String(error)}
           </p>
         )}
 
@@ -195,7 +195,7 @@ export function PipelineEditor({
                   title={parseError ?? undefined}
                 >
                   <FileText size={11} strokeWidth={2.5} />
-                  结构化
+                  Structured
                 </button>
                 <button
                   type="button"
@@ -209,7 +209,7 @@ export function PipelineEditor({
                   ].join(' ')}
                 >
                   <FileCode size={11} strokeWidth={2.5} />
-                  原始 YAML
+                  Raw YAML
                 </button>
               </div>
               {parseError && (
@@ -220,7 +220,7 @@ export function PipelineEditor({
               )}
               {data?.isActive && (
                 <span className="text-xs text-[var(--color-stuck)] font-bold ml-auto">
-                  ⚠ 这是当前激活的 pipeline，保存后下一轮 tick 生效
+                  ⚠ This is the active pipeline; takes effect on the next tick after save
                 </span>
               )}
             </div>
@@ -240,7 +240,7 @@ export function PipelineEditor({
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                   spellCheck={false}
-                  aria-label="pipeline YAML 编辑器"
+                  aria-label="Pipeline YAML editor"
                 />
               )}
             </div>
@@ -249,13 +249,13 @@ export function PipelineEditor({
             <div className="flex items-center justify-between mt-3 pt-3 border-t-2 border-dashed border-[var(--color-text)] flex-shrink-0">
               <span className="text-xs text-[var(--color-text-muted)]">
                 {dirty ? (
-                  <span className="text-[var(--color-stuck)] font-bold">● 未保存</span>
+                  <span className="text-[var(--color-stuck)] font-bold">● unsaved</span>
                 ) : saveMutation.isSuccess ? (
                   <span className="text-[var(--color-running)] font-bold flex items-center gap-1">
-                    <CheckCircle2 size={12} strokeWidth={2.5} /> 已保存
+                    <CheckCircle2 size={12} strokeWidth={2.5} /> Saved
                   </span>
                 ) : (
-                  '无变化'
+                  'No changes'
                 )}
               </span>
               <div className="flex gap-2">
@@ -269,7 +269,7 @@ export function PipelineEditor({
                   disabled={saveMutation.isPending}
                   type="button"
                 >
-                  重新加载
+                  Reload
                 </button>
                 <button
                   className="nb-btn nb-btn-primary"
@@ -277,14 +277,14 @@ export function PipelineEditor({
                   onClick={() => saveMutation.mutate()}
                   disabled={!dirty || saveMutation.isPending}
                   type="button"
-                  aria-label="保存 pipeline"
+                  aria-label="Save pipeline"
                 >
                   {saveMutation.isPending ? (
                     <Loader2 size={13} strokeWidth={3} className="animate-spin" />
                   ) : (
                     <Save size={13} strokeWidth={3} />
                   )}
-                  保存
+                  Save
                 </button>
               </div>
             </div>
@@ -352,7 +352,7 @@ function StructuredEditor({
           </select>
         </label>
         <span className="text-xs text-[var(--color-text-muted)]">
-          project = 事件驱动流水线（默认） · steps = 顺序脚本
+          project = event-driven pipeline (default) · steps = sequential script
         </span>
       </div>
 
@@ -367,14 +367,14 @@ function StructuredEditor({
             className="nb-btn nb-btn-mint"
             style={{ padding: '4px 12px', fontSize: 12 }}
             onClick={addStage}
-            aria-label="添加 stage"
+            aria-label="Add stage"
           >
-            <Plus size={11} strokeWidth={3} /> 添加 stage
+            <Plus size={11} strokeWidth={3} /> Add stage
           </button>
         </div>
         {stages.length === 0 ? (
           <p className="text-sm text-[var(--color-text-muted)] italic p-4 border-2 border-dashed border-[var(--color-text)] rounded-lg text-center">
-            还没 stage。点"添加 stage"开始。
+            No stages yet. Click "Add stage" to start.
           </p>
         ) : (
           <div className="flex flex-col gap-3">
@@ -433,7 +433,7 @@ function StageCard({
             style={{ padding: '3px 8px' }}
             onClick={onMoveUp}
             disabled={index === 0}
-            aria-label="上移"
+            aria-label="Move up"
           >
             <ChevronUp size={12} strokeWidth={3} />
           </button>
@@ -443,7 +443,7 @@ function StageCard({
             style={{ padding: '3px 8px' }}
             onClick={onMoveDown}
             disabled={index === total - 1}
-            aria-label="下移"
+            aria-label="Move down"
           >
             <ChevronDown size={12} strokeWidth={3} />
           </button>
@@ -452,7 +452,7 @@ function StageCard({
             className="nb-btn nb-btn-danger"
             style={{ padding: '3px 8px' }}
             onClick={onRemove}
-            aria-label="删除 stage"
+            aria-label="Delete stage"
           >
             <Trash2 size={12} strokeWidth={3} />
           </button>
@@ -460,7 +460,7 @@ function StageCard({
       </div>
 
       <div className="grid grid-cols-2 gap-3 text-sm">
-        <StageField label="name" hint="stage 唯一名">
+        <StageField label="name" hint="unique stage name">
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -469,7 +469,7 @@ function StageCard({
             placeholder="develop"
           />
         </StageField>
-        <StageField label="profile" hint="skill 画像，可空">
+        <StageField label="profile" hint="skill profile (optional)">
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -478,7 +478,7 @@ function StageCard({
             placeholder="fullstack"
           />
         </StageField>
-        <StageField label="card_state" hint="本 stage 期间卡片状态">
+        <StageField label="card_state" hint="card state during this stage">
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -487,7 +487,7 @@ function StageCard({
             placeholder="Inprogress"
           />
         </StageField>
-        <StageField label="timeout" hint="可选，如 30m 2h">
+        <StageField label="timeout" hint="optional, e.g. 30m 2h">
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -496,7 +496,7 @@ function StageCard({
             placeholder="2h"
           />
         </StageField>
-        <StageField label="trigger" hint="触发条件，可空走默认">
+        <StageField label="trigger" hint="trigger condition (optional, defaults applied)">
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -505,7 +505,7 @@ function StageCard({
             placeholder="card_enters 'Todo'"
           />
         </StageField>
-        <StageField label="on_complete" hint="成功后动作">
+        <StageField label="on_complete" hint="action on success">
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -522,7 +522,7 @@ function StageCard({
           on_fail
         </h5>
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <StageField label="action" hint="失败时动作，如 label NEEDS-FIX">
+          <StageField label="action" hint="action on failure, e.g. label NEEDS-FIX">
             <input
               type="text"
               className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -533,7 +533,7 @@ function StageCard({
               placeholder="label NEEDS-FIX"
             />
           </StageField>
-          <StageField label="comment" hint="写进卡片的注释">
+          <StageField label="comment" hint="comment written into the card">
             <input
               type="text"
               className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -553,7 +553,7 @@ function StageCard({
           />
           <span className="font-bold">halt</span>
           <span className="text-xs text-[var(--color-text-muted)]">
-            （失败后停流水线；去掉则继续下一张卡）
+            (stops the pipeline on failure; remove to continue with the next card)
           </span>
         </label>
       </div>

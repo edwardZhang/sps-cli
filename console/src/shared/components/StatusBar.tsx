@@ -43,12 +43,12 @@ export function StatusBar() {
       </span>
       <SseBadge state={sseState} />
       <span className="text-[var(--color-text-subtle)]">·</span>
-      <span className="flex items-center gap-1" title="活跃 pipeline 数">
+      <span className="flex items-center gap-1" title="Active pipelines">
         <Activity size={10} strokeWidth={2.5} />
         <span className="font-bold text-[var(--color-text)]">{runningPipelines}</span> pipeline
       </span>
       <span className="text-[var(--color-text-subtle)]">·</span>
-      <span className="flex items-center gap-1" title="活跃 worker 数">
+      <span className="flex items-center gap-1" title="Active workers">
         <Radio size={10} strokeWidth={2.5} />
         <span className="font-bold text-[var(--color-text)]">{activeWorkers}</span> worker
       </span>

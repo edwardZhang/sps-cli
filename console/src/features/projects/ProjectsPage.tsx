@@ -15,29 +15,29 @@ export function ProjectsPage() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold tracking-tight">
-            项目 🎯
+            Projects 🎯
           </h1>
           <p className="text-[var(--color-text-muted)] text-sm mt-1">
             {data
-              ? `${data.data.length} 个本机项目`
+              ? `${data.data.length} local projects`
               : isLoading
-                ? '加载中…'
-                : '点击刷新重试'}
+                ? 'Loading…'
+                : 'Click refresh to retry'}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <button className="nb-btn nb-btn-yellow" onClick={() => refetch()} type="button">
             <Activity size={16} strokeWidth={2.5} />
-            刷新
+            Refresh
           </button>
           <button
             className="nb-btn nb-btn-primary"
             type="button"
             onClick={() => nav('/projects/new')}
-            aria-label="新建项目"
+            aria-label="New project"
           >
             <Plus size={16} strokeWidth={3} />
-            新建项目
+            New project
           </button>
         </div>
       </header>
@@ -47,7 +47,7 @@ export function ProjectsPage() {
       {isError && (
         <div className="nb-card bg-[var(--color-crashed-bg)]">
           <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold mb-2">
-            加载失败
+            Load failed
           </h2>
           <p className="text-sm text-[var(--color-text)]">
             {error instanceof Error ? error.message : String(error)}
@@ -57,7 +57,7 @@ export function ProjectsPage() {
             onClick={() => refetch()}
             type="button"
           >
-            重试
+            Retry
           </button>
         </div>
       )}
@@ -192,14 +192,14 @@ function EmptyState() {
       </div>
       <div className="flex-1">
         <h2 className="font-[family-name:var(--font-heading)] text-2xl font-bold mb-2">
-          还没有项目 ✨
+          No projects yet ✨
         </h2>
         <p className="text-sm text-[var(--color-text)] mb-4">
-          运行 <code className="bg-[var(--color-bg)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded-md font-[family-name:var(--font-mono)]">sps project init &lt;name&gt;</code> 创建第一个项目。
+          Run <code className="bg-[var(--color-bg)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded-md font-[family-name:var(--font-mono)]">sps project init &lt;name&gt;</code> to create your first project.
         </p>
         <button className="nb-btn nb-btn-primary" type="button">
           <Plus size={16} strokeWidth={3} />
-          新建项目
+          New project
         </button>
       </div>
     </div>

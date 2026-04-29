@@ -47,13 +47,13 @@ export function NewPipelineDialog({
       <div className="nb-card max-w-md w-full">
         <header className="flex items-start justify-between mb-4">
           <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">
-            新建 pipeline
+            New pipeline
           </h2>
           <button
             className="nb-btn nb-btn-mint p-2"
             onClick={onCancel}
             type="button"
-            aria-label="关闭"
+            aria-label="Close"
           >
             <X size={14} strokeWidth={3} />
           </button>
@@ -67,48 +67,48 @@ export function NewPipelineDialog({
           className="flex flex-col gap-4"
         >
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-bold">文件名</span>
+            <span className="text-sm font-bold">Filename</span>
             <input
               type="text"
               className="nb-input w-full font-[family-name:var(--font-mono)]"
-              placeholder="例如 ci"
+              placeholder="e.g. ci"
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoFocus
             />
             <span className="text-xs text-[var(--color-text-muted)]">
-              实际会保存为 <code className="font-[family-name:var(--font-mono)]">{normalizedFilename || 'xxx.yaml'}</code>。
-              只允许 a-z A-Z 0-9 _ -；已有同名文件会 409 报错。
+              Saved as <code className="font-[family-name:var(--font-mono)]">{normalizedFilename || 'xxx.yaml'}</code>。
+              Allowed: a-z A-Z 0-9 _ -. A duplicate name returns 409.
             </span>
           </label>
 
           <fieldset className="flex flex-col gap-2">
-            <legend className="text-sm font-bold mb-1">初始内容</legend>
+            <legend className="text-sm font-bold mb-1">Initial contents</legend>
 
             <TemplateOption
               value="blank"
               current={template}
-              label="空白模板"
-              desc="最简 1 stage (develop → Done)"
+              label="Blank template"
+              desc="Minimal 1-stage pipeline (develop → Done)"
               onSelect={setTemplate}
             />
             <TemplateOption
               value="sample"
               current={template}
-              label="教学模板"
-              desc="从 sample.yaml.example 复制（带注释，讲解所有字段）"
+              label="Tutorial template"
+              desc="Copy from sample.yaml.example (commented, explains every field)"
               onSelect={setTemplate}
               disabled={!hasSample}
-              disabledReason="sample.yaml.example 不存在"
+              disabledReason="sample.yaml.example not found"
             />
             <TemplateOption
               value="active"
               current={template}
-              label="复制当前活动的"
-              desc="从 project.yaml 复制（基于目前的配置改）"
+              label="Copy from current"
+              desc="Copy from project.yaml (start from the current config)"
               onSelect={setTemplate}
               disabled={!hasActive}
-              disabledReason="project.yaml 不存在"
+              disabledReason="project.yaml not found"
             />
           </fieldset>
 
@@ -119,20 +119,20 @@ export function NewPipelineDialog({
               type="button"
               disabled={isPending}
             >
-              取消
+              Cancel
             </button>
             <button
               className="nb-btn nb-btn-primary"
               type="submit"
               disabled={!valid || isPending}
-              aria-label="创建 pipeline"
+              aria-label="Create pipeline"
             >
               {isPending ? (
                 <Loader2 size={13} strokeWidth={3} className="animate-spin" />
               ) : (
                 <Plus size={13} strokeWidth={3} />
               )}
-              创建
+              Create
             </button>
           </div>
         </form>

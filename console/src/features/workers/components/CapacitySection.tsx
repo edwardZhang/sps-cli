@@ -23,10 +23,10 @@ export function CapacitySection({ capacity, selected, onSelect }: Props) {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-[var(--color-bg-cream)] border-b-2 border-[var(--color-text)]">
-              <th className="px-3 py-2 text-left font-bold text-xs uppercase tracking-wider">项目</th>
-              <th className="px-3 py-2 text-left font-bold text-xs uppercase tracking-wider">占用</th>
+              <th className="px-3 py-2 text-left font-bold text-xs uppercase tracking-wider">Project</th>
+              <th className="px-3 py-2 text-left font-bold text-xs uppercase tracking-wider">In use</th>
               <th className="px-3 py-2 text-right font-bold text-xs uppercase tracking-wider">running</th>
-              <th className="px-3 py-2 text-right font-bold text-xs uppercase tracking-wider">其它</th>
+              <th className="px-3 py-2 text-right font-bold text-xs uppercase tracking-wider">Other</th>
               <th className="px-3 py-2" />
             </tr>
           </thead>
@@ -66,7 +66,7 @@ export function CapacitySection({ capacity, selected, onSelect }: Props) {
                     {busy === 0 && <span>idle</span>}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <span className="text-xs text-[var(--color-text-muted)]">详情 →</span>
+                    <span className="text-xs text-[var(--color-text-muted)]">Details →</span>
                   </td>
                 </tr>
               );

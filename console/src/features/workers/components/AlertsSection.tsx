@@ -18,7 +18,7 @@ export function AlertsSection({ alerts, selected, onSelect }: Props) {
     return (
       <div className="nb-card bg-[var(--color-running-bg)] flex items-center gap-3">
         <CheckCircle2 size={18} strokeWidth={2.5} className="text-[var(--color-running)]" />
-        <span className="text-sm font-bold text-[var(--color-running)]">全部 worker 健康</span>
+        <span className="text-sm font-bold text-[var(--color-running)]">All workers healthy</span>
       </div>
     );
   }
@@ -60,8 +60,8 @@ export function AlertsSection({ alerts, selected, onSelect }: Props) {
               {w.markerUpdatedAt && (
                 <div className="text-xs text-[var(--color-text-muted)] mt-1 font-[family-name:var(--font-mono)]">
                   {w.state === 'crashed'
-                    ? 'PID 已死。'
-                    : `marker 停 ${formatRelative(w.markerUpdatedAt)}。`}
+                    ? 'PID is dead.'
+                    : `marker stalled for ${formatRelative(w.markerUpdatedAt)}.`}
                 </div>
               )}
             </button>

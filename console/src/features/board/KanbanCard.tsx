@@ -87,7 +87,7 @@ function ChecklistPreview({
     <div className="mb-2">
       <div className="flex items-center justify-between text-[11px] font-[family-name:var(--font-mono)] mb-1">
         <span className="font-bold">
-          检查清单 {stats.done}/{stats.total}
+          Checklist {stats.done}/{stats.total}
         </span>
         <span className="text-[var(--color-text-subtle)]">{stats.percent}%</span>
       </div>
@@ -109,7 +109,7 @@ function ChecklistPreview({
         ))}
         {stats.items.length > 3 && (
           <li className="text-[var(--color-text-subtle)] italic pl-3">
-            … 还有 {stats.items.length - 3} 条
+            … {stats.items.length - 3} more
           </li>
         )}
       </ul>
@@ -121,7 +121,7 @@ function formatTimeAgo(ts: string | null): string {
   if (!ts) return '—';
   const d = new Date(ts);
   const diff = Date.now() - d.getTime();
-  if (diff < 60_000) return '刚才';
+  if (diff < 60_000) return 'just now';
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
   return d.toLocaleDateString();

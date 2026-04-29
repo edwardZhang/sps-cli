@@ -90,7 +90,7 @@ export function BoardPage() {
     },
     onError: (err) => {
       void alert({
-        title: '启动 pipeline 失败',
+        title: 'Failed to start pipeline',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -101,7 +101,7 @@ export function BoardPage() {
     onSuccess: () => refetchAll(),
     onError: (err) => {
       void alert({
-        title: '停止 pipeline 失败',
+        title: 'Failed to stop pipeline',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -112,7 +112,7 @@ export function BoardPage() {
     onSuccess: () => refetchAll(),
     onError: (err) => {
       void alert({
-        title: '重置失败',
+        title: 'Reset failed',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -134,7 +134,7 @@ export function BoardPage() {
     },
     onError: (err) => {
       void alert({
-        title: '新建卡片失败',
+        title: 'Failed to create card',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -159,7 +159,7 @@ export function BoardPage() {
       // 回滚
       if (ctx?.prev) qc.setQueryData(['cards', project], ctx.prev);
       void alert({
-        title: '移动卡片失败',
+        title: 'Failed to move card',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -188,13 +188,13 @@ export function BoardPage() {
   if (!project) {
     return (
       <div className="flex flex-col gap-6 max-w-4xl">
-        <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">看板</h1>
+        <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">Board</h1>
         <div className="nb-card bg-[var(--color-accent-yellow)] max-w-2xl">
           <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold mb-3">
-            选择一个项目 🎯
+            Select a project 🎯
           </h2>
           <p className="text-sm mb-4 text-[var(--color-text-muted)]">
-            看板按项目分。挑一个开始：
+            The board is per-project. Pick one to start:
           </p>
           <div className="flex flex-wrap gap-2">
             {projectsQ.data?.data.map((p) => (
@@ -243,12 +243,12 @@ export function BoardPage() {
       <header className="flex items-center justify-between flex-wrap gap-3 shrink-0">
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold tracking-tight">
-            看板 ✨
+            Board ✨
           </h1>
           <p className="text-[var(--color-text-muted)] text-sm mt-1">
             {projectSummary
-              ? `${projectSummary.name} · ${projectSummary.cards.total} cards · ${projectSummary.workers.active} workers 活跃`
-              : '加载中…'}
+              ? `${projectSummary.name} · ${projectSummary.cards.total} cards · ${projectSummary.workers.active} workers active`
+              : 'Loading…'}
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -259,8 +259,8 @@ export function BoardPage() {
             onClick={() => (running ? stopMutation.mutate() : startMutation.mutate())}
             disabled={startMutation.isPending || stopMutation.isPending}
             type="button"
-            aria-label={running ? '停止 pipeline' : '启动 pipeline'}
-            title={running ? '停止 pipeline' : '启动 pipeline'}
+            aria-label={running ? 'Stop pipeline' : 'Start pipeline'}
+            title={running ? 'Stop pipeline' : 'Start pipeline'}
           >
             {startMutation.isPending || stopMutation.isPending ? (
               <Loader2 size={14} strokeWidth={3} className="animate-spin" />
@@ -269,16 +269,16 @@ export function BoardPage() {
             ) : (
               <Play size={14} strokeWidth={3} />
             )}
-            {running ? '停止' : '启动'}
+            {running ? 'Stop' : 'Start'}
           </button>
           <button
             className="nb-btn nb-btn-yellow"
             type="button"
             onClick={async () => {
               const ok = await confirm({
-                title: '重置整个流水线',
-                body: '这会清空所有卡片的运行状态、worker marker、分支。不可撤销。',
-                confirm: '重置全部',
+                title: 'Reset entire pipeline',
+                body: "This clears every card's run state, worker markers, and branches. Cannot be undone.",
+                confirm: 'Reset all',
                 danger: true,
               });
               if (!ok) return;
@@ -291,7 +291,7 @@ export function BoardPage() {
             ) : (
               <RotateCcw size={14} strokeWidth={2.5} />
             )}
-            重置
+            Reset
           </button>
           <button
             className="nb-btn nb-btn-mint"
@@ -304,7 +304,7 @@ export function BoardPage() {
             ) : (
               <Plus size={14} strokeWidth={3} />
             )}
-            新卡片
+            New card
           </button>
         </div>
       </header>
@@ -314,10 +314,10 @@ export function BoardPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)]" />
           <input
             className="nb-input pl-9 w-full"
-            placeholder="搜索标题 / skill / label…"
+            placeholder="Search title / skill / label…"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            aria-label="搜索卡片"
+            aria-label="Search cards"
           />
         </div>
         <MultiSelect
@@ -342,10 +342,10 @@ export function BoardPage() {
               setLabelFilter(new Set());
             }}
             type="button"
-            aria-label="清空筛选"
+            aria-label="Clear filters"
           >
             <X size={11} strokeWidth={3} />
-            清空
+            Clear
           </button>
         )}
         <span className="text-xs text-[var(--color-text-muted)] flex items-center gap-1 font-[family-name:var(--font-mono)]">
@@ -356,7 +356,7 @@ export function BoardPage() {
 
       {cardsQ.isError && (
         <div className="nb-card bg-[var(--color-crashed-bg)]">
-          <p className="font-semibold">加载卡片失败</p>
+          <p className="font-semibold">Failed to load cards</p>
           <p className="text-sm mt-1 text-[var(--color-text-muted)]">
             {cardsQ.error instanceof Error ? cardsQ.error.message : String(cardsQ.error)}
           </p>
@@ -464,7 +464,7 @@ function MultiSelect({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label={`按 ${label} 筛选`}
+        aria-label={`Filter by ${label}`}
       >
         {label}
         {count > 0 && (
@@ -512,7 +512,7 @@ function MultiSelect({
               className="w-full mt-2 pt-2 border-t-2 border-dashed border-[var(--color-text)] text-xs font-bold text-[var(--color-crashed)] text-center"
               onClick={() => onChange(new Set())}
             >
-              清空选择
+              Clear selection
             </button>
           )}
         </div>

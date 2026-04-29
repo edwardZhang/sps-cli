@@ -99,8 +99,8 @@ export function LogsPage() {
             Logs 📜
           </h1>
           <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            {isAggregate ? `全部项目（${projectsQ.data?.data.length ?? 0}）` : project}
-            {worker && ` · worker-${worker}`} · {isAggregate && mode === 'live' ? '5s 轮询' : 'tail -f'} · {lines.length} lines
+            {isAggregate ? `All projects (${projectsQ.data?.data.length ?? 0})` : project}
+            {worker && ` · worker-${worker}`} · {isAggregate && mode === 'live' ? '5s polling' : 'tail -f'} · {lines.length} lines
             {paused && <span className="text-[var(--color-stuck)] ml-2 font-bold">⏸ PAUSED</span>}
           </p>
         </div>
@@ -120,7 +120,7 @@ export function LogsPage() {
             ].join(' ')}
           >
             <Radio size={11} strokeWidth={2.5} />
-            实时
+            Live
           </button>
           <button
             type="button"
@@ -134,7 +134,7 @@ export function LogsPage() {
             ].join(' ')}
           >
             <History size={11} strokeWidth={2.5} />
-            历史
+            History
           </button>
         </div>
         {mode === 'history' && (
@@ -145,17 +145,17 @@ export function LogsPage() {
               style={{ padding: '4px 8px', fontSize: 12 }}
               value={since}
               onChange={(e) => setSince(e.target.value)}
-              aria-label="查询起始时间"
+              aria-label="Query start time"
             />
             <button
               className="nb-btn nb-btn-primary"
               style={{ padding: '6px 12px', fontSize: 12 }}
               onClick={() => refetchHistory()}
               type="button"
-              aria-label="查询"
+              aria-label="Query"
             >
               <Search size={11} strokeWidth={3} />
-              查询
+              Query
             </button>
           </>
         )}
@@ -175,9 +175,9 @@ export function LogsPage() {
               if (!v) setParams({});
               else setParams({ project: v });
             }}
-            aria-label="筛选项目"
+            aria-label="Filter project"
           >
-            <option value="">全部项目</option>
+            <option value="">All projects</option>
             {projectsQ.data?.data.map((p) => (
               <option key={p.name} value={p.name}>{p.name}</option>
             ))}
@@ -193,10 +193,10 @@ export function LogsPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)]" />
           <input
             className="nb-input pl-9 w-full"
-            placeholder="过滤关键字…"
+            placeholder="Filter keyword…"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            aria-label="过滤日志"
+            aria-label="Filter logs"
           />
         </div>
         <div className="flex items-center gap-1 p-1 bg-[var(--color-bg)] border-[2px] border-[var(--color-text)] rounded-full shadow-[2px_2px_0_var(--color-text)]">
@@ -285,7 +285,7 @@ export function LogsPage() {
           ))}
           {filtered.length === 0 && (
             <div className="text-center py-12 text-[var(--color-text-subtle)]">
-              没有匹配的日志
+              No matching logs
             </div>
           )}
         </div>

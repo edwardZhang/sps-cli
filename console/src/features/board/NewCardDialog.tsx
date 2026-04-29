@@ -83,13 +83,13 @@ export function NewCardDialog({
       >
         <header className="flex items-center justify-between mb-4 flex-shrink-0">
           <h2 className="font-[family-name:var(--font-heading)] text-2xl font-bold">
-            新建卡片
+            New card
           </h2>
           <button
             className="nb-btn nb-btn-mint p-2"
             onClick={onCancel}
             type="button"
-            aria-label="关闭"
+            aria-label="Close"
           >
             <X size={14} strokeWidth={3} />
           </button>
@@ -103,11 +103,11 @@ export function NewCardDialog({
           className="flex flex-col gap-4 overflow-auto"
         >
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-bold">标题 *</span>
+            <span className="text-sm font-bold">Title *</span>
             <input
               type="text"
               className="nb-input w-full"
-              placeholder="例如：接入 GitHub OAuth 登录"
+              placeholder="e.g. Wire up GitHub OAuth login"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               maxLength={200}
@@ -115,35 +115,35 @@ export function NewCardDialog({
               required
             />
             <span className="text-xs text-[var(--color-text-muted)]">
-              写简短明了的目标（&lt;200 字符）
+              Short, focused goal (              写简短明了的目标（&lt;200 字符）lt;200 chars)
             </span>
           </label>
 
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-bold">描述</span>
+            <span className="text-sm font-bold">Description</span>
             <textarea
               className="nb-input w-full"
               style={{ minHeight: 120, resize: 'vertical' }}
-              placeholder="用户故事、需求、验收标准、参考资料… Claude 启动时会读这里的内容"
+              placeholder="User story, requirements, acceptance criteria, references… Claude reads this on launch."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
             <span className="text-xs text-[var(--color-text-muted)]">
-              支持 markdown。空的话就只有 title，Claude 只能靠 title 推断要做啥。
+              Markdown supported. If empty, Claude only has the title to work from.
             </span>
           </label>
 
           <div className="flex flex-col gap-2">
             <span className="text-sm font-bold">Skills</span>
             <span className="text-xs text-[var(--color-text-muted)]">
-              勾选哪些 skill 会被加载（走 frontmatter `skills:`）。不选也行，Worker 默认加载项目级 skills。
+              Which skills to load (frontmatter `skills:`). Optional — workers fall back to project-level skills.
             </span>
             {skillsQ.isLoading && (
-              <p className="text-xs text-[var(--color-text-muted)] italic">加载 skill 列表…</p>
+              <p className="text-xs text-[var(--color-text-muted)] italic">Loading skills…</p>
             )}
             {skillsQ.isError && (
               <p className="text-xs text-[var(--color-crashed)]">
-                skill 列表加载失败，不影响创建：{skillsQ.error instanceof Error ? skillsQ.error.message : String(skillsQ.error)}
+                Failed to load skills (won''t block create): {skillsQ.error instanceof Error ? skillsQ.error.message : String(skillsQ.error)}
               </p>
             )}
             {skills.length > 0 && (
@@ -171,13 +171,13 @@ export function NewCardDialog({
             )}
             {selectedSkills.size > 0 && (
               <p className="text-xs text-[var(--color-text-muted)]">
-                已选 {selectedSkills.size} 个：{[...selectedSkills].join(', ')}
+                Selected {selectedSkills.size} of: {[...selectedSkills].join(', ')}
               </p>
             )}
           </div>
 
           <div className="flex flex-col gap-2">
-            <span className="text-sm font-bold">派发</span>
+            <span className="text-sm font-bold">Dispatch</span>
             <label className="flex items-center gap-3 cursor-pointer select-none p-3 border-[2px] border-[var(--color-text)] rounded-lg bg-[var(--color-bg-cream)]">
               <input
                 type="checkbox"
@@ -186,10 +186,10 @@ export function NewCardDialog({
                 onChange={(e) => setDispatchImmediate(e.target.checked)}
               />
               <div className="flex-1">
-                <div className="text-sm font-bold">立即派发执行（直接进 Backlog）</div>
+                <div className="text-sm font-bold">Dispatch immediately (goes straight to Backlog)</div>
                 <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                  默认不勾：卡进 <code className="font-mono">Planning</code> 暂存，等你看板上拖到 <code className="font-mono">Backlog</code> 再开工。
-                  勾上：跳过暂存，下次 tick 直接派 worker 跑。
+                  Default off: card lands in <code className="font-mono">Planning</code>; drag it to <code className="font-mono">Backlog</code> to start work.
+                  Checked: skip staging — the next tick dispatches a worker.
                 </div>
               </div>
             </label>
@@ -204,7 +204,7 @@ export function NewCardDialog({
             disabled={isPending}
             type="button"
           >
-            取消
+            Cancel
           </button>
           <button
             className="nb-btn nb-btn-primary"
@@ -212,14 +212,14 @@ export function NewCardDialog({
             onClick={submit}
             disabled={!canSubmit}
             type="button"
-            aria-label="创建卡片"
+            aria-label="Create card"
           >
             {isPending ? (
               <Loader2 size={13} strokeWidth={3} className="animate-spin" />
             ) : (
               <Plus size={13} strokeWidth={3} />
             )}
-            创建
+            Create
           </button>
         </div>
       </div>

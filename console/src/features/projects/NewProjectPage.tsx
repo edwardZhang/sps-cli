@@ -41,7 +41,7 @@ export function NewProjectPage() {
     },
     onError: (err) => {
       void alert({
-        title: '创建失败',
+        title: 'Create failed',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -58,13 +58,13 @@ export function NewProjectPage() {
           onClick={() => nav('/projects')}
           className="nb-btn"
           style={{ padding: '6px 12px' }}
-          aria-label="返回项目列表"
+          aria-label="Back to projects"
         >
           <ArrowLeft size={14} strokeWidth={3} />
-          返回
+          Back
         </button>
         <h1 className="font-[family-name:var(--font-heading)] text-3xl font-bold">
-          新建项目
+          New project
         </h1>
       </header>
 
@@ -78,13 +78,13 @@ export function NewProjectPage() {
           className="flex flex-col gap-5"
         >
           <Field
-            label="项目名"
-            hint="只能用字母、数字、下划线、连字符。例如 acme-web"
+            label="Project name"
+            hint="Letters, digits, _ and - only. e.g. acme-web"
           >
             <input
               type="text"
               className="nb-input w-full font-[family-name:var(--font-mono)]"
-              placeholder="例如: acme-web"
+              placeholder="e.g. acme-web"
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               autoFocus
@@ -92,12 +92,12 @@ export function NewProjectPage() {
             />
             {form.name && !nameValid && (
               <p className="text-xs text-[var(--color-crashed)] mt-1">
-                名称只能包含 a-z A-Z 0-9 _ -
+                Name may only contain a-z A-Z 0-9 _ -
               </p>
             )}
           </Field>
 
-          <Field label="项目目录" hint="本机绝对路径（代码或文档都可）。和是否启用 git 无关。">
+          <Field label="Project directory" hint="Absolute path on this machine (code or docs are both fine). Independent of the git toggle.">
             <div className="flex gap-2">
               <input
                 type="text"
@@ -111,11 +111,11 @@ export function NewProjectPage() {
                 type="button"
                 className="nb-btn flex-shrink-0"
                 onClick={() => setPickerOpen(true)}
-                aria-label="浏览选择项目目录"
-                title="浏览选择项目目录"
+                aria-label="Browse for project directory"
+                title="Browse for project directory"
               >
                 <FolderOpen size={14} strokeWidth={2.5} />
-                浏览
+                Browse
               </button>
             </div>
             <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
@@ -126,13 +126,13 @@ export function NewProjectPage() {
                 className="w-4 h-4 cursor-pointer"
               />
               <span className="text-xs text-[var(--color-text-muted)]">
-                目录不存在时自动创建（推荐 — 否则 .claude/ 和 wiki/ 安装会被跳过）
+                Auto-create the directory if missing (recommended — otherwise .claude/ and wiki/ install are skipped)
               </span>
             </label>
           </Field>
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="最大 Worker 数">
+            <Field label="Max workers">
               <input
                 type="number"
                 min="1"
@@ -142,7 +142,7 @@ export function NewProjectPage() {
                 onChange={(e) => setForm({ ...form, maxWorkers: e.target.value })}
               />
             </Field>
-            <Field label="ACK 超时（分钟）" hint="Worker 启动后多久没 ACK 视为失败">
+            <Field label="ACK timeout (minutes)" hint="How long after launch with no ACK before the worker is treated as failed">
               <input
                 type="number"
                 min="1"
@@ -163,15 +163,15 @@ export function NewProjectPage() {
                 onChange={(e) => setForm({ ...form, enableGit: e.target.checked })}
                 className="w-4 h-4 cursor-pointer"
               />
-              <span className="text-sm font-bold">启用 Git（Worker 自动 commit + push）</span>
+              <span className="text-sm font-bold">Enable Git (Worker auto-commits + pushes)</span>
             </label>
             <p className="text-xs text-[var(--color-text-muted)] mb-3">
-              关闭后 Worker 只做任务、不做版本控制；适合文档/数据处理等非代码项目。
+              When off, the Worker just runs the task without version control; good for docs/data projects.
             </p>
 
             {form.enableGit !== false && (
               <div className="flex flex-col gap-4 bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4">
-                <Field label="合并分支">
+                <Field label="Merge branch">
                   <input
                     type="text"
                     className="nb-input w-full font-[family-name:var(--font-mono)]"
@@ -179,7 +179,7 @@ export function NewProjectPage() {
                     onChange={(e) => setForm({ ...form, mergeBranch: e.target.value })}
                   />
                 </Field>
-                <Field label="Git 远程项目路径" hint="如 user/repo，空则跳过远程 API（只本地 commit/push）">
+                <Field label="Git remote project path" hint="e.g. user/repo. Empty skips the remote API (local commit/push only).">
                   <input
                     type="text"
                     className="nb-input w-full font-[family-name:var(--font-mono)]"
@@ -189,7 +189,7 @@ export function NewProjectPage() {
                   />
                 </Field>
                 {form.gitlabProject && (
-                  <Field label="GitLab 项目 ID" hint="数字；GitHub 用户留空">
+                  <Field label="GitLab project ID" hint="numeric; GitHub users leave empty">
                     <input
                       type="text"
                       className="nb-input w-full font-[family-name:var(--font-mono)]"
@@ -212,19 +212,19 @@ export function NewProjectPage() {
                 onChange={(e) => setForm({ ...form, enableWiki: e.target.checked })}
                 className="w-4 h-4 cursor-pointer"
               />
-              <span className="text-sm font-bold">启用 Wiki 知识库（per-project，doc-28）</span>
+              <span className="text-sm font-bold">Enable Wiki knowledge base (per-project)</span>
             </label>
             <p className="text-xs text-[var(--color-text-muted)]">
-              开启后自动 scaffold <code className="font-mono">wiki/</code> 目录，并向 Worker prompt 注入 5 层检索上下文与 wiki-update 提示。可后续 <code className="font-mono">sps wiki init</code> 补办。
+              Scaffolds <code className="font-mono">wiki/</code> dir and injects 5-layer retrieval context plus wiki-update hints into Worker prompts. You can also enable later with <code className="font-mono">sps wiki init</code> .
             </p>
           </div>
 
           {/* 通知 */}
           <div className="pt-3 border-t-2 border-[var(--color-text)] border-dashed">
             <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider mb-3 text-[var(--color-text-muted)]">
-              通知
+              Notifications
             </h3>
-            <Field label="Matrix 房间 ID" hint="空则使用全局配置；不填 = 不通知">
+            <Field label="Matrix room ID" hint="empty = use global config; blank = no notifications">
               <input
                 type="text"
                 className="nb-input w-full font-[family-name:var(--font-mono)]"
@@ -242,23 +242,23 @@ export function NewProjectPage() {
               onClick={() => nav('/projects')}
               disabled={mutation.isPending}
             >
-              取消
+              Cancel
             </button>
             <button
               type="submit"
               className="nb-btn nb-btn-primary"
               disabled={!canSubmit}
-              aria-label="创建项目"
+              aria-label="Create project"
             >
               {mutation.isPending ? (
                 <>
                   <Loader2 size={14} strokeWidth={3} className="animate-spin" />
-                  创建中…
+                  Creating…
                 </>
               ) : (
                 <>
                   <Plus size={14} strokeWidth={3} />
-                  创建
+                  Create
                 </>
               )}
             </button>
@@ -268,7 +268,7 @@ export function NewProjectPage() {
 
       {pickerOpen && (
         <DirectoryPicker
-          title="选择项目目录"
+          title="Select project directory"
           initialPath={form.projectDir.trim() || undefined}
           onCancel={() => setPickerOpen(false)}
           onSelect={(picked) => {

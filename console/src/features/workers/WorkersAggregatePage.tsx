@@ -82,9 +82,9 @@ export function WorkersAggregatePage() {
             Workers 👷
           </h1>
           <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            跨 {totals.projects} 项目 · {totals.running} 跑 · {totals.starting} 启动 ·{' '}
-            <span className="text-[var(--color-stuck)]">{totals.stuck} 卡</span> ·{' '}
-            <span className="text-[var(--color-crashed)]">{totals.crashed} 崩</span> · {totals.idle} 闲
+            Across {totals.projects} projects · {totals.running} running · {totals.starting} starting ·{' '}
+            <span className="text-[var(--color-stuck)]">{totals.stuck} stuck</span> ·{' '}
+            <span className="text-[var(--color-crashed)]">{totals.crashed} crashed</span> · {totals.idle} idle
           </p>
         </div>
         <button
@@ -93,23 +93,23 @@ export function WorkersAggregatePage() {
           onClick={() => aggQ.refetch()}
           disabled={aggQ.isFetching}
           type="button"
-          aria-label="刷新"
+          aria-label="Refresh"
         >
           {aggQ.isFetching ? (
             <Loader2 size={12} strokeWidth={3} className="animate-spin" />
           ) : (
             <RefreshCw size={12} strokeWidth={2.5} />
           )}
-          刷新
+          Refresh
         </button>
       </header>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 flex-1 min-h-0">
         <div className="flex flex-col gap-4 overflow-auto pr-2">
-          {aggQ.isLoading && <p className="text-[var(--color-text-muted)] italic">加载中…</p>}
+          {aggQ.isLoading && <p className="text-[var(--color-text-muted)] italic">Loading…</p>}
           {aggQ.isError && (
             <div className="nb-card bg-[var(--color-crashed-bg)]">
-              <p>加载失败: {aggQ.error instanceof Error ? aggQ.error.message : String(aggQ.error)}</p>
+              <p>Load failed: {aggQ.error instanceof Error ? aggQ.error.message : String(aggQ.error)}</p>
             </div>
           )}
 
@@ -149,7 +149,7 @@ export function WorkersAggregatePage() {
                   className="mx-auto mb-3 text-[var(--color-text-subtle)]"
                   strokeWidth={2}
                 />
-                <p className="text-sm text-[var(--color-text-muted)]">点击项目 / worker 查看详情</p>
+                <p className="text-sm text-[var(--color-text-muted)]">Click a project / worker for details</p>
               </div>
             </div>
           )}

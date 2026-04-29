@@ -23,7 +23,7 @@ export function DirectoryPicker({
   initialPath,
   onCancel,
   onSelect,
-  title = '选择目录',
+  title = 'Select directory',
   mode = 'directory',
 }: {
   initialPath?: string;
@@ -85,7 +85,7 @@ export function DirectoryPicker({
             type="button"
             className="p-1 hover:bg-[var(--color-bg-cream)] rounded"
             onClick={onCancel}
-            aria-label="关闭"
+            aria-label="Close"
           >
             <X size={14} strokeWidth={3} />
           </button>
@@ -99,8 +99,8 @@ export function DirectoryPicker({
             style={{ padding: '4px 10px', fontSize: 12 }}
             onClick={() => parent && setPath(parent)}
             disabled={!parent || browseQ.isLoading}
-            aria-label="上级目录"
-            title="上级目录"
+            aria-label="Parent directory"
+            title="Parent directory"
           >
             <ArrowUp size={12} strokeWidth={3} />
           </button>
@@ -110,8 +110,8 @@ export function DirectoryPicker({
             style={{ padding: '4px 10px', fontSize: 12 }}
             onClick={() => home && setPath(home)}
             disabled={!home || browseQ.isLoading}
-            aria-label="回到 Home"
-            title="回到 Home"
+            aria-label="Go to home"
+            title="Go to home"
           >
             <Home size={12} strokeWidth={3} />
           </button>
@@ -129,12 +129,12 @@ export function DirectoryPicker({
           {browseQ.isLoading && (
             <div className="flex items-center justify-center py-12 text-[var(--color-text-muted)]">
               <Loader2 size={16} strokeWidth={3} className="animate-spin mr-2" />
-              加载中...
+              Loading…
             </div>
           )}
           {browseQ.isError && (
             <div className="p-4 text-sm text-[var(--color-crashed)]">
-              <p className="font-bold mb-1">读取失败</p>
+              <p className="font-bold mb-1">Read failed</p>
               <p className="text-xs font-[family-name:var(--font-mono)] break-all">
                 {browseQ.error instanceof Error ? browseQ.error.message : String(browseQ.error)}
               </p>
@@ -144,7 +144,7 @@ export function DirectoryPicker({
             <ul className="divide-y-2 divide-[var(--color-text)]/20">
               {browseQ.data.entries.length === 0 && (
                 <li className="p-4 text-xs text-[var(--color-text-subtle)] italic text-center">
-                  — 空目录 —
+                  — empty —
                 </li>
               )}
               {browseQ.data.entries.map((entry) => {
@@ -184,10 +184,10 @@ export function DirectoryPicker({
                       }}
                       title={
                         entry.isDirectory
-                          ? `进入 ${entry.name}/`
+                          ? `Enter ${entry.name}/`
                           : mode === 'file'
-                            ? `选择 ${entry.name}（双击直接确认）`
-                            : '文件不可选'
+                            ? `Select ${entry.name} (double-click to confirm)`
+                            : 'File not selectable'
                       }
                     >
                       {entry.isDirectory ? (
@@ -217,7 +217,7 @@ export function DirectoryPicker({
 
         <div className="flex gap-2 justify-end pt-3 shrink-0">
           <button type="button" className="nb-btn" onClick={onCancel}>
-            取消
+            Cancel
           </button>
           {mode === 'file' ? (
             <button
@@ -225,10 +225,10 @@ export function DirectoryPicker({
               className="nb-btn nb-btn-primary"
               onClick={() => selectedFile && onSelect(selectedFile)}
               disabled={!selectedFile || browseQ.isLoading || browseQ.isError}
-              title={selectedFile ?? '请先点选一个文件'}
+              title={selectedFile ?? 'Pick a file first'}
             >
               <CheckCircle2 size={14} strokeWidth={3} />
-              使用此文件
+              Use this file
             </button>
           ) : (
             <button
@@ -238,7 +238,7 @@ export function DirectoryPicker({
               disabled={!currentPath || browseQ.isLoading || browseQ.isError}
             >
               <CheckCircle2 size={14} strokeWidth={3} />
-              选此目录
+              Use this directory
             </button>
           )}
         </div>

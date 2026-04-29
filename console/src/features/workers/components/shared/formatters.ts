@@ -24,7 +24,7 @@ export function runtimeColor(ms: number | null): string {
 
 export function formatRelative(ts: string): string {
   const diff = Date.now() - new Date(ts).getTime();
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}s 前`;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m 前`;
-  return `${Math.floor(diff / 3_600_000)}h 前`;
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  return `${Math.floor(diff / 3_600_000)}h ago`;
 }

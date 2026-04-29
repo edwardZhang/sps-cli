@@ -37,24 +37,24 @@ export function ProjectDetailPage() {
           onClick={() => nav('/projects')}
           className="nb-btn"
           style={{ padding: '6px 12px' }}
-          aria-label="返回项目列表"
+          aria-label="Back to projects"
         >
           <ArrowLeft size={14} strokeWidth={3} />
-          返回
+          Back
         </button>
         <h1 className="font-[family-name:var(--font-heading)] text-3xl font-bold flex-1">
           {name}
         </h1>
         <Link to={`/board?project=${encodeURIComponent(name)}`} className="nb-btn nb-btn-mint">
-          看板
+          Board
         </Link>
       </header>
 
       <nav className="flex gap-2 flex-wrap">
-        <TabBtn current={tab} value="overview" onSelect={setTab} icon={FolderGit2}>概览</TabBtn>
-        <TabBtn current={tab} value="config" onSelect={setTab} icon={Settings}>配置</TabBtn>
+        <TabBtn current={tab} value="overview" onSelect={setTab} icon={FolderGit2}>Overview</TabBtn>
+        <TabBtn current={tab} value="config" onSelect={setTab} icon={Settings}>Config</TabBtn>
         <TabBtn current={tab} value="pipelines" onSelect={setTab} icon={Workflow}>Pipelines</TabBtn>
-        <TabBtn current={tab} value="danger" onSelect={setTab} icon={Trash2}>危险操作</TabBtn>
+        <TabBtn current={tab} value="danger" onSelect={setTab} icon={Trash2}>Danger zone</TabBtn>
       </nav>
 
       {tab === 'overview' && <OverviewTab name={name} data={projectQ.data} loading={projectQ.isLoading} />}
@@ -106,35 +106,35 @@ function OverviewTab({
   loading: boolean;
 }) {
   if (loading) {
-    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">加载中…</p></div>;
+    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">Loading…</p></div>;
   }
   if (!data) {
     return (
       <div className="nb-card bg-[var(--color-crashed-bg)]">
-        <p>项目 {name} 不存在或无法读取。</p>
+        <p>Project {name} not found or unreadable.</p>
       </div>
     );
   }
   return (
     <div className="nb-card">
       <dl className="grid grid-cols-[160px_1fr] gap-y-3 text-sm">
-        <dt className="font-bold">仓库路径</dt>
+        <dt className="font-bold">Repository</dt>
         <dd className="font-[family-name:var(--font-mono)]">{data.repoDir ?? '—'}</dd>
-        <dt className="font-bold">PM 后端</dt>
+        <dt className="font-bold">PM backend</dt>
         <dd className="font-[family-name:var(--font-mono)]">{data.pmBackend}</dd>
         <dt className="font-bold">Agent</dt>
         <dd className="font-[family-name:var(--font-mono)]">{data.agentProvider}</dd>
-        <dt className="font-bold">卡片</dt>
+        <dt className="font-bold">Cards</dt>
         <dd className="font-[family-name:var(--font-mono)]">
-          {data.cards.total} 张 · {data.cards.inprogress} 进行中 · {data.cards.done} 完成
+          {data.cards.total} total · {data.cards.inprogress} in progress · {data.cards.done} done
         </dd>
         <dt className="font-bold">Worker</dt>
         <dd className="font-[family-name:var(--font-mono)]">
-          {data.workers.total} 个（{data.workers.active} 活跃）
+          {data.workers.total} ({data.workers.active} active)
         </dd>
         <dt className="font-bold">Pipeline</dt>
         <dd className="font-[family-name:var(--font-mono)]">{data.pipelineStatus}</dd>
-        <dt className="font-bold">最近活动</dt>
+        <dt className="font-bold">Last activity</dt>
         <dd className="font-[family-name:var(--font-mono)]">
           {data.lastActivityAt ? new Date(data.lastActivityAt).toLocaleString() : '—'}
         </dd>
@@ -176,22 +176,22 @@ function ConfigTab({ name }: { name: string }) {
     onError: (err) => {
       const status = (err as Error & { status?: number }).status;
       void alert({
-        title: status === 409 ? '配置已被其他地方修改' : '保存失败',
+        title: status === 409 ? 'Config was modified elsewhere' : 'Save failed',
         body:
           status === 409
-            ? 'conf 文件在你编辑期间被改过。点"重新加载"后再编辑。'
+            ? 'The conf file was modified while you were editing. Click "Reload" before editing again.'
             : err instanceof Error ? err.message : String(err),
       });
     },
   });
 
   if (isLoading) {
-    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">加载中…</p></div>;
+    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">Loading…</p></div>;
   }
   if (isError) {
     return (
       <div className="nb-card bg-[var(--color-crashed-bg)]">
-        <p>加载失败: {error instanceof Error ? error.message : String(error)}</p>
+        <p>Load failed: {error instanceof Error ? error.message : String(error)}</p>
       </div>
     );
   }
@@ -221,10 +221,10 @@ function ConfigTab({ name }: { name: string }) {
               refetch();
             }}
             disabled={saveMutation.isPending}
-            aria-label="重新加载"
+            aria-label="Reload"
           >
             <RefreshCw size={13} strokeWidth={2.5} />
-            重新加载
+            Reload
           </button>
           <button
             type="button"
@@ -232,7 +232,7 @@ function ConfigTab({ name }: { name: string }) {
             style={{ padding: '6px 12px' }}
             onClick={() => saveMutation.mutate()}
             disabled={!dirty || saveMutation.isPending}
-            aria-label="保存配置"
+            aria-label="Save config"
           >
             {saveMutation.isPending ? (
               <Loader2 size={13} strokeWidth={3} className="animate-spin" />
@@ -241,7 +241,7 @@ function ConfigTab({ name }: { name: string }) {
             ) : (
               <Save size={13} strokeWidth={3} />
             )}
-            保存
+            Save
           </button>
         </div>
       </div>
@@ -251,11 +251,11 @@ function ConfigTab({ name }: { name: string }) {
         value={draft ?? ''}
         onChange={(e) => setDraft(e.target.value)}
         spellCheck={false}
-        aria-label="conf 文件编辑器"
+        aria-label="Conf file editor"
       />
       {dirty && (
         <p className="text-xs text-[var(--color-stuck)] mt-2 font-bold">
-          ● 未保存的修改
+          ● unsaved changes
         </p>
       )}
     </div>
@@ -277,7 +277,7 @@ function PipelinesTab({ name }: { name: string }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project-pipelines', name] }),
     onError: (err) => {
       void alert({
-        title: '切换失败',
+        title: 'Switch failed',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -288,7 +288,7 @@ function PipelinesTab({ name }: { name: string }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project-pipelines', name] }),
     onError: (err) => {
       void alert({
-        title: '删除失败',
+        title: 'Delete failed',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -304,14 +304,14 @@ function PipelinesTab({ name }: { name: string }) {
     },
     onError: (err) => {
       void alert({
-        title: '创建失败',
+        title: 'Create failed',
         body: err instanceof Error ? err.message : String(err),
       });
     },
   });
 
   if (isLoading) {
-    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">加载中…</p></div>;
+    return <div className="nb-card"><p className="text-[var(--color-text-muted)]">Loading…</p></div>;
   }
 
   // 合并 active + available 成一个统一列表显示
@@ -336,16 +336,16 @@ function PipelinesTab({ name }: { name: string }) {
             style={{ padding: '6px 12px', fontSize: 12 }}
             onClick={() => setNewDialogOpen(true)}
             disabled={createMutation.isPending}
-            aria-label="新建 pipeline"
+            aria-label="New pipeline"
           >
             <Plus size={12} strokeWidth={3} />
-            新建 pipeline
+            New pipeline
           </button>
         </div>
 
         {allRows.length === 0 ? (
           <p className="text-sm text-[var(--color-text-muted)] italic p-4 border-2 border-dashed border-[var(--color-text)] rounded-lg text-center">
-            还没有 pipeline 文件。点"新建 pipeline"开始。
+            No pipeline files yet. Click "New pipeline" to start.
           </p>
         ) : (
           <ul className="flex flex-col gap-2">
@@ -369,10 +369,10 @@ function PipelinesTab({ name }: { name: string }) {
                     className="nb-btn"
                     style={{ padding: '4px 10px', fontSize: 11 }}
                     onClick={() => setEditingFile(p.name)}
-                    aria-label={`编辑 ${p.name}`}
+                    aria-label={`Edit ${p.name}`}
                   >
                     <Edit3 size={11} strokeWidth={2.5} />
-                    编辑
+                    Edit
                   </button>
                   {!p.isActive && (
                     <>
@@ -382,17 +382,17 @@ function PipelinesTab({ name }: { name: string }) {
                         style={{ padding: '4px 10px', fontSize: 11 }}
                         onClick={async () => {
                           const ok = await confirm({
-                            title: `切换到 ${p.name}`,
-                            body: `当前 project.yaml 会被 ${p.name} 的内容覆盖。继续？`,
-                            confirm: '切换',
+                            title: `Switch to ${p.name}`,
+                            body: `Current project.yaml will be overwritten with the contents of ${p.name}. Continue?`,
+                            confirm: 'Switch',
                           });
                           if (!ok) return;
                           switchMutation.mutate(p.name);
                         }}
                         disabled={switchMutation.isPending}
-                        aria-label={`切换到 ${p.name}`}
+                        aria-label={`Switch to ${p.name}`}
                       >
-                        切换
+                        Switch
                       </button>
                       <button
                         type="button"
@@ -400,16 +400,16 @@ function PipelinesTab({ name }: { name: string }) {
                         style={{ padding: '4px 10px', fontSize: 11 }}
                         onClick={async () => {
                           const ok = await confirm({
-                            title: `删除 ${p.name}`,
-                            body: '这个 pipeline 文件会被永久删除。',
-                            confirm: '删除',
+                            title: `Delete ${p.name}`,
+                            body: 'This pipeline file will be permanently deleted.',
+                            confirm: 'Delete',
                             danger: true,
                           });
                           if (!ok) return;
                           deleteMutation.mutate(p.name);
                         }}
                         disabled={deleteMutation.isPending}
-                        aria-label={`删除 ${p.name}`}
+                        aria-label={`Delete ${p.name}`}
                       >
                         <Trash2 size={11} strokeWidth={2.5} />
                       </button>
@@ -459,16 +459,16 @@ function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) 
       qc.invalidateQueries({ queryKey: ['projects'] });
       const removed = result.claudeRemoved.filter((r) => r.ok).map((r) => r.path);
       void alert({
-        title: '已删除',
+        title: 'Deleted',
         body:
           removed.length > 0
-            ? `项目已删除。同时清理了:\n${removed.join('\n')}`
-            : '项目已删除。',
+            ? `Project deleted. Also cleaned up:\n${removed.join('\n')}`
+            : 'Project deleted.',
       }).then(() => nav('/projects'));
     },
     onError: (err) => {
       void alert({
-        title: '删除失败',
+        title: 'Delete failed',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -477,10 +477,10 @@ function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) 
   return (
     <div className="nb-card bg-[var(--color-crashed-bg)]">
       <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold mb-2 text-[var(--color-crashed)]">
-        删除项目
+        Delete project
       </h2>
       <p className="text-sm mb-4">
-        这会清理 <code className="font-[family-name:var(--font-mono)] bg-[var(--color-bg)] border-2 border-[var(--color-text)] px-1.5 py-0.5 rounded">~/.coral/projects/{name}/</code>（包括所有卡片、runtime、logs）。
+        This will clean up <code className="font-[family-name:var(--font-mono)] bg-[var(--color-bg)] border-2 border-[var(--color-text)] px-1.5 py-0.5 rounded">~/.coral/projects/{name}/</code>(including all cards, runtime, logs).
       </p>
 
       {repoDir && (
@@ -492,12 +492,12 @@ function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) 
             className="mt-0.5"
           />
           <div className="flex-1">
-            <div className="text-sm font-bold">同时清理 repo 的 .claude/</div>
+            <div className="text-sm font-bold">Also clean up the repo's .claude/</div>
             <div className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">
               {repoDir}/.claude/
             </div>
             <div className="text-xs text-[var(--color-text-muted)] mt-1">
-              repo 本身不动，只清这个目录。
+              The repo itself is untouched; only this directory is cleaned.
             </div>
           </div>
         </label>
@@ -506,7 +506,7 @@ function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) 
       <div className="mb-4">
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-bold">
-            输入项目名 <code className="font-[family-name:var(--font-mono)] text-xs">{name}</code> 确认：
+            Type the project name <code className="font-[family-name:var(--font-mono)] text-xs">{name}</code> to confirm:
           </span>
           <input
             type="text"
@@ -523,14 +523,14 @@ function DangerTab({ name, repoDir }: { name: string; repoDir: string | null }) 
         className="nb-btn nb-btn-danger"
         disabled={confirmName !== name || deleteMutation.isPending}
         onClick={() => deleteMutation.mutate()}
-        aria-label="永久删除项目"
+        aria-label="Permanently delete project"
       >
         {deleteMutation.isPending ? (
           <Loader2 size={14} strokeWidth={3} className="animate-spin" />
         ) : (
           <Trash2 size={14} strokeWidth={3} />
         )}
-        永久删除
+        Permanently delete
       </button>
     </div>
   );

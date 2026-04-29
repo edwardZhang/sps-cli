@@ -57,14 +57,14 @@ export function ProjectWorkersPanel({ project, initialSlot, onChange }: Props) {
             to={`/board?project=${encodeURIComponent(project)}`}
             className="text-xs underline text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
-            看板 →
+            Board →
           </Link>
         </div>
 
         {workersQ.isLoading && workers.length === 0 ? (
-          <p className="text-xs text-[var(--color-text-muted)] italic">加载 workers…</p>
+          <p className="text-xs text-[var(--color-text-muted)] italic">Loading workers…</p>
         ) : workers.length === 0 ? (
-          <p className="text-xs text-[var(--color-text-muted)] italic">该项目没有 worker slot。</p>
+          <p className="text-xs text-[var(--color-text-muted)] italic">This project has no worker slots.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {workers.map((w) => (
@@ -84,7 +84,7 @@ export function ProjectWorkersPanel({ project, initialSlot, onChange }: Props) {
       ) : (
         <div className="flex-1 flex items-center justify-center p-6 text-center">
           <p className="text-sm text-[var(--color-text-muted)]">
-            {workers.length === 0 ? '无 worker' : '请选择一个 worker'}
+            {workers.length === 0 ? 'No workers' : 'Select a worker'}
           </p>
         </div>
       )}
@@ -121,7 +121,7 @@ function WorkerTab({
           #{worker.card.seq} {worker.card.title}
         </div>
       ) : (
-        <div className="text-[11px] text-[var(--color-text-muted)] italic">空闲</div>
+        <div className="text-[11px] text-[var(--color-text-muted)] italic">idle</div>
       )}
     </button>
   );
@@ -152,7 +152,7 @@ function WorkerDetail({
         {worker.card ? (
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-              当前卡片
+              Current card
             </div>
             <div className="text-sm font-semibold break-words">
               #{worker.card.seq} · {worker.card.title}
@@ -160,7 +160,7 @@ function WorkerDetail({
           </div>
         ) : (
           <div className="text-sm text-[var(--color-text-muted)] italic">
-            slot 空闲，没有当前卡片。
+            slot is idle — no current card.
           </div>
         )}
 
@@ -184,13 +184,13 @@ function WorkerDetail({
         <div>
           <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1 flex items-center gap-1">
             <Terminal size={10} strokeWidth={2.5} />
-            Claude 输出 · 最近 {recentOutput.length} 行
+            Claude output · last {recentOutput.length} lines
           </div>
           {detailQ.isLoading && recentOutput.length === 0 ? (
-            <p className="text-xs text-[var(--color-text-muted)] italic">加载中…</p>
+            <p className="text-xs text-[var(--color-text-muted)] italic">Loading…</p>
           ) : recentOutput.length === 0 ? (
             <p className="text-xs text-[var(--color-text-muted)] italic">
-              还没收到 session 输出。Worker 刚启动时需要几秒。
+              No session output yet. Worker takes a few seconds after launch.
             </p>
           ) : (
             <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded p-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">
@@ -207,7 +207,7 @@ function WorkerDetail({
         {recentLogs.length > 0 && (
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1 opacity-60">
-              Supervisor 心跳 · 最近 {recentLogs.length} 行
+              Supervisor heartbeat · last {recentLogs.length} lines
             </div>
             <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded p-2 max-h-40 overflow-auto whitespace-pre-wrap break-words opacity-80">
               {recentLogs.map((l) => `${l.ts ?? ''} [${l.level}] ${l.msg}`).join('\n')}
@@ -216,7 +216,7 @@ function WorkerDetail({
               to={`/logs?project=${encodeURIComponent(project)}&worker=${worker.slot}`}
               className="text-xs underline text-[var(--color-running)] mt-1 inline-block"
             >
-              查看完整 log →
+              View full log →
             </Link>
           </div>
         )}
@@ -230,9 +230,9 @@ function WorkerDetail({
             style={{ padding: '4px 10px', fontSize: 11 }}
             onClick={async () => {
               const ok = await confirm({
-                title: `重启 worker-${worker.slot}`,
-                body: `先杀进程，再重新 launch 到 #${worker.card!.seq}`,
-                confirm: '重启',
+                title: `Restart worker-${worker.slot}`,
+                body: `Kills the process, then re-launches to #${worker.card!.seq}`,
+                confirm: 'Restart',
               });
               if (!ok) return;
               try {
@@ -245,13 +245,13 @@ function WorkerDetail({
                 onChange();
               } catch (err) {
                 void alert({
-                  title: '重启失败',
+                  title: 'Restart failed',
                   body: err instanceof Error ? err.message : String(err),
                 });
               }
             }}
           >
-            <TimerReset size={11} strokeWidth={2.5} /> 重启
+            <TimerReset size={11} strokeWidth={2.5} /> Restart
           </button>
         )}
         {worker.state !== 'idle' && (
@@ -261,9 +261,9 @@ function WorkerDetail({
             style={{ padding: '4px 10px', fontSize: 11 }}
             onClick={async () => {
               const ok = await confirm({
-                title: `终止 worker-${worker.slot}`,
-                body: '当前任务强制中断。',
-                confirm: '终止',
+                title: `Terminate worker-${worker.slot}`,
+                body: 'Current task will be force-cancelled.',
+                confirm: 'Terminate',
                 danger: true,
               });
               if (!ok) return;
@@ -272,13 +272,13 @@ function WorkerDetail({
                 onChange();
               } catch (err) {
                 void alert({
-                  title: '终止失败',
+                  title: 'Terminate failed',
                   body: err instanceof Error ? err.message : String(err),
                 });
               }
             }}
           >
-            <Zap size={11} strokeWidth={2.5} /> 终止
+            <Zap size={11} strokeWidth={2.5} /> Terminate
           </button>
         )}
       </div>

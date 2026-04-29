@@ -11,7 +11,7 @@ import { listProjects } from '../../shared/api/projects';
 import { SkillDetailModal } from './SkillDetailModal';
 
 const CATEGORIES: Array<{ value: SkillCategory | 'all'; label: string }> = [
-  { value: 'all',      label: '全部' },
+  { value: 'all',      label: 'All' },
   { value: 'language', label: 'language' },
   { value: 'end',      label: 'end' },
   { value: 'persona',  label: 'persona' },
@@ -61,7 +61,7 @@ export function SkillsPage() {
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">Skills 🎯</h1>
           <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            {isLoading ? '加载中…' : `${data?.data.length ?? 0} 个 user-level skill`}
+            {isLoading ? 'Loading…' : `${data?.data.length ?? 0} user-level skills`}
           </p>
         </div>
         <div className="flex gap-3 items-center">
@@ -84,10 +84,10 @@ export function SkillsPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)]" />
           <input
             className="nb-input pl-9 w-full"
-            placeholder="搜索 skill…"
+            placeholder="Search skill…"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            aria-label="搜索 skill"
+            aria-label="Search skill"
           />
         </div>
         <div className="flex gap-1 p-1 bg-[var(--color-bg)] border-[2px] border-[var(--color-text)] rounded-full shadow-[2px_2px_0_var(--color-text)]">
