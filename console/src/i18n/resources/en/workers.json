@@ -40,6 +40,12 @@
     "killFailed": "Terminate failed",
     "kill": "Terminate"
   },
+  "active": {
+    "heading": "Active",
+    "noneRunning": "No workers are running.",
+    "stage": "stage: {{name}}",
+    "marker": "marker {{relative}}"
+  },
   "alerts": {
     "allHealthy": "All workers healthy",
     "pidDead": "PID is dead.",

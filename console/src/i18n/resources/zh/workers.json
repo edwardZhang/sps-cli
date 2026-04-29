@@ -40,6 +40,12 @@
     "killFailed": "终止失败",
     "kill": "终止"
   },
+  "active": {
+    "heading": "运行中",
+    "noneRunning": "没有 worker 在运行。",
+    "stage": "stage: {{name}}",
+    "marker": "marker {{relative}}"
+  },
   "alerts": {
     "allHealthy": "全部 worker 健康",
     "pidDead": "PID 已死。",

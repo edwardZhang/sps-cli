@@ -3,6 +3,7 @@
  * @description   running / starting 的 worker 卡片展示
  */
 import { Activity, Terminal } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { AggregateWorker } from '../../../shared/api/workers';
 import { StateBadge } from './shared/StateBadge';
 import { formatRelative, formatRuntime, runtimeColor } from './shared/formatters';
@@ -14,10 +15,11 @@ interface Props {
 }
 
 export function ActiveSection({ active, selected, onSelect }: Props) {
+  const { t } = useTranslation('workers');
   if (active.length === 0) {
     return (
       <div className="nb-card bg-[var(--color-bg-cream)]">
-        <p className="text-sm text-[var(--color-text-muted)] italic">没有 worker 在运行。</p>
+        <p className="text-sm text-[var(--color-text-muted)] italic">{t('active.noneRunning')}</p>
       </div>
     );
   }
@@ -25,7 +27,7 @@ export function ActiveSection({ active, selected, onSelect }: Props) {
     <section>
       <h2 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
         <Activity size={14} strokeWidth={2.5} />
-        Active ({active.length})
+        {t('active.heading')} ({active.length})
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {active.map((w) => {
@@ -58,9 +60,9 @@ export function ActiveSection({ active, selected, onSelect }: Props) {
                 </div>
               )}
               <div className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] flex items-center gap-2 mb-1">
-                {w.stage && <span>stage: {w.stage}</span>}
+                {w.stage && <span>{t('active.stage', { name: w.stage })}</span>}
                 {w.markerUpdatedAt && (
-                  <span className="ml-auto">marker {formatRelative(w.markerUpdatedAt)}</span>
+                  <span className="ml-auto">{t('active.marker', { relative: formatRelative(w.markerUpdatedAt) })}</span>
                 )}
               </div>
               {w.lastLogLine && (

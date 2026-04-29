@@ -96,7 +96,7 @@ sps console --kill               # 停掉运行中的 console
 
 **看板 —— 卡片流转一目了然**
 
-![控制台 — 看板](docs/screenshots/02-kanban.png)
+![Console — Board](docs/screenshots/02-kanban.png)
 
 **Chat —— 多轮对话 + 工具调用流式渲染**
 

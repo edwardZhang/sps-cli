@@ -92,11 +92,11 @@ sps console --no-open            # don't auto-open the browser
 sps console --kill               # stop a running console
 ```
 
-Single command, no extra services — kanban, chat, skills, workers, logs, projects all in one place.
+Single command, no extra services — board, chat, skills, workers, logs, projects all in one place.
 
-**Kanban — card-driven workflow at a glance**
+**Board — card-driven workflow at a glance**
 
-![Console — Kanban](docs/screenshots/02-kanban.png)
+![Console — Board](docs/screenshots/02-kanban.png)
 
 **Chat — multi-turn agent conversations with tool-call streaming**
 

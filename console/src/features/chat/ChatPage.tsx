@@ -470,7 +470,7 @@ export function ChatPage() {
           type="button"
         >
           <Plus size={14} strokeWidth={3} />
-          New chat
+          {t('newSession')}
         </button>
         <div className="mt-2 text-xs font-[family-name:var(--font-heading)] uppercase tracking-wider text-[var(--color-text-muted)] px-2">
           {t('history')} {sessionsQ.data?.data.length ?? 0}
