@@ -54,7 +54,7 @@ Inspired by Andrej Karpathy's "LLM Wiki": instead of re-reading source code from
 **Obsidian-compatible**: Stored at `<repo>/wiki/` with `[[wikilink]]` syntax and flat YAML frontmatter. Open the directory as an Obsidian vault for graph view, backlinks, and full-text search out of the box.
 
 ### Agent Mode
-Pluggable agent backends behind a single `AgentRuntime` port. Claude Code today; more agents added incrementally — see [Supported Agents](#6-supported-agents).
+SPS is **agent-agnostic**. Any coding agent that can read a skill and shell out — Claude Code, Codex, OpenClaw, your own — can drive SPS through the bundled `sps-pipeline` skill. The harness adapts to the agent, not the other way around. Wiring up a new agent means dropping a skill file; no SPS code change required. See [§6](#6-supported-agents) for the integration matrix.
 
 ## 3. Console
 
@@ -122,14 +122,17 @@ sps tick my-app                 # one tick advances active cards one stage
 
 ## 6. Supported Agents
 
-| Agent | Status | Notes |
-|---|---|---|
-| **Claude Code** | ✅ Supported | Default backend via `@agentclientprotocol/sdk` |
-| **Codex** | 🚧 Planned | OpenAI Codex CLI |
-| **OpenClaw** | 🚧 Planned | Open-source agent backend |
-| **Harness Agent** | 🚧 Planned | Custom in-process agent |
+SPS-CLI is shell-driven, so any coding agent that can read a skill and execute commands can use it as a task harness. We ship `skills/sps-pipeline/` — install it into the agent's skill directory and the agent immediately learns the full SPS command surface (cards, pipeline ticks, wiki, project setup, daemon lifecycle).
 
-Add a new backend by implementing the `AgentRuntime` port — see `src/interfaces/AgentRuntime.ts`.
+| Agent | Wire-up |
+|---|---|
+| **Claude Code** | ✅ `sps skill sync` symlinks `sps-pipeline` into `~/.claude/skills/`; auto-loaded on description match |
+| **Codex** | ✅ Drop `skills/sps-pipeline/SKILL.md` into the Codex skill directory |
+| **OpenClaw** | ✅ Same — point its skill loader at `skills/sps-pipeline/` |
+| **Harness Agent** | ✅ Same pattern — the skill is agent-agnostic |
+| **Any other coding agent** | ✅ If it reads instructions and shells out, it can drive SPS |
+
+The skill is plain markdown — copy it, adapt it, fork it. SPS owns orchestration; the agent owns intent.
 
 ## 7. Acknowledgements
 
