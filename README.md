@@ -6,7 +6,21 @@
 
 ## 1. Introduction
 
-SPS (Smart Pipeline System) is an open-source **AI-agent harness** that turns a single-line task into reviewed, committed, deployable code. It drives an underlying coding agent through a card-based pipeline — plan, code, test, QA, merge — with a per-project knowledge base auto-injected into every prompt.
+SPS (Smart Pipeline System) is an open-source **AI-agent harness** that turns a single-line task into reviewed, committed, deployable output. It drives an underlying agent through a card-based pipeline — plan, execute, review, ship — with a per-project knowledge base auto-injected into every prompt.
+
+### 24/7 unattended software development
+
+Drop tasks into the backlog and the harness runs them around the clock — planning, coding, testing, committing, opening MRs, escalating only when truly blocked. While you sleep, the pipeline ticks; your morning standup reads the merged commits. SPS exists so a single human can run a development team's worth of work without sitting in front of a chat window.
+
+### Beyond software — extensible to any domain via skills
+
+The pipeline, skills, and knowledge layer are intentionally generic. Any process that can be expressed as "task in → reviewed output out" can be wired up by swapping the skill bundle:
+
+- **Accounting** — invoice intake → categorization → ledger reconciliation → period close
+- **Self-media** — topic research → drafting → review → publishing
+- **AI video generation** — script → storyboard → render → cut → review
+- **Writing** — research → outline → draft → revise → publish
+- **Any other workflow** — define stages in YAML, write skills in markdown; the harness runs them
 
 One CLI, one console, one filesystem-driven workflow. No vendor lock-in.
 
