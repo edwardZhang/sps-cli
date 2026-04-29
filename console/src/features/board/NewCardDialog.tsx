@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { Loader2, Plus, X } from 'lucide-react';
 import { listSkills } from '../../shared/api/skills';
 
@@ -28,6 +29,7 @@ export function NewCardDialog({
     initialState: 'Planning' | 'Backlog';
   }) => void;
 }) {
+  const { t } = useTranslation('board');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
@@ -83,13 +85,13 @@ export function NewCardDialog({
       >
         <header className="flex items-center justify-between mb-4 flex-shrink-0">
           <h2 className="font-[family-name:var(--font-heading)] text-2xl font-bold">
-            New card
+            {t('newCardDialog.title')}
           </h2>
           <button
             className="nb-btn nb-btn-mint p-2"
             onClick={onCancel}
             type="button"
-            aria-label="Close"
+            aria-label={t('newCardDialog.closeAria')}
           >
             <X size={14} strokeWidth={3} />
           </button>
@@ -103,11 +105,11 @@ export function NewCardDialog({
           className="flex flex-col gap-4 overflow-auto"
         >
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-bold">Title *</span>
+            <span className="text-sm font-bold">{t('newCardDialog.titleField')}</span>
             <input
               type="text"
               className="nb-input w-full"
-              placeholder="e.g. Wire up GitHub OAuth login"
+              placeholder={t('newCardDialog.titlePlaceholder')}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               maxLength={200}
@@ -115,35 +117,35 @@ export function NewCardDialog({
               required
             />
             <span className="text-xs text-[var(--color-text-muted)]">
-              Short, focused goal (              写简短明了的目标（&lt;200 字符）lt;200 chars)
+              {t('newCardDialog.titleHint')}
             </span>
           </label>
 
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-bold">Description</span>
+            <span className="text-sm font-bold">{t('newCardDialog.descField')}</span>
             <textarea
               className="nb-input w-full"
               style={{ minHeight: 120, resize: 'vertical' }}
-              placeholder="User story, requirements, acceptance criteria, references… Claude reads this on launch."
+              placeholder={t('newCardDialog.descPlaceholder')}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
             <span className="text-xs text-[var(--color-text-muted)]">
-              Markdown supported. If empty, Claude only has the title to work from.
+              {t('newCardDialog.descHint')}
             </span>
           </label>
 
           <div className="flex flex-col gap-2">
-            <span className="text-sm font-bold">Skills</span>
+            <span className="text-sm font-bold">{t('card.skills')}</span>
             <span className="text-xs text-[var(--color-text-muted)]">
-              Which skills to load (frontmatter `skills:`). Optional — workers fall back to project-level skills.
+              {t('newCardDialog.skillsHint')}
             </span>
             {skillsQ.isLoading && (
-              <p className="text-xs text-[var(--color-text-muted)] italic">Loading skills…</p>
+              <p className="text-xs text-[var(--color-text-muted)] italic">{t('newCardDialog.loadingSkills')}</p>
             )}
             {skillsQ.isError && (
               <p className="text-xs text-[var(--color-crashed)]">
-                Failed to load skills (won''t block create): {skillsQ.error instanceof Error ? skillsQ.error.message : String(skillsQ.error)}
+                {t('newCardDialog.loadFailed', { error: skillsQ.error instanceof Error ? skillsQ.error.message : String(skillsQ.error) })}
               </p>
             )}
             {skills.length > 0 && (
@@ -171,13 +173,13 @@ export function NewCardDialog({
             )}
             {selectedSkills.size > 0 && (
               <p className="text-xs text-[var(--color-text-muted)]">
-                Selected {selectedSkills.size} of: {[...selectedSkills].join(', ')}
+                {t('newCardDialog.selected', { count: selectedSkills.size, names: [...selectedSkills].join(', ') })}
               </p>
             )}
           </div>
 
           <div className="flex flex-col gap-2">
-            <span className="text-sm font-bold">Dispatch</span>
+            <span className="text-sm font-bold">{t('newCardDialog.dispatchField')}</span>
             <label className="flex items-center gap-3 cursor-pointer select-none p-3 border-[2px] border-[var(--color-text)] rounded-lg bg-[var(--color-bg-cream)]">
               <input
                 type="checkbox"
@@ -186,10 +188,10 @@ export function NewCardDialog({
                 onChange={(e) => setDispatchImmediate(e.target.checked)}
               />
               <div className="flex-1">
-                <div className="text-sm font-bold">Dispatch immediately (goes straight to Backlog)</div>
+                <div className="text-sm font-bold">{t('newCardDialog.dispatchToggle')}</div>
                 <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                  Default off: card lands in <code className="font-mono">Planning</code>; drag it to <code className="font-mono">Backlog</code> to start work.
-                  Checked: skip staging — the next tick dispatches a worker.
+                  {t('newCardDialog.dispatchOff')}
+                  {' '}{t('newCardDialog.dispatchOn')}
                 </div>
               </div>
             </label>
@@ -204,7 +206,7 @@ export function NewCardDialog({
             disabled={isPending}
             type="button"
           >
-            Cancel
+            {t('newCardDialog.cancel')}
           </button>
           <button
             className="nb-btn nb-btn-primary"
@@ -212,14 +214,14 @@ export function NewCardDialog({
             onClick={submit}
             disabled={!canSubmit}
             type="button"
-            aria-label="Create card"
+            aria-label={t('newCardDialog.createAria')}
           >
             {isPending ? (
               <Loader2 size={13} strokeWidth={3} className="animate-spin" />
             ) : (
               <Plus size={13} strokeWidth={3} />
             )}
-            Create
+            {t('newCardDialog.create')}
           </button>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { X, Play, RotateCcw, GitBranch, Edit3, Save, Loader2, Plus, Trash2 } from 'lucide-react';
 import {
   deleteCard,
@@ -51,6 +52,7 @@ export function CardDetailModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { t } = useTranslation('board');
   const qc = useQueryClient();
   const { confirm, alert } = useDialog();
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -128,7 +130,7 @@ export function CardDetailModal({
     },
     onError: (err) => {
       void alert({
-        title: 'Save failed',
+        title: t('cardModal.saveFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -186,12 +188,12 @@ export function CardDetailModal({
                 </span>
               )}
               {editing && (
-                <span className="text-xs font-bold text-[var(--color-stuck)]">⚠ editing</span>
+                <span className="text-xs font-bold text-[var(--color-stuck)]">{t('cardModal.editing')}</span>
               )}
             </div>
             {!editing ? (
               <h2 id="card-modal-title" className="font-[family-name:var(--font-heading)] text-2xl font-bold break-words">
-                {data?.title ?? 'Loading…'}
+                {data?.title ?? t('cardModal.loading')}
               </h2>
             ) : (
               <input
@@ -200,7 +202,7 @@ export function CardDetailModal({
                 value={draftTitle}
                 onChange={(e) => setDraftTitle(e.target.value)}
                 maxLength={200}
-                aria-label="Card title"
+                aria-label={t('cardModal.ariaTitle')}
               />
             )}
           </div>
@@ -211,15 +213,15 @@ export function CardDetailModal({
                 className="nb-btn"
                 style={{ padding: '6px 12px' }}
                 type="button"
-                aria-label="Edit card"
+                aria-label={t('cardModal.editAria')}
               >
-                <Edit3 size={12} strokeWidth={2.5} /> Edit
+                <Edit3 size={12} strokeWidth={2.5} /> {t('cardModal.edit')}
               </button>
             )}
             <button
               onClick={onClose}
               className="nb-btn nb-btn-mint p-2"
-              aria-label="Close"
+              aria-label={t('cardModal.closeAria')}
               type="button"
             >
               <X size={14} strokeWidth={3} />
@@ -227,10 +229,10 @@ export function CardDetailModal({
           </div>
         </header>
 
-        {isLoading && <p className="text-[var(--color-text-muted)]">Loading…</p>}
+        {isLoading && <p className="text-[var(--color-text-muted)]">{t('cardModal.loading')}</p>}
         {isError && (
           <p className="text-[var(--color-crashed)]">
-            Load failed: {error instanceof Error ? error.message : String(error)}
+            {t('cardModal.loadFailed', { error: error instanceof Error ? error.message : String(error) })}
           </p>
         )}
 
@@ -270,7 +272,7 @@ export function CardDetailModal({
                 <div>
                   <div className="text-sm font-bold mb-1.5">Skills</div>
                   {skillsQ.isLoading && (
-                    <p className="text-xs text-[var(--color-text-muted)] italic">Loading skills…</p>
+                    <p className="text-xs text-[var(--color-text-muted)] italic">{t('cardModal.loadingSkills')}</p>
                   )}
                   {skillsQ.data && skillsQ.data.data.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
@@ -311,7 +313,7 @@ export function CardDetailModal({
                           type="button"
                           onClick={() => removeLabel(l)}
                           className="hover:text-[var(--color-crashed)]"
-                          aria-label={`Remove ${l}`}
+                          aria-label={t('cardModal.removeLabelAria', { label: l })}
                         >
                           <X size={10} strokeWidth={3} />
                         </button>
@@ -321,7 +323,7 @@ export function CardDetailModal({
                       type="text"
                       className="nb-input"
                       style={{ padding: '4px 8px', fontSize: 12, width: 140 }}
-                      placeholder="+ add label"
+                      placeholder={t('cardModal.addLabelPlaceholder')}
                       value={newLabelInput}
                       onChange={(e) => setNewLabelInput(e.target.value)}
                       onKeyDown={(e) => {
@@ -337,14 +339,14 @@ export function CardDetailModal({
                         className="nb-btn"
                         style={{ padding: '2px 6px', fontSize: 11 }}
                         onClick={addLabel}
-                        aria-label="Add label"
+                        aria-label={t('cardModal.addLabelAria')}
                       >
                         <Plus size={10} strokeWidth={3} />
                       </button>
                     )}
                   </div>
                   <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
-                    Note: AI-PIPELINE / STARTED-* / COMPLETED-* / NEEDS-FIX are managed by the pipeline — manual edits may be overwritten.
+                    {t('cardModal.labelsNote')}
                   </p>
                 </div>
               </>
@@ -356,17 +358,17 @@ export function CardDetailModal({
                 {/* 描述 */}
                 <div>
                   <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                    Description
+                    {t('card.description')}
                   </h3>
                   <pre className="text-xs whitespace-pre-wrap font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4 max-h-64 overflow-auto">
-                    {extractSection(data.body, ['Description', '描述']) || '(empty)'}
+                    {extractSection(data.body, ['Description', '描述']) || t('card.empty')}
                   </pre>
                 </div>
 
                 {/* 检查清单 —— v0.50.20：即使为空也渲染框，保持布局一致 */}
                 <div>
                   <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                    Checklist <span className="text-[var(--color-text-muted)] normal-case tracking-normal">{((data.checklist?.done) ?? 0)}/{((data.checklist?.total) ?? 0)}</span>
+                    {t('cardModal.checklistCount', { done: (data.checklist?.done) ?? 0, total: (data.checklist?.total) ?? 0 })}
                   </h3>
                   <div className="nb-card bg-[var(--color-bg-cream)] p-3">
                     {((data.checklist?.total) ?? 0) > 0 ? (
@@ -389,18 +391,18 @@ export function CardDetailModal({
                         </ul>
                       </>
                     ) : (
-                      <p className="text-xs text-[var(--color-text-muted)] italic">No checklist items. Add them in the description with <code className="font-[family-name:var(--font-mono)]">- [ ] item</code> syntax.</p>
+                      <p className="text-xs text-[var(--color-text-muted)] italic">{t('cardModal.checklistEmpty')}</p>
                     )}
                   </div>
                 </div>
 
-                {/* 日志 */}
+                {/* Log */}
                 <div>
                   <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                    Log
+                    {t('card.log')}
                   </h3>
                   <pre className="text-xs whitespace-pre-wrap font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4 max-h-64 overflow-auto">
-                    {extractSection(data.body, ['Log', '日志']) || '(empty)'}
+                    {extractSection(data.body, ['Log', '日志']) || t('card.empty')}
                   </pre>
                 </div>
               </>
@@ -408,17 +410,17 @@ export function CardDetailModal({
               <>
                 <div>
                   <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                    Description
+                    {t('card.description')}
                   </h3>
                   <textarea
                     className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
                     style={{ minHeight: 180, resize: 'vertical' }}
                     value={draftDesc}
                     onChange={(e) => setDraftDesc(e.target.value)}
-                    aria-label="Card description"
+                    aria-label={t('cardModal.ariaCardDesc')}
                   />
                   <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
-                    Replaces only the "## Description" section; Checklist and Log sections are untouched.
+                    {t('cardModal.descNote')}
                   </p>
                 </div>
 
@@ -427,7 +429,7 @@ export function CardDetailModal({
                   <div className="nb-card bg-[var(--color-bg-cream)] p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-bold text-sm">
-                        Checklist {((data.checklist?.done) ?? 0)}/{((data.checklist?.total) ?? 0)}
+                        {t('cardModal.checklistCount', { done: (data.checklist?.done) ?? 0, total: (data.checklist?.total) ?? 0 })}
                       </span>
                     </div>
                     <ul className="text-sm space-y-1">
@@ -457,9 +459,9 @@ export function CardDetailModal({
                     disabled={data.state === 'Done' || pipelineRunning}
                     title={
                       data.state === 'Done'
-                        ? 'Card is done — drag it back to Todo before starting'
+                        ? t('cardModal.doneCannotStart')
                         : pipelineRunning
-                          ? 'Pipeline is running — supervisor dispatches automatically, no manual start needed'
+                          ? t('cardModal.pipelineRunningCannotStart')
                           : undefined
                     }
                     onClick={async () => {
@@ -468,23 +470,23 @@ export function CardDetailModal({
                         onChanged();
                       } catch (err) {
                         void alert({
-                          title: 'Failed to launch worker',
+                          title: t('cardModal.launchFailed'),
                           body: err instanceof Error ? err.message : String(err),
                         });
                       }
                     }}
                   >
                     <Play size={14} strokeWidth={3} />
-                    Launch worker
+                    {t('cardModal.launchWorker')}
                   </button>
                   <button
                     className="nb-btn nb-btn-yellow"
                     type="button"
                     onClick={async () => {
                       const ok = await confirm({
-                        title: `Reset card #${seq}`,
-                        body: 'Card state will reset to initial, and completed checklist items will be cleared.',
-                        confirm: 'Reset',
+                        title: t('cardModal.resetTitle', { seq }),
+                        body: t('cardModal.resetBody'),
+                        confirm: t('cardModal.resetConfirm'),
                         danger: true,
                       });
                       if (!ok) return;
@@ -494,14 +496,14 @@ export function CardDetailModal({
                         onClose();
                       } catch (err) {
                         void alert({
-                          title: 'Reset failed',
+                          title: t('cardModal.resetFailed'),
                           body: err instanceof Error ? err.message : String(err),
                         });
                       }
                     }}
                   >
                     <RotateCcw size={14} strokeWidth={2.5} />
-                    Reset card
+                    {t('cardModal.resetButton')}
                   </button>
                   <button
                     className="nb-btn"
@@ -509,16 +511,16 @@ export function CardDetailModal({
                     type="button"
                     onClick={async () => {
                       const step1 = await confirm({
-                        title: `Delete card #${seq}`,
-                        body: `About to delete "${data.title}". This is permanent — the md file will be physically removed. Continue?`,
-                        confirm: 'Continue',
+                        title: t('cardModal.deleteTitle', { seq }),
+                        body: t('cardModal.deleteBody', { title: data.title }),
+                        confirm: t('cardModal.deleteContinue'),
                         danger: true,
                       });
                       if (!step1) return;
                       const step2 = await confirm({
-                        title: 'Final confirmation',
-                        body: `Please confirm again to delete card #${seq}.`,
-                        confirm: 'Confirm delete',
+                        title: t('cardModal.deleteFinalTitle'),
+                        body: t('cardModal.deleteFinalBody', { seq }),
+                        confirm: t('cardModal.deleteFinalConfirm'),
                         danger: true,
                       });
                       if (!step2) return;
@@ -528,15 +530,15 @@ export function CardDetailModal({
                         onClose();
                       } catch (err) {
                         void alert({
-                          title: 'Delete failed',
+                          title: t('cardModal.deleteFailed'),
                           body: err instanceof Error ? err.message : String(err),
                         });
                       }
                     }}
-                    aria-label="Delete card"
+                    aria-label={t('cardModal.deleteAria')}
                   >
                     <Trash2 size={14} strokeWidth={2.5} />
-                    Delete card
+                    {t('cardModal.deleteButton')}
                   </button>
                 </>
               ) : (
@@ -550,21 +552,21 @@ export function CardDetailModal({
                     }}
                     disabled={saveMutation.isPending}
                   >
-                    Cancel
+                    {t('cardModal.cancel')}
                   </button>
                   <button
                     className="nb-btn nb-btn-primary"
                     type="button"
                     onClick={() => saveMutation.mutate()}
                     disabled={!dirty || !draftTitle.trim() || saveMutation.isPending}
-                    aria-label="Save card changes"
+                    aria-label={t('cardModal.saveAria')}
                   >
                     {saveMutation.isPending ? (
                       <Loader2 size={14} strokeWidth={3} className="animate-spin" />
                     ) : (
                       <Save size={14} strokeWidth={3} />
                     )}
-                    Save
+                    {t('cardModal.save')}
                   </button>
                 </>
               )}

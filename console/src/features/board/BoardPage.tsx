@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { Play, Square, RotateCcw, Plus, Search, Filter, X, ChevronDown, Loader2 } from 'lucide-react';
 import { NewCardDialog } from './NewCardDialog';
 import { listProjects } from '../../shared/api/projects';
@@ -42,6 +43,7 @@ function saveLastProject(name: string): void {
 }
 
 export function BoardPage() {
+  const { t } = useTranslation('board');
   const [params, setParams] = useSearchParams();
   const project = params.get('project');
   const [detailSeq, setDetailSeq] = useState<number | null>(null);
@@ -90,7 +92,7 @@ export function BoardPage() {
     },
     onError: (err) => {
       void alert({
-        title: 'Failed to start pipeline',
+        title: t('errors.startFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -101,7 +103,7 @@ export function BoardPage() {
     onSuccess: () => refetchAll(),
     onError: (err) => {
       void alert({
-        title: 'Failed to stop pipeline',
+        title: t('errors.stopFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -112,7 +114,7 @@ export function BoardPage() {
     onSuccess: () => refetchAll(),
     onError: (err) => {
       void alert({
-        title: 'Reset failed',
+        title: t('errors.resetFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -134,7 +136,7 @@ export function BoardPage() {
     },
     onError: (err) => {
       void alert({
-        title: 'Failed to create card',
+        title: t('errors.createFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -159,7 +161,7 @@ export function BoardPage() {
       // 回滚
       if (ctx?.prev) qc.setQueryData(['cards', project], ctx.prev);
       void alert({
-        title: 'Failed to move card',
+        title: t('errors.moveFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -188,13 +190,13 @@ export function BoardPage() {
   if (!project) {
     return (
       <div className="flex flex-col gap-6 max-w-4xl">
-        <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">Board</h1>
+        <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">{t('title')}</h1>
         <div className="nb-card bg-[var(--color-accent-yellow)] max-w-2xl">
           <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold mb-3">
-            Select a project 🎯
+            {t('selectProject')}
           </h2>
           <p className="text-sm mb-4 text-[var(--color-text-muted)]">
-            The board is per-project. Pick one to start:
+            {t('selectHint')}
           </p>
           <div className="flex flex-wrap gap-2">
             {projectsQ.data?.data.map((p) => (
@@ -243,12 +245,12 @@ export function BoardPage() {
       <header className="flex items-center justify-between flex-wrap gap-3 shrink-0">
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold tracking-tight">
-            Board ✨
+            {t('titleEmoji')}
           </h1>
           <p className="text-[var(--color-text-muted)] text-sm mt-1">
             {projectSummary
-              ? `${projectSummary.name} · ${projectSummary.cards.total} cards · ${projectSummary.workers.active} workers active`
-              : 'Loading…'}
+              ? t('summary', { name: projectSummary.name, cards: projectSummary.cards.total, workers: projectSummary.workers.active })
+              : t('loadingProject')}
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -259,8 +261,8 @@ export function BoardPage() {
             onClick={() => (running ? stopMutation.mutate() : startMutation.mutate())}
             disabled={startMutation.isPending || stopMutation.isPending}
             type="button"
-            aria-label={running ? 'Stop pipeline' : 'Start pipeline'}
-            title={running ? 'Stop pipeline' : 'Start pipeline'}
+            aria-label={running ? t('actions.ariaStopPipeline') : t('actions.ariaStartPipeline')}
+            title={running ? t('actions.ariaStopPipeline') : t('actions.ariaStartPipeline')}
           >
             {startMutation.isPending || stopMutation.isPending ? (
               <Loader2 size={14} strokeWidth={3} className="animate-spin" />
@@ -269,16 +271,16 @@ export function BoardPage() {
             ) : (
               <Play size={14} strokeWidth={3} />
             )}
-            {running ? 'Stop' : 'Start'}
+            {running ? t('actions.stop') : t('actions.start')}
           </button>
           <button
             className="nb-btn nb-btn-yellow"
             type="button"
             onClick={async () => {
               const ok = await confirm({
-                title: 'Reset entire pipeline',
-                body: "This clears every card's run state, worker markers, and branches. Cannot be undone.",
-                confirm: 'Reset all',
+                title: t('errors.resetTitle'),
+                body: t('errors.resetBody'),
+                confirm: t('errors.resetConfirm'),
                 danger: true,
               });
               if (!ok) return;
@@ -291,7 +293,7 @@ export function BoardPage() {
             ) : (
               <RotateCcw size={14} strokeWidth={2.5} />
             )}
-            Reset
+            {t('actions.reset')}
           </button>
           <button
             className="nb-btn nb-btn-mint"
@@ -304,7 +306,7 @@ export function BoardPage() {
             ) : (
               <Plus size={14} strokeWidth={3} />
             )}
-            New card
+            {t('actions.newCard')}
           </button>
         </div>
       </header>
@@ -314,10 +316,10 @@ export function BoardPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)]" />
           <input
             className="nb-input pl-9 w-full"
-            placeholder="Search title / skill / label…"
+            placeholder={t('actions.searchPlaceholder')}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            aria-label="Search cards"
+            aria-label={t('actions.ariaSearch')}
           />
         </div>
         <MultiSelect
@@ -342,10 +344,10 @@ export function BoardPage() {
               setLabelFilter(new Set());
             }}
             type="button"
-            aria-label="Clear filters"
+            aria-label={t('actions.ariaClearFilter')}
           >
             <X size={11} strokeWidth={3} />
-            Clear
+            {t('actions.clear')}
           </button>
         )}
         <span className="text-xs text-[var(--color-text-muted)] flex items-center gap-1 font-[family-name:var(--font-mono)]">
@@ -356,7 +358,7 @@ export function BoardPage() {
 
       {cardsQ.isError && (
         <div className="nb-card bg-[var(--color-crashed-bg)]">
-          <p className="font-semibold">Failed to load cards</p>
+          <p className="font-semibold">{t('errors.loadFailed')}</p>
           <p className="text-sm mt-1 text-[var(--color-text-muted)]">
             {cardsQ.error instanceof Error ? cardsQ.error.message : String(cardsQ.error)}
           </p>
@@ -425,6 +427,7 @@ function MultiSelect({
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
 }) {
+  const { t } = useTranslation('board');
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -464,7 +467,7 @@ function MultiSelect({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label={`Filter by ${label}`}
+        aria-label={t('actions.ariaFilterBy', { label })}
       >
         {label}
         {count > 0 && (
@@ -512,7 +515,7 @@ function MultiSelect({
               className="w-full mt-2 pt-2 border-t-2 border-dashed border-[var(--color-text)] text-xs font-bold text-[var(--color-crashed)] text-center"
               onClick={() => onChange(new Set())}
             >
-              Clear selection
+              {t('actions.clearSelection')}
             </button>
           )}
         </div>

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { Card as CardT } from '../../shared/api/cards';
 import { SkillBadge, LabelBadge } from '../../shared/components/Badges';
 
@@ -12,6 +13,7 @@ export function KanbanCard({
   done?: boolean;
   draggable?: boolean;
 }) {
+  const { t, i18n } = useTranslation('board');
   const running = card.labels.some((l) => l.startsWith('STARTED-')) && !done;
   return (
     <article
@@ -67,7 +69,7 @@ export function KanbanCard({
         <ChecklistPreview stats={card.checklist} />
       )}
       <div className="pt-2 border-t-[1.5px] border-dashed border-[var(--color-border-light)] flex items-center gap-2 text-[11px] font-[family-name:var(--font-mono)] text-[var(--color-text-subtle)]">
-        <span>{formatTimeAgo(card.updatedAt ?? card.createdAt)}</span>
+        <span>{formatTimeAgo(card.updatedAt ?? card.createdAt, t('card.justNow'), i18n.resolvedLanguage)}</span>
         {card.branch && <span className="truncate">· {card.branch}</span>}
       </div>
     </article>
@@ -83,11 +85,12 @@ function ChecklistPreview({
 }: {
   stats: { total: number; done: number; percent: number; items: { text: string; done: boolean }[] };
 }) {
+  const { t } = useTranslation('board');
   return (
     <div className="mb-2">
       <div className="flex items-center justify-between text-[11px] font-[family-name:var(--font-mono)] mb-1">
         <span className="font-bold">
-          Checklist {stats.done}/{stats.total}
+          {t('cardModal.checklistCount', { done: stats.done, total: stats.total })}
         </span>
         <span className="text-[var(--color-text-subtle)]">{stats.percent}%</span>
       </div>
@@ -109,7 +112,7 @@ function ChecklistPreview({
         ))}
         {stats.items.length > 3 && (
           <li className="text-[var(--color-text-subtle)] italic pl-3">
-            … {stats.items.length - 3} more
+            {t('card.checklistMore', { count: stats.items.length - 3 })}
           </li>
         )}
       </ul>
@@ -117,12 +120,12 @@ function ChecklistPreview({
   );
 }
 
-function formatTimeAgo(ts: string | null): string {
+function formatTimeAgo(ts: string | null, justNow = 'just now', locale?: string): string {
   if (!ts) return '—';
   const d = new Date(ts);
   const diff = Date.now() - d.getTime();
-  if (diff < 60_000) return 'just now';
+  if (diff < 60_000) return justNow;
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return d.toLocaleDateString();
+  return d.toLocaleDateString(locale);
 }
