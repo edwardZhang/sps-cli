@@ -1,6 +1,6 @@
 # SPS CLI — AI Agent Harness & Development Pipeline
 
-[![npm](https://img.shields.io/npm/v/@coralai/sps-cli)](https://www.npmjs.com/package/@coralai/sps-cli) [![license](https://img.shields.io/npm/l/@coralai/sps-cli)](../../LICENSE)
+[![npm](https://img.shields.io/npm/v/@coralai/sps-cli)](https://www.npmjs.com/package/@coralai/sps-cli) [![license](https://img.shields.io/npm/l/@coralai/sps-cli)](./LICENSE)
 
 > **中文文档**：[README-CN.md](./README-CN.md)
 
@@ -14,7 +14,7 @@ SPS (Smart Pipeline System) drives a Claude Code worker through task cards — c
 | **Pipeline** | `sps tick <project>` | Automated card-driven workflow with YAML-configurable stages. |
 | **Console** | `sps console` | Web UI — kanban, logs, workers, projects, chat (since v0.44). |
 
-The headline feature in v0.51 is the **Wiki Knowledge Base** — opt-in per project, structured cross-linked pages (modules / concepts / decisions / lessons / sources), 5-layer retrieval auto-injected into worker prompts. See [doc-28](../../docs/design/28-wiki-system.md) and [`ATTRIBUTION.md`](./ATTRIBUTION.md).
+The headline feature in v0.51 is the **Wiki Knowledge Base** — opt-in per project, structured cross-linked pages (modules / concepts / decisions / lessons / sources), 5-layer retrieval auto-injected into worker prompts. See [`ATTRIBUTION.md`](./ATTRIBUTION.md) for borrowed prior art.
 
 ---
 
@@ -149,7 +149,7 @@ In the target repo (PROJECT_DIR):
 .claude/CLAUDE.md                     # worker rules (auto-installed)
 .claude/skills/                       # symlinked from ~/.coral/skills/
 .claude/settings.local.json           # Claude Code local config
-wiki/                                 # if WIKI_ENABLED — see doc-28
+wiki/                                 # if WIKI_ENABLED — per-project knowledge base
 ATTRIBUTION.md                        # if WIKI_ENABLED
 ```
 
@@ -188,7 +188,7 @@ Critical rules:
 4. Don't write `agent:` field — it's silently ignored (v0.38+ Claude is the only worker).
 5. `trigger` and `card_state` are auto-derived per stage.
 
-Field reference: see `~/.coral/projects/<n>/pipelines/sample.yaml.example` (auto-generated, comment-rich) or [doc-17](../../docs/design/17-pipeline-configuration-design.md).
+Field reference: see `~/.coral/projects/<n>/pipelines/sample.yaml.example` (auto-generated, comment-rich) for the full YAML schema with comments.
 
 ---
 
@@ -463,7 +463,7 @@ In the target repo (PROJECT_DIR):
 ├── settings.local.json                # Claude Code local config
 ├── skills/                            # Symlinked from ~/.coral/skills/
 └── hooks/{start,stop}.sh              # Lifecycle hooks (call into sps)
-wiki/                                  # If WIKI_ENABLED — see docs/design/28-wiki-system.md
+wiki/                                  # If WIKI_ENABLED — per-project knowledge base
 ATTRIBUTION.md                         # If WIKI_ENABLED
 ```
 
@@ -495,13 +495,8 @@ Engines:
 
 **Single-worker is intentional**: v0.37.2 deleted multi-worker concurrency code. Don't propose "add a parallel mode" — the architecture relies on serial execution for state coherence. For higher throughput, run multiple projects in parallel.
 
-For deep dives:
-- [doc-27: Service Layer Architecture](../../docs/design/27-service-layer-architecture.md) — current architecture
-- [doc-26: Console Architecture](../../docs/design/26-console-architecture.md) — console internals
-- [doc-28: Wiki System](../../docs/design/28-wiki-system.md) — wiki design
-- [doc-13: Development Guardrails](../../docs/design/13-development-guardrails.md) — hard rules for contributors
-- [doc-17: Pipeline Configuration](../../docs/design/17-pipeline-configuration-design.md) — YAML field semantics
-- [docs/design/](../../docs/design/) — full design tree (most v0.15-v0.32 docs are marked HISTORICAL)
+For deeper architecture rationale, see in-source comments at the top of each
+engine / service file (e.g. `src/engines/StageEngine.ts`, `src/services/`).
 
 ---
 
@@ -540,7 +535,7 @@ Common issues:
 
 ## License & attribution
 
-MIT, see [`LICENSE`](../../LICENSE).
+MIT, see [`LICENSE`](./LICENSE).
 
 The Wiki system (v0.51+) borrows ~70% from [claude-obsidian](https://github.com/kepano/claude-obsidian) (MIT) — three-layer architecture, manifest delta tracking, hot cache, ingest workflow, contradiction callouts, wikilinks. SPS-specific 30%: 5 page types, `sources={card,commit,path}`, 5-layer reader, `sps wiki check` exit gate. Mental model from Karpathy's "LLM Wiki" gist.
 

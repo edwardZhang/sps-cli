@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "npm run build:cli && npm run build:console",
-    "build:cli": "tsc && rm -rf ./project-template && cp -r ../project-template ./project-template",
+    "build:cli": "tsc",
     "build:console": "cd console && npm install --no-audit --no-fund --silent && npm run build && cd .. && rm -rf ./dist/console-assets && cp -r ./console/dist ./dist/console-assets",
     "dev": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",
