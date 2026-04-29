@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import YAML from 'yaml';
 import {
   X,
@@ -42,6 +43,7 @@ export function PipelineEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useTranslation('projects');
   const qc = useQueryClient();
   const { alert } = useDialog();
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -87,10 +89,10 @@ export function PipelineEditor({
       void alert({
         title:
           status === 409
-            ? 'File was modified elsewhere'
+            ? t('pipelineEditor.etagConflict')
             : status === 422
-              ? 'Invalid YAML syntax'
-              : 'Save failed',
+              ? t('pipelineEditor.yamlInvalid')
+              : t('pipelineEditor.saveFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -118,7 +120,7 @@ export function PipelineEditor({
       setDraft(yaml);
     } catch (err) {
       void alert({
-        title: 'YAML serialization failed',
+        title: t('pipelineEditor.yamlSerializeFailed'),
         body: err instanceof Error ? err.message : String(err),
       });
     }
@@ -162,16 +164,16 @@ export function PipelineEditor({
             className="nb-btn nb-btn-mint p-2"
             onClick={onClose}
             type="button"
-            aria-label="Close"
+            aria-label={t('pipelineEditor.closeAria')}
           >
             <X size={14} strokeWidth={3} />
           </button>
         </header>
 
-        {isLoading && <p className="text-[var(--color-text-muted)]">Loading…</p>}
+        {isLoading && <p className="text-[var(--color-text-muted)]">{t('pipelineEditor.loading')}</p>}
         {isError && (
           <p className="text-[var(--color-crashed)]">
-            Load failed: {error instanceof Error ? error.message : String(error)}
+            {t('pipelineEditor.loadFailed', { error: error instanceof Error ? error.message : String(error) })}
           </p>
         )}
 
@@ -195,7 +197,7 @@ export function PipelineEditor({
                   title={parseError ?? undefined}
                 >
                   <FileText size={11} strokeWidth={2.5} />
-                  Structured
+                  {t('pipelineEditor.structured')}
                 </button>
                 <button
                   type="button"
@@ -209,7 +211,7 @@ export function PipelineEditor({
                   ].join(' ')}
                 >
                   <FileCode size={11} strokeWidth={2.5} />
-                  Raw YAML
+                  {t('pipelineEditor.rawYaml')}
                 </button>
               </div>
               {parseError && (
@@ -220,7 +222,7 @@ export function PipelineEditor({
               )}
               {data?.isActive && (
                 <span className="text-xs text-[var(--color-stuck)] font-bold ml-auto">
-                  ⚠ This is the active pipeline; takes effect on the next tick after save
+                  {t('pipelineEditor.activeWarn')}
                 </span>
               )}
             </div>
@@ -240,7 +242,7 @@ export function PipelineEditor({
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                   spellCheck={false}
-                  aria-label="Pipeline YAML editor"
+                  aria-label={t('pipelineEditor.yamlAria')}
                 />
               )}
             </div>
@@ -249,13 +251,13 @@ export function PipelineEditor({
             <div className="flex items-center justify-between mt-3 pt-3 border-t-2 border-dashed border-[var(--color-text)] flex-shrink-0">
               <span className="text-xs text-[var(--color-text-muted)]">
                 {dirty ? (
-                  <span className="text-[var(--color-stuck)] font-bold">● unsaved</span>
+                  <span className="text-[var(--color-stuck)] font-bold">{t('pipelineEditor.unsaved')}</span>
                 ) : saveMutation.isSuccess ? (
                   <span className="text-[var(--color-running)] font-bold flex items-center gap-1">
-                    <CheckCircle2 size={12} strokeWidth={2.5} /> Saved
+                    <CheckCircle2 size={12} strokeWidth={2.5} /> {t('pipelineEditor.saved')}
                   </span>
                 ) : (
-                  'No changes'
+                  t('pipelineEditor.noChanges')
                 )}
               </span>
               <div className="flex gap-2">
@@ -269,7 +271,7 @@ export function PipelineEditor({
                   disabled={saveMutation.isPending}
                   type="button"
                 >
-                  Reload
+                  {t('pipelineEditor.reload')}
                 </button>
                 <button
                   className="nb-btn nb-btn-primary"
@@ -277,14 +279,14 @@ export function PipelineEditor({
                   onClick={() => saveMutation.mutate()}
                   disabled={!dirty || saveMutation.isPending}
                   type="button"
-                  aria-label="Save pipeline"
+                  aria-label={t('pipelineEditor.saveAria')}
                 >
                   {saveMutation.isPending ? (
                     <Loader2 size={13} strokeWidth={3} className="animate-spin" />
                   ) : (
                     <Save size={13} strokeWidth={3} />
                   )}
-                  Save
+                  {t('pipelineEditor.save')}
                 </button>
               </div>
             </div>
@@ -304,6 +306,7 @@ function StructuredEditor({
   parsed: ParsedPipeline;
   onChange: (next: ParsedPipeline) => void;
 }) {
+  const { t } = useTranslation('projects');
   const stages = parsed.stages ?? [];
 
   const setStages = (next: PipelineStage[]): void => {
@@ -352,7 +355,7 @@ function StructuredEditor({
           </select>
         </label>
         <span className="text-xs text-[var(--color-text-muted)]">
-          project = event-driven pipeline (default) · steps = sequential script
+          {t('pipelineEditor.modeProject')}
         </span>
       </div>
 
@@ -367,14 +370,14 @@ function StructuredEditor({
             className="nb-btn nb-btn-mint"
             style={{ padding: '4px 12px', fontSize: 12 }}
             onClick={addStage}
-            aria-label="Add stage"
+            aria-label={t('pipelineEditor.addStageAria')}
           >
-            <Plus size={11} strokeWidth={3} /> Add stage
+            <Plus size={11} strokeWidth={3} /> {t('pipelineEditor.addStage')}
           </button>
         </div>
         {stages.length === 0 ? (
           <p className="text-sm text-[var(--color-text-muted)] italic p-4 border-2 border-dashed border-[var(--color-text)] rounded-lg text-center">
-            No stages yet. Click "Add stage" to start.
+            {t('pipelineEditor.noStages')}
           </p>
         ) : (
           <div className="flex flex-col gap-3">
@@ -414,6 +417,7 @@ function StageCard({
   onMoveUp: () => void;
   onMoveDown: () => void;
 }) {
+  const { t } = useTranslation('projects');
   const onFail = stage.on_fail ?? {};
   return (
     <div className="nb-card bg-[var(--color-bg-cream)] p-4">
@@ -433,7 +437,7 @@ function StageCard({
             style={{ padding: '3px 8px' }}
             onClick={onMoveUp}
             disabled={index === 0}
-            aria-label="Move up"
+            aria-label={t('pipelineEditor.moveUpAria')}
           >
             <ChevronUp size={12} strokeWidth={3} />
           </button>
@@ -443,7 +447,7 @@ function StageCard({
             style={{ padding: '3px 8px' }}
             onClick={onMoveDown}
             disabled={index === total - 1}
-            aria-label="Move down"
+            aria-label={t('pipelineEditor.moveDownAria')}
           >
             <ChevronDown size={12} strokeWidth={3} />
           </button>
@@ -452,7 +456,7 @@ function StageCard({
             className="nb-btn nb-btn-danger"
             style={{ padding: '3px 8px' }}
             onClick={onRemove}
-            aria-label="Delete stage"
+            aria-label={t('pipelineEditor.deleteStageAria')}
           >
             <Trash2 size={12} strokeWidth={3} />
           </button>
@@ -460,7 +464,7 @@ function StageCard({
       </div>
 
       <div className="grid grid-cols-2 gap-3 text-sm">
-        <StageField label="name" hint="unique stage name">
+        <StageField label="name" hint={t('pipelineEditor.stageNameHint')}>
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -469,7 +473,7 @@ function StageCard({
             placeholder="develop"
           />
         </StageField>
-        <StageField label="profile" hint="skill profile (optional)">
+        <StageField label="profile" hint={t('pipelineEditor.stageProfileHint')}>
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -478,7 +482,7 @@ function StageCard({
             placeholder="fullstack"
           />
         </StageField>
-        <StageField label="card_state" hint="card state during this stage">
+        <StageField label="card_state" hint={t('pipelineEditor.stageCardStateHint')}>
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -487,7 +491,7 @@ function StageCard({
             placeholder="Inprogress"
           />
         </StageField>
-        <StageField label="timeout" hint="optional, e.g. 30m 2h">
+        <StageField label="timeout" hint={t('pipelineEditor.stageTimeoutHint')}>
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -496,7 +500,7 @@ function StageCard({
             placeholder="2h"
           />
         </StageField>
-        <StageField label="trigger" hint="trigger condition (optional, defaults applied)">
+        <StageField label="trigger" hint={t('pipelineEditor.stageTriggerHint')}>
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -505,7 +509,7 @@ function StageCard({
             placeholder="card_enters 'Todo'"
           />
         </StageField>
-        <StageField label="on_complete" hint="action on success">
+        <StageField label="on_complete" hint={t('pipelineEditor.stageOnCompleteHint')}>
           <input
             type="text"
             className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -522,7 +526,7 @@ function StageCard({
           on_fail
         </h5>
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <StageField label="action" hint="action on failure, e.g. label NEEDS-FIX">
+          <StageField label="action" hint={t('pipelineEditor.stageOnFailureActionHint')}>
             <input
               type="text"
               className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -533,7 +537,7 @@ function StageCard({
               placeholder="label NEEDS-FIX"
             />
           </StageField>
-          <StageField label="comment" hint="comment written into the card">
+          <StageField label="comment" hint={t('pipelineEditor.stageCommentHint')}>
             <input
               type="text"
               className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -553,7 +557,7 @@ function StageCard({
           />
           <span className="font-bold">halt</span>
           <span className="text-xs text-[var(--color-text-muted)]">
-            (stops the pipeline on failure; remove to continue with the next card)
+            {t('pipelineEditor.stopOnFailureNote')}
           </span>
         </label>
       </div>

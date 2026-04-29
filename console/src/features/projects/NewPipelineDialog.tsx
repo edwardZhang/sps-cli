@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Loader2, Plus, X } from 'lucide-react';
 
 /**
@@ -18,6 +19,7 @@ export function NewPipelineDialog({
   hasSample: boolean;
   isPending: boolean;
 }) {
+  const { t } = useTranslation('projects');
   const [name, setName] = useState('');
   const [template, setTemplate] = useState<'blank' | 'sample' | 'active'>('blank');
 
@@ -47,13 +49,13 @@ export function NewPipelineDialog({
       <div className="nb-card max-w-md w-full">
         <header className="flex items-start justify-between mb-4">
           <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">
-            New pipeline
+            {t('newPipelineDialog.title')}
           </h2>
           <button
             className="nb-btn nb-btn-mint p-2"
             onClick={onCancel}
             type="button"
-            aria-label="Close"
+            aria-label={t('newPipelineDialog.closeAria')}
           >
             <X size={14} strokeWidth={3} />
           </button>
@@ -67,48 +69,49 @@ export function NewPipelineDialog({
           className="flex flex-col gap-4"
         >
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-bold">Filename</span>
+            <span className="text-sm font-bold">{t('newPipelineDialog.filename')}</span>
             <input
               type="text"
               className="nb-input w-full font-[family-name:var(--font-mono)]"
-              placeholder="e.g. ci"
+              placeholder={t('newPipelineDialog.filenamePlaceholder')}
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoFocus
             />
             <span className="text-xs text-[var(--color-text-muted)]">
-              Saved as <code className="font-[family-name:var(--font-mono)]">{normalizedFilename || 'xxx.yaml'}</code>。
-              Allowed: a-z A-Z 0-9 _ -. A duplicate name returns 409.
+              {t('newPipelineDialog.savedAs', { name: normalizedFilename || 'xxx.yaml' })}
+              {' '}
+              {t('newPipelineDialog.filenameHint')}
             </span>
           </label>
 
           <fieldset className="flex flex-col gap-2">
-            <legend className="text-sm font-bold mb-1">Initial contents</legend>
+            <legend className="text-sm font-bold mb-1">{t('newPipelineDialog.initial')}</legend>
 
             <TemplateOption
               value="blank"
               current={template}
-              label="Blank template"
-              desc="Minimal 1-stage pipeline (develop → Done)"
+              label={t('newPipelineDialog.blankLabel')}
+              desc={t('newPipelineDialog.blankDesc')}
               onSelect={setTemplate}
             />
             <TemplateOption
               value="sample"
               current={template}
-              label="Tutorial template"
-              desc="Copy from sample.yaml.example (commented, explains every field)"
+              label={t('newPipelineDialog.tutorialLabel')}
+              desc={t('newPipelineDialog.tutorialDesc')}
               onSelect={setTemplate}
               disabled={!hasSample}
-              disabledReason="sample.yaml.example not found"
+              disabledReason={t('newPipelineDialog.tutorialDisabled')}
             />
             <TemplateOption
               value="active"
               current={template}
-              label="Copy from current"
-              desc="Copy from project.yaml (start from the current config)"
+              label={t('newPipelineDialog.copyLabel')}
+              desc={t('newPipelineDialog.copyDesc')}
               onSelect={setTemplate}
               disabled={!hasActive}
-              disabledReason="project.yaml not found"
+              disabledReason={t('newPipelineDialog.copyDisabled')}
             />
           </fieldset>
 
@@ -119,20 +122,20 @@ export function NewPipelineDialog({
               type="button"
               disabled={isPending}
             >
-              Cancel
+              {t('newPipelineDialog.cancel')}
             </button>
             <button
               className="nb-btn nb-btn-primary"
               type="submit"
               disabled={!valid || isPending}
-              aria-label="Create pipeline"
+              aria-label={t('newPipelineDialog.createAria')}
             >
               {isPending ? (
                 <Loader2 size={13} strokeWidth={3} className="animate-spin" />
               ) : (
                 <Plus size={13} strokeWidth={3} />
               )}
-              Create
+              {t('newPipelineDialog.create')}
             </button>
           </div>
         </form>
