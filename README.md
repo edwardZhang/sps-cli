@@ -23,6 +23,17 @@ Each task is a **card** that flows through stages: `Backlog → Planning → Tod
 ### Skills
 Stages dispatch atomic **skills** to drive each task — `sps-pipeline`, `wiki-update`, `git-commit`, persona skills, and 24 dev skills bundled. Skills compose without ballooning the system prompt; the harness loads only what the current stage needs.
 
+### Memory
+A 3-layer markdown-on-disk persistence for **non-obvious, reusable facts** that should survive across sessions. Lives entirely under `~/.coral/memory/`; auto-injected into every pipeline worker prompt by `StageEngine`.
+
+| Layer | Path | Scope |
+|---|---|---|
+| **User** | `~/.coral/memory/user/` | Cross-project preferences (style, language, workflow habits) |
+| **Agent** | `~/.coral/memory/agents/<id>/` | Per-agent observations (communication patterns specific to one agent ↔ user pair) |
+| **Project** | `~/.coral/memory/projects/<name>/` | Per-project conventions, architecture decisions, lessons, references |
+
+Four entry types — `convention` (never decays), `decision` (slow), `lesson` (30-day decay), `reference` (never decays). Each layer keeps a flat directory of `*.md` files plus a `MEMORY.md` index. The agent reads it on demand and writes back when it discovers something worth keeping — a sparse, private drift; complementary to the dense, shared Wiki below.
+
 ### Knowledge Base — LLM Wiki
 
 Inspired by Andrej Karpathy's "LLM Wiki": instead of re-reading source code from scratch every session, the agent **distills** project knowledge into a persistent, structured wiki that primes every future prompt.
@@ -58,7 +69,16 @@ SPS is **agent-agnostic**. Any coding agent that can read a skill and shell out 
 
 ## 3. Console
 
-`sps console` opens a local web UI at `http://127.0.0.1:4311` — kanban, chat, skills, workers, logs, projects in one place.
+Launch the local web UI:
+
+```bash
+sps console                      # opens http://127.0.0.1:4311
+sps console --port 5000          # custom port
+sps console --no-open            # don't auto-open the browser
+sps console --kill               # stop a running console
+```
+
+Single command, no extra services — kanban, chat, skills, workers, logs, projects all in one place.
 
 **Kanban — card-driven workflow at a glance**
 
@@ -98,22 +118,54 @@ npm run build                   # tsc + console assets
 npm link                        # symlink `sps` to local build
 ```
 
-**Prerequisites**: Node ≥ 18 · `claude` CLI in PATH · Anthropic API key (or Claude Pro / Max).
+### Prerequisites
+
+- **Node.js ≥ 18**
+- **A working Claude Code installation locally.** Run `claude --help` first — if that works for you, SPS will work. SPS does not care **how** you authenticate Claude Code:
+  - Anthropic API key (`ANTHROPIC_API_KEY`)
+  - Claude Pro / Max subscription
+  - Third-party API gateway / proxy
+  - Any other auth method Claude Code supports
+
+  SPS spawns `claude` over the Agent Client Protocol; it inherits whatever credentials you've already configured. No separate SPS-side API key needed.
 
 ## 5. Quick Start
 
+### Step 1 — Run the setup wizard (one time)
+
 ```bash
-# Harness — direct chat with the agent
-sps agent "Explain this repo"
-sps agent --chat                # multi-turn REPL
+sps setup
+```
 
-# Console — full local UI
-sps console
+The wizard:
+- Creates `~/.coral/{projects,memory,sessions,skills}/` directory tree
+- Copies bundled skills into `~/.coral/skills/` and symlinks them into `~/.claude/skills/` so Claude Code picks them up
+- Installs `@agentclientprotocol/claude-agent-acp` globally so `claude` can be driven over ACP
+- Optionally writes `~/.coral/env` (GitLab token, Matrix notification, etc. — all optional)
 
-# Pipeline — card-driven automation
-sps project init my-app --repo /path/to/repo
-sps card add my-app "Add a login button"
-sps tick my-app                 # one tick advances active cards one stage
+Re-runnable safely: `sps setup --force` keeps existing values as defaults. After upgrading sps-cli later, run **`sps skill sync --force`** to pull updated skill SOPs.
+
+### Step 2 — Smoke-test with the agent (no project needed)
+
+```bash
+sps agent "Explain this repo"           # one-shot
+sps agent --chat                        # multi-turn REPL, persistent session
+```
+
+If this works, your Claude Code auth is good and SPS is wired correctly.
+
+### Step 3 — Launch the console
+
+```bash
+sps console                             # http://127.0.0.1:4311
+```
+
+### Step 4 — Run a pipeline
+
+```bash
+sps project init my-app --repo /path/to/repo    # initialize a project
+sps card add my-app "Add a login button"        # add a task card
+sps tick my-app                                 # advance active cards one stage
 ```
 
 **TUI dashboard** — compact multi-project view (`sps status`):
