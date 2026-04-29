@@ -19,8 +19,8 @@
  * @workflow      1. 解析子命令 → 2. 执行 start/stop/status 操作 → 3. 输出状态
  */
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { DaemonClient, } from '../daemon/daemonClient.js';
 
 const DIM = '\x1b[90m';
@@ -66,8 +66,14 @@ async function daemonStart(): Promise<void> {
     process.exit(1);
   }
 
-  // Spawn daemon as detached background process
+  // Spawn daemon as detached background process.
+  // v0.52.3: ensure parent dir exists — fresh installs may not have ~/.coral/
+  // sessions/logs/ if the user hasn't yet exercised any code path that calls
+  // createSessionContext (e.g. they came straight to `sps console` without
+  // first running `sps agent --chat`). Without this mkdir, openSync throws
+  // ENOENT and the console "New chat" path never spawns the daemon.
   const logFile = resolve(HOME, '.coral', 'sessions', 'logs', 'daemon.log');
+  mkdirSync(dirname(logFile), { recursive: true });
   const out = await import('node:fs').then(fs => fs.openSync(logFile, 'a'));
   const child = spawn(process.execPath, [daemonScript], {
     detached: true,

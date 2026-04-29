@@ -100,13 +100,25 @@ async function streamAssistantResponse(
 ): Promise<void> {
   // v0.51.8：把附件路径附在用户消息末尾，让 Claude 自己用 Read 工具拉
   const fullPrompt = formatPromptWithAttachments(userContent, attachments);
-  if (!(await ensureDaemon())) {
+  // v0.52.3: surface the actual reason daemon failed to start instead of a
+  // generic message. ensureDaemon previously could throw (e.g. ENOENT on the
+  // log file's parent directory) and the throw propagated as an uncaught SSE
+  // error; user-visible symptom was "New chat does nothing."
+  let daemonReady = false;
+  let daemonErr: unknown = null;
+  try {
+    daemonReady = await ensureDaemon();
+  } catch (err) {
+    daemonErr = err;
+  }
+  if (!daemonReady) {
+    const reason = daemonErr instanceof Error ? daemonErr.message : daemonErr ? String(daemonErr) : 'unknown reason';
     persistAndEmitComplete(
       sessionId,
       {
         id: assistantId,
         role: 'error',
-        content: 'Failed to start agent daemon',
+        content: `Failed to start agent daemon: ${reason}\n\nIf this is a fresh install, try: \`sps setup --force\` to create required directories, or check ~/.coral/sessions/logs/daemon.log for details.`,
         ts: new Date().toISOString(),
         status: 'error',
       },

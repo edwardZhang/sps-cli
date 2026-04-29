@@ -69,6 +69,10 @@ export async function executeSetup(flags: Record<string, boolean>): Promise<void
     PROJECTS_DIR,
     resolve(HOME, '.coral', 'memory', 'user'),
     resolve(HOME, '.coral', 'memory', 'agents'),
+    // v0.52.3: sessions/logs is required by the agent daemon's stdout
+    // capture in agentDaemon.ts. Without it, fresh users hitting "New chat"
+    // in the console get an ENOENT-induced silent daemon-spawn failure.
+    resolve(HOME, '.coral', 'sessions', 'logs'),
   ];
   for (const dir of dirs) {
     if (!existsSync(dir)) {
