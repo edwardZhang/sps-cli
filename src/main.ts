@@ -84,103 +84,103 @@ interface CommandInfo {
 }
 
 const COMMANDS: Record<string, CommandInfo> = {
-  agent:     { desc: 'Agent 交互（零配置，支持多轮对话）', usage: 'sps agent "<prompt>" | sps agent --chat',
+  agent:     { desc: 'Agent interaction (zero-config, multi-turn chat)', usage: 'sps agent "<prompt>" | sps agent --chat',
     examples: ['sps agent "Explain this repo"', 'sps agent --chat', 'sps agent status'] },
-  setup:     { desc: '初始环境配置（凭证、目录、配置文件）', usage: 'sps setup [--force]',
+  setup:     { desc: 'Initial environment setup (credentials, directories, config files)', usage: 'sps setup [--force]',
     examples: ['sps setup', 'sps setup --force'] },
-  tick:      { desc: '运行持续流水线', usage: 'sps tick <project> [--json]',
+  tick:      { desc: 'Run continuous pipeline', usage: 'sps tick <project> [--json]',
     examples: ['sps tick my-project', 'sps tick proj1 proj2'] },
-  card:      { desc: '卡片管理（创建、看板、标记开始/完成）', usage: 'sps card <子命令> <project> [参数]', subs: {
-    add: '创建新任务卡片',
-    dashboard: '展示卡片看板',
-    'mark-started': '标记卡片已开始处理（Claude UserPromptSubmit hook 使用）',
-    'mark-complete': '标记卡片完成（Claude Stop hook 使用）',
+  card:      { desc: 'Card management (create, board, mark started/complete)', usage: 'sps card <subcommand> <project> [args]', subs: {
+    add: 'Create a new task card',
+    dashboard: 'Show the card kanban board',
+    'mark-started': 'Mark a card as started (used by the Claude UserPromptSubmit hook)',
+    'mark-complete': 'Mark a card as complete (used by the Claude Stop hook)',
   }, examples: ['sps card add my-project "New task"', 'sps card mark-complete my-project 42'] },
-  doctor:    { desc: '项目健康检查与状态修复', usage: 'sps doctor <project> [--json] [--fix] [--reset-state] [--skip-remote]',
+  doctor:    { desc: 'Project health check and state repair', usage: 'sps doctor <project> [--json] [--fix] [--reset-state] [--skip-remote]',
     examples: ['sps doctor my-project', 'sps doctor my-project --json', 'sps doctor my-project --reset-state'] },
-  scheduler: { desc: '调度器：Planning → Backlog 晋升', usage: 'sps scheduler <子命令> <project>', subs: {
-    tick: '执行一次调度 tick',
+  scheduler: { desc: 'Scheduler: promote Planning → Backlog', usage: 'sps scheduler <subcommand> <project>', subs: {
+    tick: 'Run one scheduler tick',
   }, examples: ['sps scheduler tick my-project'] },
-  pipeline:  { desc: '流水线管理（启动、停止、状态、看板、自定义管线）', usage: 'sps pipeline <子命令> [args]', subs: {
-    start: '启动持续流水线（= sps tick）',
-    stop: '停止流水线（= sps stop）',
-    status: '查看状态（= sps status）',
-    reset: '重置卡片（= sps reset）',
-    workers: 'Worker 仪表板（= sps worker dashboard）',
-    board: '卡片看板（= sps card dashboard）',
-    logs: '日志查看（= sps logs）',
-    tick: '执行一次流水线 tick',
-    list: '列出所有自定义管线',
-    run: '执行自定义管线',
-    use: '切换项目的活动管线',
+  pipeline:  { desc: 'Pipeline management (start, stop, status, board, custom pipelines)', usage: 'sps pipeline <subcommand> [args]', subs: {
+    start: 'Start the continuous pipeline (= sps tick)',
+    stop: 'Stop the pipeline (= sps stop)',
+    status: 'Show status (= sps status)',
+    reset: 'Reset cards (= sps reset)',
+    workers: 'Worker dashboard (= sps worker dashboard)',
+    board: 'Card board (= sps card dashboard)',
+    logs: 'View logs (= sps logs)',
+    tick: 'Run one pipeline tick',
+    list: 'List all custom pipelines',
+    run: 'Run a custom pipeline',
+    use: 'Switch the active pipeline for a project',
   }, examples: ['sps pipeline start my-project', 'sps pipeline list', 'sps pipeline use my-project develop'] },
-  memory:    { desc: '项目记忆管理', usage: 'sps memory <子命令> <project>', subs: {
-    context: '生成记忆注入内容（供 worker prompt 使用）',
-    list: '列出项目记忆索引',
-    add: '添加记忆条目',
+  memory:    { desc: 'Project memory management', usage: 'sps memory <subcommand> <project>', subs: {
+    context: 'Generate memory injection content (for worker prompts)',
+    list: 'List project memory index',
+    add: 'Add a memory entry',
   }, examples: ['sps memory context my-project', 'sps memory context my-project --card 42', 'sps memory list my-project'] },
-  worker:    { desc: 'Worker 生命周期管理', usage: 'sps worker <子命令> <project> [seq]', subs: {
-    ps: '查看 Worker 进程状态',
-    kill: '终止指定 Worker',
-    launch: '启动 Worker 实例',
-    dashboard: '展示 Worker 仪表板',
+  worker:    { desc: 'Worker lifecycle management', usage: 'sps worker <subcommand> <project> [seq]', subs: {
+    ps: 'Show worker process status',
+    kill: 'Terminate the specified worker',
+    launch: 'Launch a worker instance',
+    dashboard: 'Show the worker dashboard',
   }, examples: ['sps worker ps my-project', 'sps worker kill my-project 1', 'sps worker launch my-project 1'] },
-  acp:       { desc: 'ACP 会话管理', usage: 'sps acp <子命令> <project> [args...]', subs: {
-    ensure: '确保 ACP 会话存在',
-    run: '运行 ACP 命令',
-    prompt: '发送 prompt 到会话',
-    status: '查看会话状态',
-    stop: '停止 ACP 会话',
-    pending: '查看待处理消息',
-    respond: '响应待处理消息',
+  acp:       { desc: 'ACP session management', usage: 'sps acp <subcommand> <project> [args...]', subs: {
+    ensure: 'Ensure an ACP session exists',
+    run: 'Run an ACP command',
+    prompt: 'Send a prompt to a session',
+    status: 'Show session status',
+    stop: 'Stop the ACP session',
+    pending: 'Show pending messages',
+    respond: 'Respond to a pending message',
   }, examples: ['sps acp status my-project', 'sps acp ensure my-project'] },
-  pm:        { desc: 'PM 后端操作（scan/move/comment/label）', usage: 'sps pm <子命令> <project> [args...]', subs: {
-    scan: '扫描项目卡片',
-    move: '移动卡片状态',
-    comment: '添加卡片评论',
-    checklist: '管理检查清单',
+  pm:        { desc: 'PM backend operations (scan/move/comment/label)', usage: 'sps pm <subcommand> <project> [args...]', subs: {
+    scan: 'Scan project cards',
+    move: 'Move a card to a different state',
+    comment: 'Add a comment to a card',
+    checklist: 'Manage checklist',
   }, examples: ['sps pm scan my-project', 'sps pm move my-project'] },
-  qa:        { desc: 'QA 收尾：QA → merge → Done', usage: 'sps qa <子命令> <project>', subs: {
-    tick: '执行一次 QA tick',
+  qa:        { desc: 'QA finalize: QA → merge → Done', usage: 'sps qa <subcommand> <project>', subs: {
+    tick: 'Run one QA tick',
   }, examples: ['sps qa tick my-project'] },
-  monitor:   { desc: '异常检测与诊断', usage: 'sps monitor <子命令> <project>', subs: {
-    tick: '执行一次监控 tick',
+  monitor:   { desc: 'Anomaly detection and diagnostics', usage: 'sps monitor <subcommand> <project>', subs: {
+    tick: 'Run one monitor tick',
   }, examples: ['sps monitor tick my-project'] },
-  project:   { desc: '项目初始化与验证', usage: 'sps project <子命令> <project>', subs: {
-    init: '初始化新项目',
-    doctor: '项目健康检查',
+  project:   { desc: 'Project initialization and validation', usage: 'sps project <subcommand> <project>', subs: {
+    init: 'Initialize a new project',
+    doctor: 'Project health check',
   }, examples: ['sps project init my-project', 'sps project doctor my-project'] },
-  logs:      { desc: '实时日志查看器', usage: 'sps logs [project] [--err] [--lines N] [--no-follow]',
+  logs:      { desc: 'Live log viewer', usage: 'sps logs [project] [--err] [--lines N] [--no-follow]',
     examples: ['sps logs', 'sps logs my-project', 'sps logs my-project --err --lines 50'] },
-  stop:      { desc: '停止运行中的 tick 进程', usage: 'sps stop <project> [--all]',
+  stop:      { desc: 'Stop a running tick process', usage: 'sps stop <project> [--all]',
     examples: ['sps stop my-project', 'sps stop --all'] },
-  reset:     { desc: '重置卡片状态，清理 worktree 和 branch，准备重跑', usage: 'sps reset <project> [--all] [--card N,N,N]',
+  reset:     { desc: 'Reset card state; clean up worktrees and branches; prepare to re-run', usage: 'sps reset <project> [--all] [--card N,N,N]',
     examples: ['sps reset my-project', 'sps reset my-project --all', 'sps reset my-project --card 5,6,7'] },
-  skill:     { desc: 'Skill 管理（symlink 分发到项目 .claude/skills/）', usage: 'sps skill <子命令> [name] [--project <name>]', subs: {
-    list: '列出 user-level skills 与项目链接状态',
-    add: '在当前项目建 symlink（自动 fallback 到 cpSync）',
-    remove: '从当前项目移除 skill',
-    freeze: 'symlink → 真实副本（允许项目级定制）',
-    unfreeze: '真实副本 → symlink（重新跟随全局）',
-    sync: '① bundled → ~/.coral/skills/（默认仅补缺；--force 覆盖更新），② ~/.coral/skills/ → ~/.claude/skills/',
+  skill:     { desc: 'Skill management (symlink dispatch into project .claude/skills/)', usage: 'sps skill <subcommand> [name] [--project <name>]', subs: {
+    list: 'List user-level skills and per-project link status',
+    add: 'Symlink a skill into the current project (auto-falls-back to cpSync)',
+    remove: 'Remove a skill from the current project',
+    freeze: 'symlink → real copy (allows per-project customization)',
+    unfreeze: 'real copy → symlink (track the global copy again)',
+    sync: '(1) bundled → ~/.coral/skills/ (fills missing by default; --force overwrites); (2) ~/.coral/skills/ → ~/.claude/skills/',
   }, examples: ['sps skill list', 'sps skill add python', 'sps skill freeze backend', 'sps skill sync', 'sps skill sync --force'] },
-  console:   { desc: '启动 SPS Console Web 控制台（本机浏览器）', usage: 'sps console [--port 4311] [--host 127.0.0.1] [--no-open] [--dev] [--kill]',
+  console:   { desc: 'Launch the SPS Console web UI (in your local browser)', usage: 'sps console [--port 4311] [--host 127.0.0.1] [--no-open] [--dev] [--kill]',
     examples: ['sps console', 'sps console --port 5000', 'sps console --no-open', 'sps console --kill'] },
-  status:    { desc: '显示所有项目运行状态', usage: 'sps status [--json]',
+  status:    { desc: 'Show running status for all projects', usage: 'sps status [--json]',
     examples: ['sps status', 'sps status --json'] },
-  hook:      { desc: 'Claude Code hook 事件包装（由 .claude/settings.json 调用）', usage: 'sps hook <event>', subs: {
-    stop: '标记当前卡片完成（COMPLETED-<stage> 标签）',
-    'user-prompt-submit': '若卡片有 skill:* 标签，注入 skill 提示到 prompt',
+  hook:      { desc: 'Claude Code hook event wrapper (called from .claude/settings.json)', usage: 'sps hook <event>', subs: {
+    stop: 'Mark the current card complete (COMPLETED-<stage> label)',
+    'user-prompt-submit': 'If the card has skill:* labels, inject skill prompts',
   }, examples: ['sps hook stop', 'sps hook user-prompt-submit'] },
-  wiki:      { desc: 'Wiki 知识库（per-project，doc-28 §7+§10）', usage: 'sps wiki <子命令> <project> [args]', subs: {
-    init: '建 wiki/ 骨架（subdirs + WIKI.md + .gitignore）',
-    update: '扫源文件 → diff manifest → 输出 ingest 计划（--finalize 写 manifest）',
-    read: '5 层确定性检索 → 渲染 prompt 注入 markdown',
-    check: 'Lint：orphan / dead-link / fm-gap / stale',
-    add: '复制外部源到 wiki/.raw/<category>/',
-    list: '按 type/tag 过滤列页',
-    get: '取单页全文（frontmatter + body）',
-    status: 'Source ↔ manifest ↔ pages 当前差异概览',
+  wiki:      { desc: 'Wiki knowledge base (per-project)', usage: 'sps wiki <subcommand> <project> [args]', subs: {
+    init: 'Scaffold the wiki/ directory (subdirs + WIKI.md + .gitignore)',
+    update: 'Scan sources → diff manifest → output ingest plan (--finalize writes manifest)',
+    read: '5-layer deterministic retrieval → render prompt-injection markdown',
+    check: 'Lint: orphan / dead-link / fm-gap / stale',
+    add: 'Copy an external source into wiki/.raw/<category>/',
+    list: 'Filter pages by type/tag',
+    get: 'Fetch a single page (frontmatter + body)',
+    status: 'Source ↔ manifest ↔ pages diff overview',
   }, examples: [
     'sps wiki init my-project',
     'sps wiki update my-project',
@@ -213,7 +213,7 @@ function printHelp() {
   console.log('\nGlobal options:');
   console.log('  --json         Output structured JSON');
   console.log('  --dry-run      Preview actions without executing');
-  console.log('  --help         Show help (可配合命令使用，如 sps card --help)');
+  console.log('  --help         Show help (combine with a command, e.g. sps card --help)');
   console.log('  --version      Show version');
 }
 
@@ -225,7 +225,7 @@ function printCommandHelp(cmd: string) {
   console.log(`  Usage: ${info.usage}\n`);
 
   if (info.subs && Object.keys(info.subs).length > 0) {
-    console.log('  子命令:');
+    console.log('  Subcommands:');
     for (const [sub, desc] of Object.entries(info.subs)) {
       console.log(`    ${sub.padEnd(14)} ${desc}`);
     }
@@ -233,7 +233,7 @@ function printCommandHelp(cmd: string) {
   }
 
   if (info.examples && info.examples.length > 0) {
-    console.log('  示例:');
+    console.log('  Examples:');
     for (const ex of info.examples) {
       console.log(`    $ ${ex}`);
     }
