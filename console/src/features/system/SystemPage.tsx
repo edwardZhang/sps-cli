@@ -36,14 +36,14 @@ export function SystemPage() {
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
       <header>
-        <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">系统 ⚙️</h1>
+        <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold">System ⚙️</h1>
       </header>
 
       <VersionSection current={infoQ.data?.version} />
 
       <section className="nb-card">
         <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold mb-3">
-          运行时
+          Runtime
         </h2>
         {infoQ.data ? (
           <dl className="grid grid-cols-[160px_1fr] gap-y-2 text-sm">
@@ -59,14 +59,14 @@ export function SystemPage() {
             </dd>
           </dl>
         ) : (
-          <p className="text-[var(--color-text-muted)]">加载中…</p>
+          <p className="text-[var(--color-text-muted)]">Loading…</p>
         )}
       </section>
 
       <section className="nb-card">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">
-            全局配置 <code className="text-sm font-[family-name:var(--font-mono)] font-normal bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded">~/.coral/env</code>
+            Global config <code className="text-sm font-[family-name:var(--font-mono)] font-normal bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded">~/.coral/env</code>
           </h2>
           {!editingEnv ? (
             <button
@@ -74,12 +74,12 @@ export function SystemPage() {
               style={{ padding: '6px 12px', fontSize: 12 }}
               onClick={() => setEditingEnv(true)}
               type="button"
-              aria-label="编辑 env 文件"
+              aria-label="Edit env file"
             >
-              <Edit3 size={12} strokeWidth={2.5} /> 编辑
+              <Edit3 size={12} strokeWidth={2.5} /> Edit
             </button>
           ) : (
-            <span className="text-xs text-[var(--color-stuck)] font-bold">⚠ 编辑模式</span>
+            <span className="text-xs text-[var(--color-stuck)] font-bold">⚠ Editing</span>
           )}
         </div>
 
@@ -104,7 +104,7 @@ export function SystemPage() {
           </dl>
         ) : (
           <p className="text-[var(--color-text-muted)] text-sm">
-            env 文件不存在。点"编辑"或者终端运行 <code className="bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded font-[family-name:var(--font-mono)]">sps setup</code>。
+            env file does not exist. Click "Edit" or run in your terminal: <code className="bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] px-2 py-0.5 rounded font-[family-name:var(--font-mono)]">sps setup</code>。
           </p>
         )}
       </section>
@@ -129,9 +129,9 @@ function VersionSection({ current }: { current?: string }) {
 
   const handleUpgrade = async (): Promise<void> => {
     const ok = await confirm({
-      title: '升级 sps-cli',
-      body: `当前 ${current}，升级到 ${latestQ.data?.latest}。要求所有 pipeline 已停止。升级后请重启 sps console 生效。`,
-      confirm: '升级',
+      title: 'Upgrade sps-cli',
+      body: `Current ${current} → ${latestQ.data?.latest}. All pipelines must be stopped. Restart sps console after upgrade.`,
+      confirm: 'Upgrade',
     });
     if (!ok) return;
     setUpgrading(true);
@@ -144,19 +144,19 @@ function VersionSection({ current }: { current?: string }) {
       setUpgradeCommand(res.command);
       if (res.ok) {
         void alert({
-          title: '升级完成',
-          body: `装上了 v${res.installedVersion}。请 \`pkill -f "sps console"\` 再重启以生效。`,
+          title: 'Upgrade complete',
+          body: `Installed v${res.installedVersion}. Run \`pkill -f "sps console"\` and restart to apply.`,
         });
       } else {
         // 详细错误区分：npm 跑完了但版本没变 vs npm 失败
         const reason = res.installedVersion && res.installedVersion === current
-          ? `npm 执行完毕但版本没变（仍 ${res.installedVersion}）——多半是权限或 registry 问题。可复制下面的命令在终端手动跑。`
-          : `npm 没装上新版本。可复制命令手动跑，或看下面日志定位。`;
-        void alert({ title: '升级未生效', body: reason });
+          ? `npm finished but the version did not change (still ${res.installedVersion}) — likely permissions or registry issue. Copy the command below to run manually.`
+          : `npm did not install a new version. Copy the command to run manually, or check the log below.`;
+        void alert({ title: 'Upgrade had no effect', body: reason });
       }
     } catch (err) {
       setUpgradeLog((err as Error).message);
-      void alert({ title: '升级失败', body: (err as Error).message });
+      void alert({ title: 'Upgrade failed', body: (err as Error).message });
     } finally {
       setUpgrading(false);
     }
@@ -168,9 +168,9 @@ function VersionSection({ current }: { current?: string }) {
       : upgradeCommand;
     try {
       await navigator.clipboard.writeText(cmd);
-      void alert({ title: '命令已复制', body: `粘贴到终端运行即可：\n${cmd}` });
+      void alert({ title: 'Command copied', body: `Paste it into your terminal to run:\n${cmd}` });
     } catch {
-      void alert({ title: '复制失败', body: `请手动复制：\n${cmd}` });
+      void alert({ title: 'Copy failed', body: `Copy manually:\n${cmd}` });
     }
   };
 
@@ -178,7 +178,7 @@ function VersionSection({ current }: { current?: string }) {
     <section className="nb-card">
       <div className="flex items-center justify-between mb-3">
         <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">
-          版本
+          Version
         </h2>
         <button
           className="nb-btn"
@@ -186,27 +186,27 @@ function VersionSection({ current }: { current?: string }) {
           onClick={() => latestQ.refetch()}
           disabled={latestQ.isFetching || !current}
           type="button"
-          aria-label="检查最新版本"
+          aria-label="Check latest version"
         >
           {latestQ.isFetching ? (
             <Loader2 size={12} strokeWidth={3} className="animate-spin" />
           ) : (
             <RefreshCw size={12} strokeWidth={2.5} />
           )}
-          检查更新
+          Check for updates
         </button>
       </div>
       <dl className="grid grid-cols-[160px_1fr] gap-y-2 text-sm">
-        <dt className="font-bold">sps-cli (当前)</dt>
+        <dt className="font-bold">sps-cli (current)</dt>
         <dd className="font-[family-name:var(--font-mono)]">{current ?? '—'}</dd>
         {latestQ.data && (
           <>
-            <dt className="font-bold">npm (最新)</dt>
+            <dt className="font-bold">npm (latest)</dt>
             <dd className="font-[family-name:var(--font-mono)] flex items-center gap-2 flex-wrap">
               {latestQ.data.latest}
               {latestQ.data.upToDate ? (
                 <span className="nb-status" style={{ background: 'var(--color-running-bg)', color: 'var(--color-running)' }}>
-                  最新
+                  Latest
                 </span>
               ) : (
                 <>
@@ -216,24 +216,24 @@ function VersionSection({ current }: { current?: string }) {
                     onClick={handleUpgrade}
                     disabled={upgrading}
                     type="button"
-                    aria-label="升级到最新版本"
+                    aria-label="Upgrade to latest"
                   >
                     {upgrading ? (
                       <Loader2 size={11} strokeWidth={3} className="animate-spin" />
                     ) : (
                       <Download size={11} strokeWidth={2.5} />
                     )}
-                    升级
+                    Upgrade
                   </button>
                   <button
                     className="nb-btn"
                     style={{ padding: '3px 10px', fontSize: 11 }}
                     onClick={handleCopyCommand}
                     type="button"
-                    aria-label="复制升级命令"
-                    title="自动升级失败时手动跑"
+                    aria-label="Copy upgrade command"
+                    title="Run manually if auto-upgrade fails"
                   >
-                    <Copy size={11} strokeWidth={2.5} /> 复制命令
+                    <Copy size={11} strokeWidth={2.5} /> Copy command
                   </button>
                 </>
               )}
@@ -242,16 +242,16 @@ function VersionSection({ current }: { current?: string }) {
         )}
         {installedVersion && (
           <>
-            <dt className="font-bold">已安装</dt>
+            <dt className="font-bold">Installed</dt>
             <dd className="font-[family-name:var(--font-mono)] flex items-center gap-2">
               {installedVersion}
               {installedVersion === latestQ.data?.latest ? (
                 <span className="nb-status" style={{ background: 'var(--color-running-bg)', color: 'var(--color-running)' }}>
-                  已生效（重启 console 后可见）
+                  Active (visible after console restart)
                 </span>
               ) : installedVersion === current ? (
                 <span className="nb-status" style={{ background: 'var(--color-stuck-bg)', color: 'var(--color-stuck)' }}>
-                  未升级成功
+                  Upgrade did not take effect
                 </span>
               ) : null}
             </dd>
@@ -259,7 +259,7 @@ function VersionSection({ current }: { current?: string }) {
         )}
         {latestQ.isError && (
           <>
-            <dt className="font-bold">检查</dt>
+            <dt className="font-bold">Check</dt>
             <dd className="text-[var(--color-crashed)] text-xs">
               {latestQ.error instanceof Error ? latestQ.error.message : String(latestQ.error)}
             </dd>
@@ -305,23 +305,23 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
     onError: (err) => {
       const status = (err as Error & { status?: number }).status;
       void alert({
-        title: status === 409 ? 'env 被其他地方修改了' : '保存失败',
+        title: status === 409 ? 'env was modified elsewhere' : 'Save failed',
         body:
           status === 409
-            ? '请点取消后重开编辑。'
+            ? 'Click cancel and reopen the editor.'
             : err instanceof Error ? err.message : String(err),
       });
     },
   });
 
   if (rawQ.isLoading) {
-    return <p className="text-[var(--color-text-muted)]">加载中…</p>;
+    return <p className="text-[var(--color-text-muted)]">Loading…</p>;
   }
 
   return (
     <div>
       <p className="text-xs text-[var(--color-stuck)] font-bold mb-2">
-        ⚠ 文件包含凭证明文。保存时保持 0600 权限。
+        ⚠ File contains plaintext credentials. 0600 permissions preserved on save.
       </p>
       <textarea
         className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
@@ -329,12 +329,12 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
         value={draft ?? ''}
         onChange={(e) => setDraft(e.target.value)}
         spellCheck={false}
-        aria-label="env 文件编辑器"
+        aria-label="env file editor"
       />
       <div className="flex items-center justify-between mt-3">
         <span className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">
           {etag ? `etag: ${etag}` : ''}
-          {dirty ? ' · ● 未保存' : ''}
+          {dirty ? ' · ● unsaved' : ''}
         </span>
         <div className="flex gap-2">
           <button
@@ -344,7 +344,7 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
             disabled={saveMutation.isPending}
             type="button"
           >
-            <X size={12} strokeWidth={3} /> 取消
+            <X size={12} strokeWidth={3} /> Cancel
           </button>
           <button
             className="nb-btn nb-btn-primary"
@@ -352,14 +352,14 @@ function EnvEditor({ onClose }: { onClose: () => void }) {
             onClick={() => saveMutation.mutate()}
             disabled={!dirty || saveMutation.isPending}
             type="button"
-            aria-label="保存 env"
+            aria-label="Save env"
           >
             {saveMutation.isPending ? (
               <Loader2 size={12} strokeWidth={3} className="animate-spin" />
             ) : (
               <Save size={12} strokeWidth={3} />
             )}
-            保存
+            Save
           </button>
         </div>
       </div>
@@ -387,7 +387,7 @@ function DoctorSection() {
       setExpanded((e) => ({ ...e, [project]: true }));
     } catch (err) {
       void alert({
-        title: `doctor ${fix ? '修复' : '检查'}失败`,
+        title: `doctor ${fix ? 'fix' : 'check'} failed`,
         body: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -404,7 +404,7 @@ function DoctorSection() {
   return (
     <section className="nb-card">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">项目健康检查</h2>
+        <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold">Project health check</h2>
         <button
           className="nb-btn nb-btn-mint"
           style={{ padding: '6px 12px', fontSize: 12 }}
@@ -415,11 +415,11 @@ function DoctorSection() {
           type="button"
         >
           <RefreshCw size={12} strokeWidth={2.5} />
-          检查全部
+          Check all
         </button>
       </div>
       {projects.length === 0 ? (
-        <p className="text-[var(--color-text-muted)] text-sm">还没有项目。</p>
+        <p className="text-[var(--color-text-muted)] text-sm">No projects yet.</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {projects.map((p) => {
@@ -440,7 +440,7 @@ function DoctorSection() {
                     onClick={() => setExpanded((e) => ({ ...e, [p.project]: !isExpanded }))}
                     disabled={!hasDet}
                     className="flex items-center gap-2 flex-1 text-left min-w-0"
-                    aria-label={isExpanded ? '折叠' : '展开'}
+                    aria-label={isExpanded ? 'Collapse' : 'Expand'}
                   >
                     {hasDet && det.ok ? (
                       <CheckCircle size={16} className="text-[var(--color-running)] shrink-0" strokeWidth={2.5} />
@@ -460,7 +460,7 @@ function DoctorSection() {
                         </span>
                       )
                     ) : (
-                      <span className="text-xs text-[var(--color-text-muted)]">点 "检查" 运行 sps doctor</span>
+                      <span className="text-xs text-[var(--color-text-muted)]">Click "Check" to run sps doctor</span>
                     )}
                   </button>
                   <button
@@ -471,14 +471,14 @@ function DoctorSection() {
                     }}
                     disabled={!!isLoading}
                     type="button"
-                    aria-label="检查"
+                    aria-label="Check"
                   >
                     {isLoading === 'check' ? (
                       <Loader2 size={11} strokeWidth={3} className="animate-spin" />
                     ) : (
                       <RefreshCw size={11} strokeWidth={2.5} />
                     )}
-                    检查
+                    Check
                   </button>
                   {/* v0.50.22：修复按钮总是可见——老项目从没 check 过也能直接修。
                       sps doctor --fix 是幂等的：没问题时 noop，有问题才动手。
@@ -491,11 +491,11 @@ function DoctorSection() {
                     }}
                     disabled={!!isLoading || (hasDet && det.ok)}
                     type="button"
-                    aria-label="自动修复"
+                    aria-label="Auto-fix"
                     title={
                       hasDet && det.ok
-                        ? '已无可修问题'
-                        : '调 sps doctor <proj> --fix：自动创建 .claude/hooks/stop.sh、state.json 等'
+                        ? 'Nothing to fix'
+                        : 'Runs sps doctor <proj> --fix: auto-creates .claude/hooks/stop.sh, state.json, etc.'
                     }
                   >
                     {isLoading === 'fix' ? (
@@ -503,7 +503,7 @@ function DoctorSection() {
                     ) : (
                       <Wrench size={11} strokeWidth={2.5} />
                     )}
-                    修复
+                    Fix
                   </button>
                 </div>
                 {isExpanded && hasDet && (
@@ -515,7 +515,7 @@ function DoctorSection() {
                     </ul>
                     {det.fixes.length > 0 && (
                       <div className="mt-3 bg-[var(--color-running-bg)] border-2 border-[var(--color-running)] rounded p-2">
-                        <div className="text-xs font-bold text-[var(--color-running)] mb-1">已修复</div>
+                        <div className="text-xs font-bold text-[var(--color-running)] mb-1">Fixed</div>
                         <ul className="text-xs list-disc pl-4">
                           {det.fixes.map((f, i) => <li key={i}>{f}</li>)}
                         </ul>

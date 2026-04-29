@@ -13,22 +13,31 @@ import { listSkills } from '../../shared/api/skills';
 import { SkillBadge, LabelBadge } from '../../shared/components/Badges';
 import { useDialog } from '../../shared/components/DialogProvider';
 
-/** 抽出 body 里指定 "## <heading>" 段的内容。body 缺失时返空串（不崩 UI）。 */
-function extractSection(body: string | null | undefined, heading: string): string {
+/**
+ * Extract content of a "## <heading>" section from a markdown body.
+ * Accepts a list of heading aliases for backward compatibility (EN canonical
+ * + zh fallback). Returns empty string if body is missing or no heading
+ * matches — UI never crashes on a malformed card.
+ */
+function extractSection(body: string | null | undefined, heading: string | string[]): string {
   if (!body) return '';
+  const headings = Array.isArray(heading) ? heading : [heading];
   const lines = body.split('\n');
-  const re = new RegExp(`^##\\s+${heading}\\s*$`);
-  const idx = lines.findIndex((l) => re.test(l));
-  if (idx === -1) return '';
-  let nextIdx = lines.length;
-  for (let i = idx + 1; i < lines.length; i++) {
-    if (/^##\s+/.test(lines[i] ?? '')) { nextIdx = i; break; }
+  for (const h of headings) {
+    const re = new RegExp(`^##\\s+${h}\\s*$`);
+    const idx = lines.findIndex((l) => re.test(l));
+    if (idx === -1) continue;
+    let nextIdx = lines.length;
+    for (let i = idx + 1; i < lines.length; i++) {
+      if (/^##\s+/.test(lines[i] ?? '')) { nextIdx = i; break; }
+    }
+    return lines.slice(idx + 1, nextIdx).join('\n').trim();
   }
-  return lines.slice(idx + 1, nextIdx).join('\n').trim();
+  return '';
 }
 
 function extractDescription(body: string | null | undefined): string {
-  return extractSection(body, '描述');
+  return extractSection(body, ['Description', '描述']);
 }
 
 export function CardDetailModal({
@@ -63,7 +72,7 @@ export function CardDetailModal({
   });
 
   // v0.50.20：检测 pipeline 是否在跑——如果在跑，supervisor 自己会 dispatch，
-  // 单卡手动启动 worker 容易撞车（两个 worker 抢同一张卡 / slot），应该禁用。
+  // 单卡手动Launch worker 容易撞车（两个 worker 抢同一张卡 / slot），应该禁用。
   const projectsQ = useQuery({
     queryKey: ['projects'],
     queryFn: listProjects,
@@ -119,7 +128,7 @@ export function CardDetailModal({
     },
     onError: (err) => {
       void alert({
-        title: '保存失败',
+        title: 'Save failed',
         body: err instanceof Error ? err.message : String(err),
       });
     },
@@ -177,12 +186,12 @@ export function CardDetailModal({
                 </span>
               )}
               {editing && (
-                <span className="text-xs font-bold text-[var(--color-stuck)]">⚠ 编辑中</span>
+                <span className="text-xs font-bold text-[var(--color-stuck)]">⚠ editing</span>
               )}
             </div>
             {!editing ? (
               <h2 id="card-modal-title" className="font-[family-name:var(--font-heading)] text-2xl font-bold break-words">
-                {data?.title ?? '加载中…'}
+                {data?.title ?? 'Loading…'}
               </h2>
             ) : (
               <input
@@ -191,7 +200,7 @@ export function CardDetailModal({
                 value={draftTitle}
                 onChange={(e) => setDraftTitle(e.target.value)}
                 maxLength={200}
-                aria-label="卡片标题"
+                aria-label="Card title"
               />
             )}
           </div>
@@ -202,15 +211,15 @@ export function CardDetailModal({
                 className="nb-btn"
                 style={{ padding: '6px 12px' }}
                 type="button"
-                aria-label="编辑卡片"
+                aria-label="Edit card"
               >
-                <Edit3 size={12} strokeWidth={2.5} /> 编辑
+                <Edit3 size={12} strokeWidth={2.5} /> Edit
               </button>
             )}
             <button
               onClick={onClose}
               className="nb-btn nb-btn-mint p-2"
-              aria-label="关闭"
+              aria-label="Close"
               type="button"
             >
               <X size={14} strokeWidth={3} />
@@ -218,10 +227,10 @@ export function CardDetailModal({
           </div>
         </header>
 
-        {isLoading && <p className="text-[var(--color-text-muted)]">加载中…</p>}
+        {isLoading && <p className="text-[var(--color-text-muted)]">Loading…</p>}
         {isError && (
           <p className="text-[var(--color-crashed)]">
-            加载失败: {error instanceof Error ? error.message : String(error)}
+            Load failed: {error instanceof Error ? error.message : String(error)}
           </p>
         )}
 
@@ -261,7 +270,7 @@ export function CardDetailModal({
                 <div>
                   <div className="text-sm font-bold mb-1.5">Skills</div>
                   {skillsQ.isLoading && (
-                    <p className="text-xs text-[var(--color-text-muted)] italic">加载 skill 列表…</p>
+                    <p className="text-xs text-[var(--color-text-muted)] italic">Loading skills…</p>
                   )}
                   {skillsQ.data && skillsQ.data.data.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
@@ -302,7 +311,7 @@ export function CardDetailModal({
                           type="button"
                           onClick={() => removeLabel(l)}
                           className="hover:text-[var(--color-crashed)]"
-                          aria-label={`删除 ${l}`}
+                          aria-label={`Remove ${l}`}
                         >
                           <X size={10} strokeWidth={3} />
                         </button>
@@ -312,7 +321,7 @@ export function CardDetailModal({
                       type="text"
                       className="nb-input"
                       style={{ padding: '4px 8px', fontSize: 12, width: 140 }}
-                      placeholder="+ 添加 label"
+                      placeholder="+ add label"
                       value={newLabelInput}
                       onChange={(e) => setNewLabelInput(e.target.value)}
                       onKeyDown={(e) => {
@@ -328,14 +337,14 @@ export function CardDetailModal({
                         className="nb-btn"
                         style={{ padding: '2px 6px', fontSize: 11 }}
                         onClick={addLabel}
-                        aria-label="添加 label"
+                        aria-label="Add label"
                       >
                         <Plus size={10} strokeWidth={3} />
                       </button>
                     )}
                   </div>
                   <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
-                    注意：AI-PIPELINE / STARTED-* / COMPLETED-* / NEEDS-FIX 由流水线自动管理，手动改可能被覆盖
+                    Note: AI-PIPELINE / STARTED-* / COMPLETED-* / NEEDS-FIX are managed by the pipeline — manual edits may be overwritten.
                   </p>
                 </div>
               </>
@@ -347,17 +356,17 @@ export function CardDetailModal({
                 {/* 描述 */}
                 <div>
                   <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                    描述
+                    Description
                   </h3>
                   <pre className="text-xs whitespace-pre-wrap font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4 max-h-64 overflow-auto">
-                    {extractSection(data.body, '描述') || '（空）'}
+                    {extractSection(data.body, ['Description', '描述']) || '(empty)'}
                   </pre>
                 </div>
 
                 {/* 检查清单 —— v0.50.20：即使为空也渲染框，保持布局一致 */}
                 <div>
                   <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                    检查清单 <span className="text-[var(--color-text-muted)] normal-case tracking-normal">{((data.checklist?.done) ?? 0)}/{((data.checklist?.total) ?? 0)}</span>
+                    Checklist <span className="text-[var(--color-text-muted)] normal-case tracking-normal">{((data.checklist?.done) ?? 0)}/{((data.checklist?.total) ?? 0)}</span>
                   </h3>
                   <div className="nb-card bg-[var(--color-bg-cream)] p-3">
                     {((data.checklist?.total) ?? 0) > 0 ? (
@@ -380,7 +389,7 @@ export function CardDetailModal({
                         </ul>
                       </>
                     ) : (
-                      <p className="text-xs text-[var(--color-text-muted)] italic">暂无清单项。在描述里用 <code className="font-[family-name:var(--font-mono)]">- [ ] 项</code> 语法添加。</p>
+                      <p className="text-xs text-[var(--color-text-muted)] italic">No checklist items. Add them in the description with <code className="font-[family-name:var(--font-mono)]">- [ ] item</code> syntax.</p>
                     )}
                   </div>
                 </div>
@@ -388,10 +397,10 @@ export function CardDetailModal({
                 {/* 日志 */}
                 <div>
                   <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                    日志
+                    Log
                   </h3>
                   <pre className="text-xs whitespace-pre-wrap font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded-lg p-4 max-h-64 overflow-auto">
-                    {extractSection(data.body, '日志') || '（空）'}
+                    {extractSection(data.body, ['Log', '日志']) || '(empty)'}
                   </pre>
                 </div>
               </>
@@ -399,17 +408,17 @@ export function CardDetailModal({
               <>
                 <div>
                   <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold mb-2 uppercase tracking-wider">
-                    描述
+                    Description
                   </h3>
                   <textarea
                     className="nb-input w-full font-[family-name:var(--font-mono)] text-xs"
                     style={{ minHeight: 180, resize: 'vertical' }}
                     value={draftDesc}
                     onChange={(e) => setDraftDesc(e.target.value)}
-                    aria-label="卡片描述"
+                    aria-label="Card description"
                   />
                   <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
-                    只替换 "## 描述" 段的内容；检查清单和日志段不动。
+                    Replaces only the "## Description" section; Checklist and Log sections are untouched.
                   </p>
                 </div>
 
@@ -418,7 +427,7 @@ export function CardDetailModal({
                   <div className="nb-card bg-[var(--color-bg-cream)] p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-bold text-sm">
-                        检查清单 {((data.checklist?.done) ?? 0)}/{((data.checklist?.total) ?? 0)}
+                        Checklist {((data.checklist?.done) ?? 0)}/{((data.checklist?.total) ?? 0)}
                       </span>
                     </div>
                     <ul className="text-sm space-y-1">
@@ -448,9 +457,9 @@ export function CardDetailModal({
                     disabled={data.state === 'Done' || pipelineRunning}
                     title={
                       data.state === 'Done'
-                        ? '卡片已完成；先拖回 Todo 再启动'
+                        ? 'Card is done — drag it back to Todo before starting'
                         : pipelineRunning
-                          ? 'Pipeline 正在跑——supervisor 会自动 dispatch，无需手动启动'
+                          ? 'Pipeline is running — supervisor dispatches automatically, no manual start needed'
                           : undefined
                     }
                     onClick={async () => {
@@ -459,23 +468,23 @@ export function CardDetailModal({
                         onChanged();
                       } catch (err) {
                         void alert({
-                          title: '启动 worker 失败',
+                          title: 'Failed to launch worker',
                           body: err instanceof Error ? err.message : String(err),
                         });
                       }
                     }}
                   >
                     <Play size={14} strokeWidth={3} />
-                    启动 worker
+                    Launch worker
                   </button>
                   <button
                     className="nb-btn nb-btn-yellow"
                     type="button"
                     onClick={async () => {
                       const ok = await confirm({
-                        title: `重置卡片 #${seq}`,
-                        body: '卡片状态会回到初始，已做的 checklist 会清空。',
-                        confirm: '重置',
+                        title: `Reset card #${seq}`,
+                        body: 'Card state will reset to initial, and completed checklist items will be cleared.',
+                        confirm: 'Reset',
                         danger: true,
                       });
                       if (!ok) return;
@@ -485,14 +494,14 @@ export function CardDetailModal({
                         onClose();
                       } catch (err) {
                         void alert({
-                          title: '重置失败',
+                          title: 'Reset failed',
                           body: err instanceof Error ? err.message : String(err),
                         });
                       }
                     }}
                   >
                     <RotateCcw size={14} strokeWidth={2.5} />
-                    重置卡片
+                    Reset card
                   </button>
                   <button
                     className="nb-btn"
@@ -500,16 +509,16 @@ export function CardDetailModal({
                     type="button"
                     onClick={async () => {
                       const step1 = await confirm({
-                        title: `删除卡片 #${seq}`,
-                        body: `即将删除 "${data.title}"。此操作不可恢复（md 文件将被物理删除）。是否继续？`,
-                        confirm: '继续',
+                        title: `Delete card #${seq}`,
+                        body: `About to delete "${data.title}". This is permanent — the md file will be physically removed. Continue?`,
+                        confirm: 'Continue',
                         danger: true,
                       });
                       if (!step1) return;
                       const step2 = await confirm({
-                        title: '最终确认',
-                        body: `请再次确认删除卡片 #${seq}。`,
-                        confirm: '确定删除',
+                        title: 'Final confirmation',
+                        body: `Please confirm again to delete card #${seq}.`,
+                        confirm: 'Confirm delete',
                         danger: true,
                       });
                       if (!step2) return;
@@ -519,15 +528,15 @@ export function CardDetailModal({
                         onClose();
                       } catch (err) {
                         void alert({
-                          title: '删除失败',
+                          title: 'Delete failed',
                           body: err instanceof Error ? err.message : String(err),
                         });
                       }
                     }}
-                    aria-label="删除卡片"
+                    aria-label="Delete card"
                   >
                     <Trash2 size={14} strokeWidth={2.5} />
-                    删除卡片
+                    Delete card
                   </button>
                 </>
               ) : (
@@ -541,21 +550,21 @@ export function CardDetailModal({
                     }}
                     disabled={saveMutation.isPending}
                   >
-                    取消
+                    Cancel
                   </button>
                   <button
                     className="nb-btn nb-btn-primary"
                     type="button"
                     onClick={() => saveMutation.mutate()}
                     disabled={!dirty || !draftTitle.trim() || saveMutation.isPending}
-                    aria-label="保存卡片修改"
+                    aria-label="Save card changes"
                   >
                     {saveMutation.isPending ? (
                       <Loader2 size={14} strokeWidth={3} className="animate-spin" />
                     ) : (
                       <Save size={14} strokeWidth={3} />
                     )}
-                    保存
+                    Save
                   </button>
                 </>
               )}
