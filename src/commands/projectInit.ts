@@ -429,12 +429,8 @@ export CONFLICT_DEFAULT="serial"
 `);
   log.ok('Updated conf.example (full parameter reference)');
 
-  // Create empty pipeline_order.json if not exists
-  const orderFile = resolve(instanceDir, 'pipeline_order.json');
-  if (!existsSync(orderFile)) {
-    writeFileSync(orderFile, '[]\n');
-    log.ok('Created empty pipeline_order.json');
-  }
+  // v0.51.9: pipeline_order.json 已废弃（卡按 seq 排序）。新项目不再创建该文件。
+  // 老项目可通过 sps doctor <p> --fix 删除遗留 pipeline_order.json
 
   // Create/update pipelines directory with sample template
   const pipelinesDir = resolve(instanceDir, 'pipelines');

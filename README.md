@@ -195,10 +195,13 @@ Field reference: see `~/.coral/projects/<n>/pipelines/sample.yaml.example` (auto
 ## Card lifecycle
 
 ```
-Planning → Backlog → Todo → Inprogress → [QA / Review] → Done
-                                  ↓ fail
-                            NEEDS-FIX (halt)
+Backlog → Todo → Inprogress → [QA / Review] → Done
+   ↑↓                  ↓ fail
+Planning           NEEDS-FIX (halt)
+(manual park, v0.51.9+)
 ```
+
+**v0.51.9 change**: `sps card add` puts cards directly in **Backlog** (used to go through Planning + auto-promote). Planning is now a manual parking lot — drag a card there to defer; drag back to Backlog to dispatch. Cards order strictly by seq.
 
 Default states (configurable via YAML `pm.card_states`).
 
@@ -320,7 +323,7 @@ sps tick <project> [--json]
 sps pipeline start|stop|status|reset|workers|board|card|logs|list|run|use [project] [args]
 sps pipeline run <name> "<prompt>"   # for mode: steps pipelines
 sps pipeline tick <project>          # one-off StageEngine pass
-sps scheduler tick <project>         # Planning → Backlog promotion
+sps scheduler tick <project>         # dormant since v0.51.9 (kept for tick orchestrator)
 sps qa tick <project>                # QA → Done finalization
 sps monitor tick <project>           # health probe (ACK timeout, stale)
 sps pm scan <project>                # rebuild card index from disk
@@ -480,7 +483,7 @@ Infrastructure                               WorkerManager (single worker), ACPW
 
 Engines:
 
-- **SchedulerEngine** — promotes Planning → Backlog when `AI-PIPELINE` label present.
+- **SchedulerEngine** — dormant since v0.51.9 (cards go directly to Backlog on add; Planning is a manual park). Class kept as a no-op for the tick orchestrator's stable interface.
 - **StageEngine** — drives card through stages; builds prompt (skill + projectRules + memory + **wikiContext** + task description + **wikiUpdateReminder**); kicks worker via ACP.
 - **MonitorEngine** — ACK timeout detection, stale runtime, auto-QA promotion.
 - **CloseoutEngine** + **EventHandler** — finalize completed cards.

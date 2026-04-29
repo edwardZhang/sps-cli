@@ -183,15 +183,23 @@ export async function executeDoctor(project: string, flags: DoctorFlags): Promis
     checks.push({ name: 'state-json', status: 'skip', message: 'state.json not found (use --fix to initialize)' });
   }
 
-  // 6. pipeline_order.json
+  // v0.51.9: pipeline_order.json 已废弃（卡按 seq 排序）。
+  // 老项目里如果存在该文件，--fix 会顺手删掉；不存在就跳过。
   if (ctx.paths.pipelineOrderFile && checkPathExists(ctx.paths.pipelineOrderFile)) {
-    checks.push({ name: 'pipeline-order', status: 'pass', message: ctx.paths.pipelineOrderFile });
-  } else if (doFix) {
-    writeFileSync(ctx.paths.pipelineOrderFile, '[]\n');
-    checks.push({ name: 'pipeline-order', status: 'pass', message: `Created: ${ctx.paths.pipelineOrderFile}` });
-    fixes.push('Created empty pipeline_order.json');
+    if (doFix) {
+      try {
+        const { rmSync } = await import('node:fs');
+        rmSync(ctx.paths.pipelineOrderFile, { force: true });
+        checks.push({ name: 'pipeline-order', status: 'pass', message: 'Removed legacy pipeline_order.json (deprecated v0.51.9)' });
+        fixes.push('Removed legacy pipeline_order.json');
+      } catch (err) {
+        checks.push({ name: 'pipeline-order', status: 'warn', message: `Failed to remove legacy file: ${err instanceof Error ? err.message : String(err)}` });
+      }
+    } else {
+      checks.push({ name: 'pipeline-order', status: 'warn', message: 'Legacy pipeline_order.json found (deprecated v0.51.9; use --fix to remove)' });
+    }
   } else {
-    checks.push({ name: 'pipeline-order', status: 'skip', message: 'pipeline_order.json not found (use --fix to create)' });
+    checks.push({ name: 'pipeline-order', status: 'pass', message: 'No pipeline_order.json (deprecated v0.51.9)' });
   }
 
   // v0.42.0: Plane/Trello removed. Markdown backend has no remote PM state to validate.

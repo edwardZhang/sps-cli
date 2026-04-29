@@ -195,10 +195,13 @@ stages:
 ## 卡片生命周期
 
 ```
-Planning → Backlog → Todo → Inprogress → [QA / Review] → Done
-                                  ↓ 失败
-                            NEEDS-FIX (halt)
+Backlog → Todo → Inprogress → [QA / Review] → Done
+   ↑↓                  ↓ 失败
+Planning           NEEDS-FIX (halt)
+(人工暂存，v0.51.9+)
 ```
+
+**v0.51.9 变化**：`sps card add` 直接把卡放到 **Backlog**（不再走 Planning + 自动提升）。Planning 改为人工暂存 — 拖卡进 Planning = 暂停；拖回 Backlog = 重新派发。卡顺序严格按 seq。
 
 默认状态（可在 YAML `pm.card_states` 自定义）。
 
@@ -320,7 +323,7 @@ sps tick <project> [--json]
 sps pipeline start|stop|status|reset|workers|board|card|logs|list|run|use [project] [args]
 sps pipeline run <name> "<prompt>"   # 用于 mode: steps pipeline
 sps pipeline tick <project>          # 单次 StageEngine pass
-sps scheduler tick <project>         # Planning → Backlog 提升
+sps scheduler tick <project>         # v0.51.9 起 dormant（保留接口给 tick 编排器）
 sps qa tick <project>                # QA → Done 收尾
 sps monitor tick <project>           # 健康探测（ACK timeout、stale）
 sps pm scan <project>                # 从磁盘重建卡片索引
@@ -477,7 +480,7 @@ Infrastructure                               WorkerManager（单 worker）、ACP
 
 引擎职责：
 
-- **SchedulerEngine** — 见 `AI-PIPELINE` 标签时把 Planning → Backlog 提升。
+- **SchedulerEngine** — v0.51.9 起 dormant（卡 add 直接进 Backlog；Planning 是人工暂存）。class 保留为 no-op，给 tick 编排器接口稳定。
 - **StageEngine** — 驱动卡走 stage；构造 prompt（skill + projectRules + memory + **wikiContext** + task description + **wikiUpdateReminder**）；通过 ACP 拉起 worker。
 - **MonitorEngine** — ACK 超时检测、stale runtime、自动 QA 提升。
 - **CloseoutEngine** + **EventHandler** — 完成卡的收尾。

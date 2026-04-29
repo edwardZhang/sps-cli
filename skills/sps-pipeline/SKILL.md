@@ -178,15 +178,19 @@ card pipelines; see `sample.yaml.example` for syntax.
 ## 4. Card state machine
 
 ```
-Planning → Backlog → Todo → Inprogress → [QA / Review] → Done
+v0.51.9 起：
+
+Backlog → Todo → Inprogress → [QA / Review] → Done
+   ↑↓
+Planning（用户手动暂存；不自动派发）
                                   ↓ fail
                             NEEDS-FIX (halt)
 ```
 
 Default states (configurable in YAML `pm.card_states`):
-- **Planning** — drafted, awaiting AI-PIPELINE label promotion
-- **Backlog** — eligible to run
-- **Todo** — claimed by SchedulerEngine, ready for worker
+- **Planning** — v0.51.9+：人工暂存 / 草稿（不自动入队，需用户手动拖到 Backlog 才会跑）
+- **Backlog** — `sps card add` 默认入此状态；StageEngine 抢卡执行
+- **Todo** — StageEngine 已 prep（建分支 / worktree），下次 tick 派 worker
 - **Inprogress** — worker active
 - **QA** (or **Review**) — code complete, awaiting human/auto verification
 - **Done** — finished
@@ -253,7 +257,7 @@ sps doctor <project>               # health check
 sps doctor <project> --fix         # auto-repair drift
 
 # One-off ticks (each engine separately, useful for cron / debugging)
-sps scheduler tick <p>             # Planning → Backlog promotion
+sps scheduler tick <p>             # v0.51.9 起为 no-op（dormant，保留接口）
 sps pipeline tick <p>              # full StageEngine pass
 sps qa tick <p>                    # QA → Done finalization
 sps monitor tick <p>               # health probe (ACK timeout, stale runtime)
@@ -382,7 +386,7 @@ Infrastructure (manager/, providers/, daemon/)
 
 ### Engines
 
-- **SchedulerEngine** — promotes Planning → Backlog when AI-PIPELINE present
+- **SchedulerEngine** — v0.51.9 起 dormant（卡 add 直接进 Backlog，无需提升）
 - **StageEngine** — drives card through stages; builds prompt (skill + projectRules
   + memory + **wikiContext** + task description + **wikiUpdateReminder**); kicks
   Worker via ACP
@@ -422,7 +426,7 @@ Common issues:
 - **Worker not starting** — `sps worker ps`, then check `sps logs --err`. Often
   Claude API key missing or `claude-agent-acp` adapter not installed (`sps setup`
   reinstalls it).
-- **Cards stuck in Planning** — they need the `AI-PIPELINE` label. `sps card add`
+- **Cards stuck in Planning (v0.51.9+)** — Planning 是人工暂存。手动拖到 Backlog 即派发。`sps card add`
   applies it automatically.
 - **ACK timeout on every card** — Claude cold-start is slow with many skills/memory
   files. Raise `WORKER_ACK_TIMEOUT_S` in conf (default 300s as of v0.50.24).

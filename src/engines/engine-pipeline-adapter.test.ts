@@ -295,24 +295,27 @@ describe('SchedulerEngine uses adapter states', () => {
   });
   afterEach(() => { rmSync(tempDir, { recursive: true, force: true }); });
 
-  it('lists cards by custom planning state', async () => {
+  // v0.51.9: SchedulerEngine 改为 dormant — 不再 list / move Planning 卡（卡 add
+  // 直接进 Backlog；Planning 改为人工暂存）。下面两个测试验证 dormant 行为。
+
+  it('does not list cards (dormant since v0.51.9)', async () => {
     const config = makeConfig({ PROJECT_DIR: tempDir });
     const ctx = makeCtx(tempDir, config);
     const state = makeDefaultState(2);
     writeState(ctx.paths.stateFile, state, 'test');
 
-    // Return a card with AI-PIPELINE label
     const card = makeCard('1', CUSTOM.planning, { labels: ['AI-PIPELINE'] });
     (taskBackend.listByState as ReturnType<typeof vi.fn>).mockResolvedValue([card]);
 
     const engine = new SchedulerEngine(ctx, taskBackend, adapter);
-    await engine.tick({ dryRun: true });
+    const result = await engine.tick({ dryRun: true });
 
-    // Should call listByState with custom 'Planned' state (not 'Planning')
-    expect(taskBackend.listByState).toHaveBeenCalledWith('Planned');
+    expect(taskBackend.listByState).not.toHaveBeenCalled();
+    expect(result.status).toBe('ok');
+    expect((result.details as { reason?: string }).reason).toBe('dormant_v0.51.9');
   });
 
-  it('moves cards to custom backlog state', async () => {
+  it('does not move cards (dormant since v0.51.9)', async () => {
     const config = makeConfig({ PROJECT_DIR: tempDir });
     const ctx = makeCtx(tempDir, config);
     const state = makeDefaultState(2);
@@ -322,10 +325,9 @@ describe('SchedulerEngine uses adapter states', () => {
     (taskBackend.listByState as ReturnType<typeof vi.fn>).mockResolvedValue([card]);
 
     const engine = new SchedulerEngine(ctx, taskBackend, adapter);
-    const _result = await engine.tick();
+    await engine.tick();
 
-    // Should move to custom 'Queue' state (not 'Backlog')
-    expect(taskBackend.move).toHaveBeenCalledWith('1', 'Queue');
+    expect(taskBackend.move).not.toHaveBeenCalled();
   });
 });
 
@@ -808,7 +810,8 @@ describe('Full pipeline flow with custom states (dry-run)', () => {
     }
 
     // Should use custom state names instead
-    expect(listCalls).toContain('Planned');   // Scheduler
+    // v0.51.9: SchedulerEngine 不再 list 'Planned'（dormant），但 StageEngine + Monitor
+    // 仍要走自定义状态名
     expect(listCalls).toContain('Queue');     // StageEngine[0] (backlog)
     expect(listCalls).toContain('Ready');     // StageEngine[0] (ready)
     expect(listCalls).toContain('Working');   // StageEngine[0] (active) + Monitor

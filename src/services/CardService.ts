@@ -50,7 +50,7 @@ export interface CreateCardInput {
   skills?: string[];
   /** 初始 labels —— 例如 `['AI-PIPELINE']` 让卡走流水线，空数组/缺省则不走 */
   labels?: string[];
-  initialState?: string; // default Planning
+  initialState?: string; // v0.51.9: default Backlog（之前是 Planning，但 SchedulerEngine 不再自动提升）
 }
 
 export interface UpdateCardPatch {
@@ -124,7 +124,9 @@ export class CardService {
     if (!isValidProject(project)) return err(invalidProject());
     const title = input.title?.trim();
     if (!title) return err(invalidTitle());
-    const state = input.initialState ?? 'Planning';
+    // v0.51.9：卡 add 直接进 Backlog（StageEngine 抢卡执行）。
+    // Planning 改为纯人工暂存（用户手动拖到 Planning 才停）。
+    const state = input.initialState ?? 'Backlog';
     if (!ALLOWED_STATES.includes(state)) return err(invalidState(state));
 
     const backend = await this.backendOr404(project);

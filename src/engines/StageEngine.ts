@@ -24,7 +24,6 @@ import type { ProjectContext } from '../core/context.js';
 import { Logger } from '../core/logger.js';
 import { buildFullMemoryContext, buildMemoryWriteInstructions } from '../core/memory.js';
 import type { ProjectPipelineAdapter, StageDefinition } from '../core/projectPipelineAdapter.js';
-import { readQueue } from '../core/queue.js';
 import { RuntimeStore } from '../core/runtimeStore.js';
 import type { RuntimeState, TaskLease, WorkerSlotState } from '../core/state.js';
 import { buildPhasePrompt, buildTaskPrompt } from '../core/taskPrompts.js';
@@ -181,18 +180,10 @@ export class StageEngine {
         }
 
         // 3. Launch ready cards (claim + context + worker + move to active)
-        let readyCards = await this.taskBackend.listByState(this.pipelineAdapter.states.ready);
-        const pipelineOrder = readQueue(this.ctx.paths.pipelineOrderFile);
-        if (pipelineOrder.length > 0) {
-          readyCards = readyCards.sort((a, b) => {
-            const aIdx = pipelineOrder.indexOf(parseInt(a.seq, 10));
-            const bIdx = pipelineOrder.indexOf(parseInt(b.seq, 10));
-            if (aIdx >= 0 && bIdx >= 0) return aIdx - bIdx;
-            if (aIdx >= 0) return -1;
-            if (bIdx >= 0) return 1;
-            return parseInt(a.seq, 10) - parseInt(b.seq, 10);
-          });
-        }
+        // v0.51.9: ordering 严格按 seq 升序（不再读 pipeline_order.json）
+        const readyCards = (
+          await this.taskBackend.listByState(this.pipelineAdapter.states.ready)
+        ).sort((a, b) => parseInt(a.seq, 10) - parseInt(b.seq, 10));
         const failedSlots = new Set<string>();
         for (const card of readyCards) {
           if (actionsThisTick >= maxActions) break;

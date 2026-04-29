@@ -23,7 +23,7 @@ describe('E2E `sps card add`', () => {
   it('基本新建卡片，退出码 0', async () => {
     const result = await runCli(['card', 'add', 'cli-cards', 'my first card'], { home: fx.home });
     expect(result.exitCode).toBe(0);
-    const files = readdirSync(resolve(fx.cardsDir, 'planning'));
+    const files = readdirSync(resolve(fx.cardsDir, 'backlog'));
     expect(files.length).toBe(1);
     expect(files[0]).toMatch(/^1-.*\.md$/);
   });
@@ -36,8 +36,8 @@ describe('E2E `sps card add`', () => {
 
   it('写入 frontmatter 含 title + seq', async () => {
     await runCli(['card', 'add', 'cli-cards', '含有中文的卡'], { home: fx.home });
-    const files = readdirSync(resolve(fx.cardsDir, 'planning'));
-    const path = resolve(fx.cardsDir, 'planning', files[0]!);
+    const files = readdirSync(resolve(fx.cardsDir, 'backlog'));
+    const path = resolve(fx.cardsDir, 'backlog', files[0]!);
     const content = readFileSync(path, 'utf-8');
     expect(content).toMatch(/^---/);
     expect(content).toContain('title: 含有中文的卡');
@@ -58,8 +58,8 @@ describe('E2E `sps card add`', () => {
       { home: fx.home },
     );
     expect(result.exitCode).toBe(0);
-    const files = readdirSync(resolve(fx.cardsDir, 'planning'));
-    const content = readFileSync(resolve(fx.cardsDir, 'planning', files[0]!), 'utf-8');
+    const files = readdirSync(resolve(fx.cardsDir, 'backlog'));
+    const content = readFileSync(resolve(fx.cardsDir, 'backlog', files[0]!), 'utf-8');
     expect(content).toMatch(/skills:\s*\n\s*-\s*typescript/);
     expect(content).toMatch(/-\s*frontend/);
   });
@@ -71,8 +71,8 @@ describe('E2E `sps card add`', () => {
 
   it('body 为空描述写入默认 (无描述)', async () => {
     await runCli(['card', 'add', 'cli-cards', 'empty body'], { home: fx.home });
-    const files = readdirSync(resolve(fx.cardsDir, 'planning'));
-    const content = readFileSync(resolve(fx.cardsDir, 'planning', files[0]!), 'utf-8');
+    const files = readdirSync(resolve(fx.cardsDir, 'backlog'));
+    const content = readFileSync(resolve(fx.cardsDir, 'backlog', files[0]!), 'utf-8');
     expect(content).toContain('## 描述');
     expect(content).toMatch(/\(无描述\)|(无描述)/);
   });
@@ -82,6 +82,6 @@ describe('E2E `sps card add`', () => {
     await runCli(['card', 'add', 'cli-cards', 'b'], { home: fx.home });
     await runCli(['card', 'add', 'cli-cards', 'c'], { home: fx.home });
     expect(readFileSync(resolve(fx.cardsDir, 'seq.txt'), 'utf-8').trim()).toBe('3');
-    expect(existsSync(resolve(fx.cardsDir, 'planning'))).toBe(true);
+    expect(existsSync(resolve(fx.cardsDir, 'backlog'))).toBe(true);
   });
 });

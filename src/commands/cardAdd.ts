@@ -9,7 +9,6 @@
  * @trigger       sps card add <project> "<title>" ["description"] [--skill a,b] [--json]
  */
 import { Logger } from '../core/logger.js';
-import { readQueue, writeQueue } from '../core/queue.js';
 import { toExitCode } from '../shared/errors.js';
 import { createContainer } from '../services/container.js';
 
@@ -36,11 +35,9 @@ export async function executeCardAdd(
     process.exit(2);
   }
 
-  // PIPELINE_LABEL + pipeline_order.json 是 CLI 侧的额外行为，Service 没有这条路径 ——
-  // 走 Service 新建卡片后，CLI 自己补这两个副作用（和旧行为等价）。
-  // Service 不负责：
-  //   - 添加 AI-PIPELINE label（由 pipeline stage 自己决定是否要 label）
-  //   - 追加 pipeline_order.json（队列是 CLI 本地视图）
+  // PIPELINE_LABEL 副作用：Service 创建后 CLI 自己补 AI-PIPELINE 标签（标签是
+  // "SPS pipeline 卡"的标记，不再触发 SchedulerEngine — 因 v0.51.9 起卡直接进 Backlog）
+  // v0.51.9：删去 pipeline_order.json 副作用（统一按 seq 排序）
   const services = createContainer();
   const result = await services.cards.create(project, { title, description: desc, skills });
   if (!result.ok) {
@@ -60,20 +57,8 @@ export async function executeCardAdd(
     // 副作用：AI-PIPELINE label —— 用 Service 的 update({labels})
     const withLabels = Array.from(new Set([...result.value.labels, pipelineLabel]));
     await services.cards.update(project, result.value.seq, { labels: withLabels });
-
-    // 副作用：追加到 pipeline_order.json
-    const { ProjectContext } = await import('../core/context.js');
-    const ctx = ProjectContext.load(project);
-    const seqNum = Number.parseInt(seq, 10);
-    if (!Number.isNaN(seqNum)) {
-      const queue = readQueue(ctx.paths.pipelineOrderFile);
-      if (!queue.includes(seqNum)) {
-        queue.push(seqNum);
-        writeQueue(ctx.paths.pipelineOrderFile, queue);
-      }
-    }
   } catch (err) {
-    log.warn(`card created but side-effect failed: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn(`card created but label side-effect failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   if (jsonOutput) {

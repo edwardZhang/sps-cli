@@ -84,14 +84,10 @@ async function getProjectStatus(project: string): Promise<ProjectStatus> {
     }
   }
 
-  // Pipeline queue
-  let pipelineQueue = 0;
-  if (existsSync(pipelineFile)) {
-    try {
-      const queue = JSON.parse(readFileSync(pipelineFile, 'utf-8'));
-      pipelineQueue = Array.isArray(queue) ? queue.length : 0;
-    } catch { /* corrupt */ }
-  }
+  // v0.51.9：pipeline_order.json 已废弃；pipelineQueue 字段保留（避免破坏 --json 消费者），值固定 0。
+  // 想看待执行卡数走 console 看板（按 state 列分组）。
+  void pipelineFile;
+  const pipelineQueue = 0;
 
   return { project, tick, pid, startedAt, workers, activeCards, pipelineQueue };
 }
