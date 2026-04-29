@@ -1,23 +1,53 @@
 {
   "title": "Workers",
-  "capacity": "容量",
-  "running": "运行中",
-  "free": "空闲",
-  "total": "总数",
-  "stage": "阶段",
-  "pid": "PID",
-  "started": "启动时间",
-  "runtime": "运行时长",
-  "marker": "Marker",
-  "kill": "Kill worker",
-  "killConfirm": "终止 worker {{slot}}？",
-  "launch": "启动 worker",
-  "log": "日志",
-  "noWorkers": "没有活跃的 worker",
-  "selectProject": "请选择项目",
-  "errors": {
-    "loadFailed": "Worker 列表加载失败",
-    "killFailed": "Worker 终止失败",
-    "launchFailed": "Worker 启动失败"
+  "summary": "跨 {{projects}} 项目 · {{running}} 跑 · {{starting}} 启动 · ",
+  "stuck": "{{count}} 卡",
+  "crashed": "{{count}} 崩",
+  "idle": " · {{count}} 闲",
+  "refreshAria": "刷新",
+  "refresh": "刷新",
+  "loading": "加载中…",
+  "loadFailed": "加载失败: {{error}}",
+  "selectHint": "点击项目 / worker 查看详情",
+  "capacity": {
+    "title": "容量",
+    "project": "项目",
+    "inUse": "占用",
+    "other": "其它",
+    "details": "详情 →",
+    "boardLink": "看板 →",
+    "loadingWorkers": "加载 workers…",
+    "noSlots": "该项目没有 worker slot。",
+    "noWorkers": "无 worker",
+    "selectWorker": "请选择一个 worker",
+    "idle": "空闲",
+    "currentCard": "当前卡片",
+    "slotIdle": "slot 空闲，没有当前卡片。",
+    "outputRecent": "Claude 输出 · 最近 {{count}} 行",
+    "outputEmpty": "还没收到 session 输出。Worker 刚启动时需要几秒。",
+    "heartbeatRecent": "Supervisor 心跳 · 最近 {{count}} 行",
+    "viewFullLog": "查看完整 log →"
+  },
+  "actions": {
+    "restartTitle": "重启 worker-{{slot}}",
+    "restartBody": "先杀进程，再重新 launch 到 #{{seq}}",
+    "restartConfirm": "重启",
+    "restartFailed": "重启失败",
+    "restart": "重启",
+    "killTitle": "终止 worker-{{slot}}",
+    "killBody": "当前任务强制中断。",
+    "killConfirm": "终止",
+    "killFailed": "终止失败",
+    "kill": "终止"
+  },
+  "alerts": {
+    "allHealthy": "全部 worker 健康",
+    "pidDead": "PID 已死。",
+    "markerStalled": "marker 停 {{relative}}。"
+  },
+  "format": {
+    "secondsAgo": "{{value}}s 前",
+    "minutesAgo": "{{value}}m 前",
+    "hoursAgo": "{{value}}h 前"
   }
 }

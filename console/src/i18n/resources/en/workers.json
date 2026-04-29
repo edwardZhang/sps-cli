@@ -1,23 +1,53 @@
 {
   "title": "Workers",
-  "capacity": "Capacity",
-  "running": "Running",
-  "free": "Free",
-  "total": "Total",
-  "stage": "Stage",
-  "pid": "PID",
-  "started": "Started",
-  "runtime": "Runtime",
-  "marker": "Marker",
-  "kill": "Kill worker",
-  "killConfirm": "Kill worker {{slot}}?",
-  "launch": "Launch worker",
-  "log": "Log",
-  "noWorkers": "No active workers",
-  "selectProject": "Select a project",
-  "errors": {
-    "loadFailed": "Failed to load workers",
-    "killFailed": "Failed to kill worker",
-    "launchFailed": "Failed to launch worker"
+  "summary": "Across {{projects}} projects · {{running}} running · {{starting}} starting · ",
+  "stuck": "{{count}} stuck",
+  "crashed": "{{count}} crashed",
+  "idle": " · {{count}} idle",
+  "refreshAria": "Refresh",
+  "refresh": "Refresh",
+  "loading": "Loading…",
+  "loadFailed": "Load failed: {{error}}",
+  "selectHint": "Click a project / worker for details",
+  "capacity": {
+    "title": "Capacity",
+    "project": "Project",
+    "inUse": "In use",
+    "other": "Other",
+    "details": "Details →",
+    "boardLink": "Board →",
+    "loadingWorkers": "Loading workers…",
+    "noSlots": "This project has no worker slots.",
+    "noWorkers": "No workers",
+    "selectWorker": "Select a worker",
+    "idle": "idle",
+    "currentCard": "Current card",
+    "slotIdle": "slot is idle — no current card.",
+    "outputRecent": "Claude output · last {{count}} lines",
+    "outputEmpty": "No session output yet. Worker takes a few seconds after launch.",
+    "heartbeatRecent": "Supervisor heartbeat · last {{count}} lines",
+    "viewFullLog": "View full log →"
+  },
+  "actions": {
+    "restartTitle": "Restart worker-{{slot}}",
+    "restartBody": "Kills the process, then re-launches to #{{seq}}",
+    "restartConfirm": "Restart",
+    "restartFailed": "Restart failed",
+    "restart": "Restart",
+    "killTitle": "Terminate worker-{{slot}}",
+    "killBody": "Current task will be force-cancelled.",
+    "killConfirm": "Terminate",
+    "killFailed": "Terminate failed",
+    "kill": "Terminate"
+  },
+  "alerts": {
+    "allHealthy": "All workers healthy",
+    "pidDead": "PID is dead.",
+    "markerStalled": "marker stalled for {{relative}}."
+  },
+  "format": {
+    "secondsAgo": "{{value}}s ago",
+    "minutesAgo": "{{value}}m ago",
+    "hoursAgo": "{{value}}h ago"
   }
 }

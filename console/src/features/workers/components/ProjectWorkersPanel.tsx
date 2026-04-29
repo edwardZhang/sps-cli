@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { Terminal, TimerReset, Zap } from 'lucide-react';
 import {
   getWorkerDetail,
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export function ProjectWorkersPanel({ project, initialSlot, onChange }: Props) {
+  const { t } = useTranslation('workers');
   const workersQ = useQuery({
     queryKey: ['workers', project],
     queryFn: () => listWorkers(project),
@@ -57,14 +59,14 @@ export function ProjectWorkersPanel({ project, initialSlot, onChange }: Props) {
             to={`/board?project=${encodeURIComponent(project)}`}
             className="text-xs underline text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
-            Board →
+            {t('capacity.boardLink')}
           </Link>
         </div>
 
         {workersQ.isLoading && workers.length === 0 ? (
-          <p className="text-xs text-[var(--color-text-muted)] italic">Loading workers…</p>
+          <p className="text-xs text-[var(--color-text-muted)] italic">{t('capacity.loadingWorkers')}</p>
         ) : workers.length === 0 ? (
-          <p className="text-xs text-[var(--color-text-muted)] italic">This project has no worker slots.</p>
+          <p className="text-xs text-[var(--color-text-muted)] italic">{t('capacity.noSlots')}</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {workers.map((w) => (
@@ -84,7 +86,7 @@ export function ProjectWorkersPanel({ project, initialSlot, onChange }: Props) {
       ) : (
         <div className="flex-1 flex items-center justify-center p-6 text-center">
           <p className="text-sm text-[var(--color-text-muted)]">
-            {workers.length === 0 ? 'No workers' : 'Select a worker'}
+            {workers.length === 0 ? t('capacity.noWorkers') : t('capacity.selectWorker')}
           </p>
         </div>
       )}
@@ -101,6 +103,7 @@ function WorkerTab({
   active: boolean;
   onClick: () => void;
 }) {
+  const { t } = useTranslation('workers');
   return (
     <button
       type="button"
@@ -121,7 +124,7 @@ function WorkerTab({
           #{worker.card.seq} {worker.card.title}
         </div>
       ) : (
-        <div className="text-[11px] text-[var(--color-text-muted)] italic">idle</div>
+        <div className="text-[11px] text-[var(--color-text-muted)] italic">{t('capacity.idle')}</div>
       )}
     </button>
   );
@@ -136,6 +139,7 @@ function WorkerDetail({
   worker: Worker;
   onChange: () => void;
 }) {
+  const { t } = useTranslation('workers');
   const { confirm, alert } = useDialog();
   const canRestart = worker.state === 'crashed' || worker.state === 'stuck';
   const detailQ = useQuery({
@@ -152,7 +156,7 @@ function WorkerDetail({
         {worker.card ? (
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-              Current card
+              {t('capacity.currentCard')}
             </div>
             <div className="text-sm font-semibold break-words">
               #{worker.card.seq} · {worker.card.title}
@@ -160,7 +164,7 @@ function WorkerDetail({
           </div>
         ) : (
           <div className="text-sm text-[var(--color-text-muted)] italic">
-            slot is idle — no current card.
+            {t('capacity.slotIdle')}
           </div>
         )}
 
@@ -184,13 +188,13 @@ function WorkerDetail({
         <div>
           <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1 flex items-center gap-1">
             <Terminal size={10} strokeWidth={2.5} />
-            Claude output · last {recentOutput.length} lines
+            {t('capacity.outputRecent', { count: recentOutput.length })}
           </div>
           {detailQ.isLoading && recentOutput.length === 0 ? (
-            <p className="text-xs text-[var(--color-text-muted)] italic">Loading…</p>
+            <p className="text-xs text-[var(--color-text-muted)] italic">{t('loading')}</p>
           ) : recentOutput.length === 0 ? (
             <p className="text-xs text-[var(--color-text-muted)] italic">
-              No session output yet. Worker takes a few seconds after launch.
+              {t('capacity.outputEmpty')}
             </p>
           ) : (
             <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded p-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">
@@ -207,7 +211,7 @@ function WorkerDetail({
         {recentLogs.length > 0 && (
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1 opacity-60">
-              Supervisor heartbeat · last {recentLogs.length} lines
+              {t('capacity.heartbeatRecent', { count: recentLogs.length })}
             </div>
             <pre className="text-xs font-[family-name:var(--font-mono)] bg-[var(--color-bg-cream)] border-2 border-[var(--color-text)] rounded p-2 max-h-40 overflow-auto whitespace-pre-wrap break-words opacity-80">
               {recentLogs.map((l) => `${l.ts ?? ''} [${l.level}] ${l.msg}`).join('\n')}
@@ -216,7 +220,7 @@ function WorkerDetail({
               to={`/logs?project=${encodeURIComponent(project)}&worker=${worker.slot}`}
               className="text-xs underline text-[var(--color-running)] mt-1 inline-block"
             >
-              View full log →
+              {t('capacity.viewFullLog')}
             </Link>
           </div>
         )}
@@ -230,9 +234,9 @@ function WorkerDetail({
             style={{ padding: '4px 10px', fontSize: 11 }}
             onClick={async () => {
               const ok = await confirm({
-                title: `Restart worker-${worker.slot}`,
-                body: `Kills the process, then re-launches to #${worker.card!.seq}`,
-                confirm: 'Restart',
+                title: t('actions.restartTitle', { slot: worker.slot }),
+                body: t('actions.restartBody', { seq: worker.card!.seq }),
+                confirm: t('actions.restartConfirm'),
               });
               if (!ok) return;
               try {
@@ -245,13 +249,13 @@ function WorkerDetail({
                 onChange();
               } catch (err) {
                 void alert({
-                  title: 'Restart failed',
+                  title: t('actions.restartFailed'),
                   body: err instanceof Error ? err.message : String(err),
                 });
               }
             }}
           >
-            <TimerReset size={11} strokeWidth={2.5} /> Restart
+            <TimerReset size={11} strokeWidth={2.5} /> {t('actions.restart')}
           </button>
         )}
         {worker.state !== 'idle' && (
@@ -261,9 +265,9 @@ function WorkerDetail({
             style={{ padding: '4px 10px', fontSize: 11 }}
             onClick={async () => {
               const ok = await confirm({
-                title: `Terminate worker-${worker.slot}`,
-                body: 'Current task will be force-cancelled.',
-                confirm: 'Terminate',
+                title: t('actions.killTitle', { slot: worker.slot }),
+                body: t('actions.killBody'),
+                confirm: t('actions.killConfirm'),
                 danger: true,
               });
               if (!ok) return;
@@ -272,13 +276,13 @@ function WorkerDetail({
                 onChange();
               } catch (err) {
                 void alert({
-                  title: 'Terminate failed',
+                  title: t('actions.killFailed'),
                   body: err instanceof Error ? err.message : String(err),
                 });
               }
             }}
           >
-            <Zap size={11} strokeWidth={2.5} /> Terminate
+            <Zap size={11} strokeWidth={2.5} /> {t('actions.kill')}
           </button>
         )}
       </div>

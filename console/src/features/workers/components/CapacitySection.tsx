@@ -2,6 +2,7 @@
  * @module        features/workers/components/CapacitySection
  * @description   项目级 slot 占用总览表
  */
+import { useTranslation } from 'react-i18next';
 import type { ProjectCapacity } from '../../../shared/api/workers';
 
 interface Props {
@@ -11,22 +12,23 @@ interface Props {
 }
 
 export function CapacitySection({ capacity, selected, onSelect }: Props) {
+  const { t } = useTranslation('workers');
   if (capacity.length === 0) {
     return null;
   }
   return (
     <section>
       <h2 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider mb-2">
-        Capacity
+        {t('capacity.title')}
       </h2>
       <div className="nb-card p-0 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-[var(--color-bg-cream)] border-b-2 border-[var(--color-text)]">
-              <th className="px-3 py-2 text-left font-bold text-xs uppercase tracking-wider">Project</th>
-              <th className="px-3 py-2 text-left font-bold text-xs uppercase tracking-wider">In use</th>
+              <th className="px-3 py-2 text-left font-bold text-xs uppercase tracking-wider">{t('capacity.project')}</th>
+              <th className="px-3 py-2 text-left font-bold text-xs uppercase tracking-wider">{t('capacity.inUse')}</th>
               <th className="px-3 py-2 text-right font-bold text-xs uppercase tracking-wider">running</th>
-              <th className="px-3 py-2 text-right font-bold text-xs uppercase tracking-wider">Other</th>
+              <th className="px-3 py-2 text-right font-bold text-xs uppercase tracking-wider">{t('capacity.other')}</th>
               <th className="px-3 py-2" />
             </tr>
           </thead>
@@ -66,7 +68,7 @@ export function CapacitySection({ capacity, selected, onSelect }: Props) {
                     {busy === 0 && <span>idle</span>}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <span className="text-xs text-[var(--color-text-muted)]">Details →</span>
+                    <span className="text-xs text-[var(--color-text-muted)]">{t('capacity.details')}</span>
                   </td>
                 </tr>
               );

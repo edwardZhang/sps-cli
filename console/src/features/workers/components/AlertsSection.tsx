@@ -3,6 +3,7 @@
  * @description   stuck / crashed worker 置顶展示
  */
 import { AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { AggregateWorker } from '../../../shared/api/workers';
 import { StateBadge } from './shared/StateBadge';
 import { formatRelative, formatRuntime } from './shared/formatters';
@@ -14,11 +15,12 @@ interface Props {
 }
 
 export function AlertsSection({ alerts, selected, onSelect }: Props) {
+  const { t } = useTranslation('workers');
   if (alerts.length === 0) {
     return (
       <div className="nb-card bg-[var(--color-running-bg)] flex items-center gap-3">
         <CheckCircle2 size={18} strokeWidth={2.5} className="text-[var(--color-running)]" />
-        <span className="text-sm font-bold text-[var(--color-running)]">All workers healthy</span>
+        <span className="text-sm font-bold text-[var(--color-running)]">{t('alerts.allHealthy')}</span>
       </div>
     );
   }
@@ -60,8 +62,8 @@ export function AlertsSection({ alerts, selected, onSelect }: Props) {
               {w.markerUpdatedAt && (
                 <div className="text-xs text-[var(--color-text-muted)] mt-1 font-[family-name:var(--font-mono)]">
                   {w.state === 'crashed'
-                    ? 'PID is dead.'
-                    : `marker stalled for ${formatRelative(w.markerUpdatedAt)}.`}
+                    ? t('alerts.pidDead')
+                    : t('alerts.markerStalled', { relative: formatRelative(w.markerUpdatedAt) })}
                 </div>
               )}
             </button>

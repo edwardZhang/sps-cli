@@ -16,6 +16,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { Activity, Loader2, RefreshCw } from 'lucide-react';
 import { getWorkersAggregate } from '../../shared/api/workers';
 import { AlertsSection } from './components/AlertsSection';
@@ -24,6 +25,7 @@ import { CapacitySection } from './components/CapacitySection';
 import { ProjectWorkersPanel } from './components/ProjectWorkersPanel';
 
 export function WorkersAggregatePage() {
+  const { t } = useTranslation('workers');
   const qc = useQueryClient();
   const [selected, setSelected] = useState<{ project: string; slot?: number } | null>(null);
 
@@ -79,12 +81,12 @@ export function WorkersAggregatePage() {
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-4xl font-bold tracking-tight">
-            Workers 👷
+            {t('title')} 👷
           </h1>
           <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            Across {totals.projects} projects · {totals.running} running · {totals.starting} starting ·{' '}
-            <span className="text-[var(--color-stuck)]">{totals.stuck} stuck</span> ·{' '}
-            <span className="text-[var(--color-crashed)]">{totals.crashed} crashed</span> · {totals.idle} idle
+            {t('summary', { projects: totals.projects, running: totals.running, starting: totals.starting })}
+            <span className="text-[var(--color-stuck)]">{t('stuck', { count: totals.stuck })}</span> ·{' '}
+            <span className="text-[var(--color-crashed)]">{t('crashed', { count: totals.crashed })}</span>{t('idle', { count: totals.idle })}
           </p>
         </div>
         <button
@@ -93,23 +95,23 @@ export function WorkersAggregatePage() {
           onClick={() => aggQ.refetch()}
           disabled={aggQ.isFetching}
           type="button"
-          aria-label="Refresh"
+          aria-label={t('refreshAria')}
         >
           {aggQ.isFetching ? (
             <Loader2 size={12} strokeWidth={3} className="animate-spin" />
           ) : (
             <RefreshCw size={12} strokeWidth={2.5} />
           )}
-          Refresh
+          {t('refresh')}
         </button>
       </header>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 flex-1 min-h-0">
         <div className="flex flex-col gap-4 overflow-auto pr-2">
-          {aggQ.isLoading && <p className="text-[var(--color-text-muted)] italic">Loading…</p>}
+          {aggQ.isLoading && <p className="text-[var(--color-text-muted)] italic">{t('loading')}</p>}
           {aggQ.isError && (
             <div className="nb-card bg-[var(--color-crashed-bg)]">
-              <p>Load failed: {aggQ.error instanceof Error ? aggQ.error.message : String(aggQ.error)}</p>
+              <p>{t('loadFailed', { error: aggQ.error instanceof Error ? aggQ.error.message : String(aggQ.error) })}</p>
             </div>
           )}
 
@@ -149,7 +151,7 @@ export function WorkersAggregatePage() {
                   className="mx-auto mb-3 text-[var(--color-text-subtle)]"
                   strokeWidth={2}
                 />
-                <p className="text-sm text-[var(--color-text-muted)]">Click a project / worker for details</p>
+                <p className="text-sm text-[var(--color-text-muted)]">{t('selectHint')}</p>
               </div>
             </div>
           )}
