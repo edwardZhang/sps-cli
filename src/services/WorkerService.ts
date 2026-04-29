@@ -121,12 +121,12 @@ export class WorkerService {
   ): Promise<Result<WorkerInfo, DomainError>> {
     if (!isValidProject(project)) return err(invalidProject());
     if (!Number.isInteger(slot) || slot <= 0) {
-      return err(domainError('validation', 'INVALID_SLOT', 'slot 必须是正整数'));
+      return err(domainError('validation', 'INVALID_SLOT', 'slot must be a positive integer'));
     }
     const candidates = this.resolveMarkerPath(project, slot);
     if (!candidates) {
       return err(
-        domainError('not-found', 'WORKER_MARKER_NOT_FOUND', `worker-${slot} marker 不存在`),
+        domainError('not-found', 'WORKER_MARKER_NOT_FOUND', `worker-${slot} marker not found`),
       );
     }
     return ok(await this.buildInfo(project, slot, candidates));
@@ -142,7 +142,7 @@ export class WorkerService {
     try {
       projects = this.deps.fs.readDir(root).filter((e) => e.isDirectory).map((e) => e.name);
     } catch (cause) {
-      return err(domainError('internal', 'PROJECTS_READ_FAIL', '项目目录读取失败', { cause }));
+      return err(domainError('internal', 'PROJECTS_READ_FAIL', 'failed to read projects directory', { cause }));
     }
     projects.sort();
     const result: AggregateResult = { alerts: [], active: [], capacity: [] };
@@ -180,27 +180,27 @@ export class WorkerService {
   async launch(project: string, seq: number): Promise<Result<void>> {
     if (!isValidProject(project)) return err(invalidProject());
     if (!Number.isInteger(seq) || seq <= 0) {
-      return err(domainError('validation', 'INVALID_SEQ', 'seq 必须是正整数'));
+      return err(domainError('validation', 'INVALID_SEQ', 'seq must be a positive integer'));
     }
     if (!this.deps.executor) {
       return err(
         domainError(
           'internal',
           'WORKER_EXECUTOR_MISSING',
-          '需要注入 WorkerExecutor（Phase 3 task）',
+          'WorkerExecutor injection required (Phase 3 task)',
         ),
       );
     }
     if (!this.deps.fs.exists(projectDir(project))) {
       return err(
-        domainError('not-found', 'PROJECT_NOT_FOUND', `项目 ${project} 不存在`),
+        domainError('not-found', 'PROJECT_NOT_FOUND', `project ${project} not found`),
       );
     }
     try {
       await this.deps.executor.launch(project, seq);
     } catch (cause) {
       return err(
-        domainError('external', 'WORKER_LAUNCH_FAIL', 'worker launch 失败', {
+        domainError('external', 'WORKER_LAUNCH_FAIL', 'failed to launch worker', {
           cause,
           details: { message: cause instanceof Error ? cause.message : String(cause) },
         }),
@@ -212,18 +212,18 @@ export class WorkerService {
   async kill(project: string, slot: number): Promise<Result<void>> {
     if (!isValidProject(project)) return err(invalidProject());
     if (!Number.isInteger(slot) || slot <= 0) {
-      return err(domainError('validation', 'INVALID_SLOT', 'slot 必须是正整数'));
+      return err(domainError('validation', 'INVALID_SLOT', 'slot must be a positive integer'));
     }
     if (!this.deps.executor) {
       return err(
-        domainError('internal', 'WORKER_EXECUTOR_MISSING', '需要注入 WorkerExecutor'),
+        domainError('internal', 'WORKER_EXECUTOR_MISSING', 'WorkerExecutor injection required'),
       );
     }
     try {
       await this.deps.executor.kill(project, slot);
     } catch (cause) {
       return err(
-        domainError('external', 'WORKER_KILL_FAIL', 'worker kill 失败', {
+        domainError('external', 'WORKER_KILL_FAIL', 'failed to kill worker', {
           cause,
           details: { message: cause instanceof Error ? cause.message : String(cause) },
         }),
@@ -370,5 +370,5 @@ function isValidProject(project: string): boolean {
 }
 
 function invalidProject(): DomainError {
-  return domainError('validation', 'INVALID_PROJECT_NAME', '项目名非法');
+  return domainError('validation', 'INVALID_PROJECT_NAME', 'invalid project name');
 }

@@ -580,7 +580,7 @@ describe('formatWikiContext', () => {
     const out = formatWikiContext(
       makeCtx({ hot: '---\ntype: meta\n---\n# Recent Context\nstuff' }),
     );
-    expect(out).toContain('# 项目知识 - 当前状态');
+    expect(out).toContain('# Project knowledge — current state');
     expect(out).toContain('# Recent Context');
     expect(out).toContain('stuff');
   });
@@ -597,7 +597,7 @@ describe('formatWikiContext', () => {
     const out = formatWikiContext(
       makeCtx({ indexSummary: '## Lessons (1)\n- [[lessons/X]]' }),
     );
-    expect(out).toContain('# 知识地图（节选）');
+    expect(out).toContain('# Knowledge map (excerpt)');
     expect(out).toContain('## Lessons');
   });
 
@@ -632,7 +632,7 @@ describe('formatWikiContext', () => {
         ],
       }),
     );
-    expect(out).toContain('# 与本任务相关的页');
+    expect(out).toContain('# Pages relevant to this task');
     expect(out).toContain('[[modules/A]]');
     expect(out).toContain('pinned');
     expect(out).toContain('[[lessons/B]]');
@@ -731,10 +731,10 @@ describe('wikiRead → formatWikiContext smoke', () => {
     });
     const md = formatWikiContext(ctx);
 
-    expect(md).toContain('# 项目知识 - 当前状态');
+    expect(md).toContain('# Project knowledge — current state');
     expect(md).toContain('completed card #18');
-    expect(md).toContain('# 知识地图（节选）');
-    expect(md).toContain('# 与本任务相关的页');
+    expect(md).toContain('# Knowledge map (excerpt)');
+    expect(md).toContain('# Pages relevant to this task');
     // Lesson should appear because of skill (pipeline tag) AND keyword
     expect(md).toContain('[[lessons/Stop Hook Race]]');
   });

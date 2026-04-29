@@ -94,7 +94,7 @@ export class ChatService {
     try {
       files = this.deps.fs.readDir(dir).filter((e) => e.isFile && e.name.endsWith('.json'));
     } catch (cause) {
-      return err(domainError('internal', 'CHAT_LIST_FAIL', '会话列表读取失败', { cause }));
+      return err(domainError('internal', 'CHAT_LIST_FAIL', 'failed to list sessions', { cause }));
     }
     const summaries: ChatSessionSummary[] = [];
     for (const entry of files) {
@@ -130,7 +130,7 @@ export class ChatService {
       id,
       createdAt: this.deps.clock.nowIso(),
       lastMessageAt: null,
-      title: input.title?.trim() || '新对话',
+      title: input.title?.trim() || 'New chat',
       project: input.project ?? null,
       messageCount: 0,
       messages: [],
@@ -139,7 +139,7 @@ export class ChatService {
     try {
       this.deps.fs.writeFileAtomic(this.sessionPath(id), JSON.stringify(session));
     } catch (cause) {
-      return err(domainError('internal', 'CHAT_CREATE_FAIL', '会话创建失败', { cause }));
+      return err(domainError('internal', 'CHAT_CREATE_FAIL', 'failed to create session', { cause }));
     }
     return ok(this.summarize(session));
   }
@@ -148,13 +148,13 @@ export class ChatService {
     if (!isValidSessionId(id)) return err(invalidId());
     const path = this.sessionPath(id);
     if (!this.deps.fs.exists(path)) {
-      return err(domainError('not-found', 'CHAT_SESSION_NOT_FOUND', '会话不存在'));
+      return err(domainError('not-found', 'CHAT_SESSION_NOT_FOUND', 'session not found'));
     }
     try {
       const raw = this.deps.fs.readFile(path);
       return ok(JSON.parse(raw) as ChatSession);
     } catch (cause) {
-      return err(domainError('internal', 'CHAT_READ_FAIL', '会话读取失败', { cause }));
+      return err(domainError('internal', 'CHAT_READ_FAIL', 'failed to read session', { cause }));
     }
   }
 
@@ -177,7 +177,7 @@ export class ChatService {
       try {
         this.deps.fs.unlink(path);
       } catch (cause) {
-        return err(domainError('internal', 'CHAT_DELETE_FAIL', '会话删除失败', { cause }));
+        return err(domainError('internal', 'CHAT_DELETE_FAIL', 'failed to delete session', { cause }));
       }
     }
     // best effort 停止 daemon worker
@@ -195,14 +195,14 @@ export class ChatService {
     if (!isValidSessionId(id)) return err(invalidId());
     if (!this.deps.executor) {
       return err(
-        domainError('internal', 'EXECUTOR_MISSING', 'ChatExecutor 未注入'),
+        domainError('internal', 'EXECUTOR_MISSING', 'ChatExecutor not injected'),
       );
     }
     try {
       await this.deps.executor.cancelRun(id);
     } catch (cause) {
       return err(
-        domainError('external', 'CHAT_CANCEL_FAIL', '中断会话失败', { cause }),
+        domainError('external', 'CHAT_CANCEL_FAIL', 'failed to cancel session', { cause }),
       );
     }
     return ok(undefined);
@@ -232,7 +232,7 @@ function isValidSessionId(id: string): boolean {
 }
 
 function invalidId(): DomainError {
-  return domainError('validation', 'INVALID_SESSION_ID', 'session id 非法');
+  return domainError('validation', 'INVALID_SESSION_ID', 'invalid session id');
 }
 
 /**
@@ -247,14 +247,14 @@ function validateCwd(
   // own cwd, which defeats the purpose of letting users pick).
   if (!cwd.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(cwd)) {
     return err(
-      domainError('validation', 'CHAT_CWD_NOT_ABSOLUTE', '工作目录必须是绝对路径', {
+      domainError('validation', 'CHAT_CWD_NOT_ABSOLUTE', 'working directory must be an absolute path', {
         details: { cwd },
       }),
     );
   }
   if (!fs.exists(cwd)) {
     return err(
-      domainError('validation', 'CHAT_CWD_NOT_FOUND', `工作目录不存在: ${cwd}`, {
+      domainError('validation', 'CHAT_CWD_NOT_FOUND', `working directory not found: ${cwd}`, {
         details: { cwd },
       }),
     );

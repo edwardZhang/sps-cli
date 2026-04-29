@@ -134,7 +134,7 @@ export class SystemService {
       }
       return ok({ path, exists: true, entries });
     } catch (cause) {
-      return err(domainError('internal', 'ENV_READ_FAIL', 'env 文件读取失败', { cause }));
+      return err(domainError('internal', 'ENV_READ_FAIL', 'failed to read env file', { cause }));
     }
   }
 
@@ -147,7 +147,7 @@ export class SystemService {
       const content = this.deps.fs.readFile(path);
       return ok({ path, exists: true, content, etag: hashEtag(content) });
     } catch (cause) {
-      return err(domainError('internal', 'ENV_READ_FAIL', 'env 文件读取失败', { cause }));
+      return err(domainError('internal', 'ENV_READ_FAIL', 'failed to read env file', { cause }));
     }
   }
 
@@ -160,7 +160,7 @@ export class SystemService {
 
     if (exists) {
       if (!etag) {
-        return err(domainError('validation', 'ETAG_REQUIRED', 'etag 必填（已有文件）'));
+        return err(domainError('validation', 'ETAG_REQUIRED', 'etag is required (file already exists)'));
       }
       const currentContent = this.deps.fs.readFile(path);
       const currentEtag = hashEtag(currentContent);
@@ -169,7 +169,7 @@ export class SystemService {
           domainError(
             'conflict',
             'ENV_ETAG_MISMATCH',
-            'env 已被其它编辑修改，请重新加载',
+            'env was modified by another editor; please reload',
             { details: { currentEtag } },
           ),
         );
@@ -184,7 +184,7 @@ export class SystemService {
         /* best effort */
       }
     } catch (cause) {
-      return err(domainError('internal', 'ENV_WRITE_FAIL', 'env 写入失败', { cause }));
+      return err(domainError('internal', 'ENV_WRITE_FAIL', 'failed to write env file', { cause }));
     }
     return ok({ etag: hashEtag(content) });
   }
@@ -206,13 +206,13 @@ export class SystemService {
     }
     if (res.exitCode === -1) {
       return err(
-        domainError('external', 'NPM_VIEW_ERROR', 'npm view 出错', {
+        domainError('external', 'NPM_VIEW_ERROR', 'npm view error', {
           details: { stderr: res.stderr.trim() },
         }),
       );
     }
     return err(
-      domainError('external', 'NPM_VIEW_FAIL', 'npm view 失败', {
+      domainError('external', 'NPM_VIEW_FAIL', 'npm view failed', {
         details: { stderr: res.stderr.trim(), exitCode: res.exitCode },
       }),
     );
@@ -227,7 +227,7 @@ export class SystemService {
     const running = this.listRunningPipelines();
     if (running.length > 0) {
       return err(
-        domainError('conflict', 'PIPELINES_RUNNING', '有 pipeline 在跑，升级前请先停止', {
+        domainError('conflict', 'PIPELINES_RUNNING', 'a pipeline is running; stop it before upgrading', {
           details: { projects: running },
         }),
       );
@@ -286,7 +286,7 @@ export class SystemService {
     opts: { fix?: boolean } = {},
   ): Promise<Result<DoctorProjectResult, DomainError>> {
     if (!isValidProject(project)) {
-      return err(domainError('validation', 'INVALID_PROJECT_NAME', '项目名非法'));
+      return err(domainError('validation', 'INVALID_PROJECT_NAME', 'invalid project name'));
     }
     const args = ['doctor', project, '--json'];
     if (opts.fix) args.push('--fix');
@@ -303,7 +303,7 @@ export class SystemService {
         parsed = JSON.parse(stdout);
       } catch {
         return err(
-          domainError('external', 'DOCTOR_PARSE_FAIL', 'doctor JSON 解析失败', {
+          domainError('external', 'DOCTOR_PARSE_FAIL', 'failed to parse doctor JSON', {
             details: { stdout: stdout.slice(0, 500), stderr: res.stderr.slice(0, 500) },
           }),
         );
@@ -324,7 +324,7 @@ export class SystemService {
       });
     } catch (cause) {
       return err(
-        domainError('external', 'DOCTOR_SPAWN_FAIL', 'doctor 启动失败', { cause }),
+        domainError('external', 'DOCTOR_SPAWN_FAIL', 'failed to launch doctor', { cause }),
       );
     }
   }

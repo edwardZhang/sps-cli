@@ -102,7 +102,7 @@ describe('Wiki injection into buildPhasePrompt', () => {
     });
 
     // wikiContext present
-    expect(prompt).toContain('# 项目知识 - 当前状态');
+    expect(prompt).toContain('# Project knowledge — current state');
     expect(prompt).toContain('completed card #18');
     expect(prompt).toContain('[[lessons/Pipeline-Race]]');
 
@@ -120,7 +120,7 @@ describe('Wiki injection into buildPhasePrompt', () => {
       phase: 'development',
       // wikiContext / wikiUpdateReminder undefined => WIKI_ENABLED=false case
     });
-    expect(prompt).not.toContain('# 项目知识');
+    expect(prompt).not.toContain('# Project knowledge');
     expect(prompt).not.toContain('# Wiki Update Reminder');
   });
 

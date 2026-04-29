@@ -121,7 +121,7 @@ updated: 1970-01-01T00:00:00Z
 # Recent Context
 
 ## Last Updated
-（尚无活动。第一次 \`sps wiki update\` 或卡片完成后会自动填充。）
+(No activity yet. Will be auto-filled on the first \`sps wiki update\` or after a card completes.)
 
 ## Key Recent Facts
 （none yet）

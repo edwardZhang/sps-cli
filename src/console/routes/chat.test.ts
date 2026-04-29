@@ -54,7 +54,7 @@ describe('chat route', () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string; title: string; messageCount: number };
     expect(body.id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(body.title).toBe('新对话');
+    expect(body.title).toBe('New chat');
     expect(body.messageCount).toBe(0);
   });
 

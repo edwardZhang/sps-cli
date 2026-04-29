@@ -214,7 +214,7 @@ async function streamAssistantResponse(
           role: isError ? 'error' : 'assistant',
           content:
             accumulatedText.trim() ||
-            (isError ? `stopped: ${evt.stopReason}` : isCancelled ? '(已中断)' : ''),
+            (isError ? `stopped: ${evt.stopReason}` : isCancelled ? '(cancelled)' : ''),
           blocks: blocks.length > 0 ? blocks : undefined,
           truncated: truncated || undefined,
           ts,
@@ -389,7 +389,7 @@ export function createChatRoute(log: Logger, chat: ChatService): Hono {
           type: 'conflict',
           title: 'session busy',
           status: 409,
-          detail: '上一条消息还在生成中，先等完成或点中断',
+          detail: 'The previous message is still streaming; wait for it to finish or cancel it.',
         },
         409,
       );
@@ -400,7 +400,7 @@ export function createChatRoute(log: Logger, chat: ChatService): Hono {
           type: 'too-many-requests',
           title: 'concurrency limit',
           status: 429,
-          detail: `最多同时 ${MAX_CONCURRENT_SESSIONS} 个 chat 会话在生成。先等其它完成或中断。`,
+          detail: `Up to ${MAX_CONCURRENT_SESSIONS} concurrent chat sessions can stream at once. Wait for others to finish or cancel them.`,
         },
         429,
       );

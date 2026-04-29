@@ -84,7 +84,7 @@ export function createFsRoute(): Hono {
           type: 'validation',
           title: 'directory not browsable',
           status: 422,
-          detail: `${target} 是系统目录，不允许浏览`,
+          detail: `${target} is a system directory; browsing is not allowed`,
         },
         422,
       );
@@ -169,7 +169,7 @@ export function createFsRoute(): Hono {
           type: 'validation',
           title: 'file too large',
           status: 413,
-          detail: `单文件上限 ${UPLOAD_MAX_BYTES / 1024 / 1024} MB；当前 ${(file.size / 1024 / 1024).toFixed(2)} MB`,
+          detail: `Per-file limit is ${UPLOAD_MAX_BYTES / 1024 / 1024} MB; current ${(file.size / 1024 / 1024).toFixed(2)} MB`,
         },
         413,
       );

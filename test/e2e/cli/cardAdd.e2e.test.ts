@@ -69,12 +69,12 @@ describe('E2E `sps card add`', () => {
     expect(result.exitCode).not.toBe(0);
   });
 
-  it('body 为空描述写入默认 (无描述)', async () => {
+  it('body with empty description writes default "(no description)"', async () => {
     await runCli(['card', 'add', 'cli-cards', 'empty body'], { home: fx.home });
     const files = readdirSync(resolve(fx.cardsDir, 'backlog'));
     const content = readFileSync(resolve(fx.cardsDir, 'backlog', files[0]!), 'utf-8');
-    expect(content).toContain('## 描述');
-    expect(content).toMatch(/\(无描述\)|(无描述)/);
+    expect(content).toContain('## Description');
+    expect(content).toContain('(no description)');
   });
 
   it('seq.txt 持久化不会丢', async () => {

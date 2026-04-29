@@ -93,7 +93,7 @@ export class LogService {
         files: files.map(rel),
       });
     } catch (cause) {
-      return err(domainError('internal', 'LOG_READ_FAIL', '日志读取失败', { cause }));
+      return err(domainError('internal', 'LOG_READ_FAIL', 'failed to read logs', { cause }));
     }
   }
 
@@ -108,7 +108,7 @@ export class LogService {
     try {
       projects = this.deps.fs.readDir(root).filter((e) => e.isDirectory).map((e) => e.name);
     } catch (cause) {
-      return err(domainError('internal', 'PROJECTS_READ_FAIL', '项目目录读取失败', { cause }));
+      return err(domainError('internal', 'PROJECTS_READ_FAIL', 'failed to read projects directory', { cause }));
     }
     // 每项目最新 log
     const picked: Array<{ project: string; file: string }> = [];

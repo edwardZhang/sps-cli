@@ -140,7 +140,7 @@ export class CardService {
         state,
       );
     } catch (cause) {
-      return err(domainError('internal', 'CARD_CREATE_FAIL', '卡片创建失败', { cause }));
+      return err(domainError('internal', 'CARD_CREATE_FAIL', 'card creation failed', { cause }));
     }
     if (input.skills && input.skills.length > 0) {
       try {
@@ -185,7 +185,7 @@ export class CardService {
     if (!Number.isInteger(seq) || seq <= 0) return err(invalidSeq());
     if (Object.keys(patch).length === 0) {
       return err(
-        domainError('validation', 'PATCH_EMPTY', '没有字段可更新'),
+        domainError('validation', 'PATCH_EMPTY', 'no fields to update'),
       );
     }
     if (patch.state !== undefined && !ALLOWED_STATES.includes(patch.state)) {
@@ -196,12 +196,12 @@ export class CardService {
     }
     if (patch.skills !== undefined && !Array.isArray(patch.skills)) {
       return err(
-        domainError('validation', 'SKILLS_NOT_ARRAY', 'skills 必须是数组'),
+        domainError('validation', 'SKILLS_NOT_ARRAY', 'skills must be an array'),
       );
     }
     if (patch.labels !== undefined && !Array.isArray(patch.labels)) {
       return err(
-        domainError('validation', 'LABELS_NOT_ARRAY', 'labels 必须是数组'),
+        domainError('validation', 'LABELS_NOT_ARRAY', 'labels must be an array'),
       );
     }
 
@@ -226,7 +226,7 @@ export class CardService {
         await backend.value.move(seqStr, patch.state);
       }
     } catch (cause) {
-      return err(domainError('internal', 'CARD_UPDATE_FAIL', '卡片更新失败', { cause }));
+      return err(domainError('internal', 'CARD_UPDATE_FAIL', 'card update failed', { cause }));
     }
 
     const fresh = await backend.value.getBySeq(seqStr);
@@ -276,7 +276,7 @@ export class CardService {
         domainError(
           'precondition',
           'CARD_IN_PROGRESS',
-          '卡片正在运行，请先 kill worker 或移出 Inprogress',
+          'card is running; kill the worker or move it out of Inprogress first',
           { details: { seq, state: card.state } },
         ),
       );
@@ -284,7 +284,7 @@ export class CardService {
     try {
       await backend.value.delete(String(seq));
     } catch (cause) {
-      return err(domainError('internal', 'CARD_DELETE_FAIL', '卡片删除失败', { cause }));
+      return err(domainError('internal', 'CARD_DELETE_FAIL', 'card deletion failed', { cause }));
     }
     this.deps.events.emit({
       type: 'card.deleted',
@@ -327,7 +327,7 @@ export class CardService {
         await backend.value.move(seqStr, 'Planning');
       }
     } catch (cause) {
-      return err(domainError('internal', 'CARD_RESET_FAIL', '卡片重置失败', { cause }));
+      return err(domainError('internal', 'CARD_RESET_FAIL', 'card reset failed', { cause }));
     }
 
     const fresh = await backend.value.getBySeq(seqStr);
@@ -365,7 +365,7 @@ export class CardService {
         domainError(
           'not-found',
           'PROJECT_NOT_FOUND',
-          `项目 ${project} 不存在`,
+          `project ${project} not found`,
           { cause, details: { project } },
         ),
       );
@@ -413,25 +413,25 @@ function isValidProject(project: string): boolean {
 }
 
 function invalidProject(): DomainError {
-  return domainError('validation', 'INVALID_PROJECT_NAME', '项目名非法');
+  return domainError('validation', 'INVALID_PROJECT_NAME', 'invalid project name');
 }
 
 function invalidSeq(): DomainError {
-  return domainError('validation', 'INVALID_SEQ', 'seq 必须是正整数');
+  return domainError('validation', 'INVALID_SEQ', 'seq must be a positive integer');
 }
 
 function invalidTitle(): DomainError {
-  return domainError('validation', 'INVALID_TITLE', '卡片标题不能为空');
+  return domainError('validation', 'INVALID_TITLE', 'card title cannot be empty');
 }
 
 function invalidState(state: string): DomainError {
-  return domainError('validation', 'INVALID_STATE', `state 非法：${state}`, {
+  return domainError('validation', 'INVALID_STATE', `invalid state: ${state}`, {
     details: { allowed: ALLOWED_STATES },
   });
 }
 
 function cardNotFound(seq: number): DomainError {
-  return domainError('not-found', 'CARD_NOT_FOUND', `卡片 #${seq} 不存在`, {
+  return domainError('not-found', 'CARD_NOT_FOUND', `card #${seq} not found`, {
     details: { seq },
   });
 }

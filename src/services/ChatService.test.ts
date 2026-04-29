@@ -40,10 +40,10 @@ describe('ChatService', () => {
     }
   });
 
-  it('create 缺 title 默认 "新对话"', async () => {
+  it('create with no title defaults to "New chat"', async () => {
     const { svc } = newSvc();
     const r = await svc.create();
-    if (r.ok) expect(r.value.title).toBe('新对话');
+    if (r.ok) expect(r.value.title).toBe('New chat');
   });
 
   it('get 不存在 → not-found', async () => {

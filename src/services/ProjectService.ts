@@ -113,7 +113,7 @@ export class ProjectService {
     try {
       entries = this.deps.fs.readDir(base);
     } catch (cause) {
-      return err(domainError('internal', 'PROJECTS_DIR_READ_FAIL', '无法读取项目目录', { cause }));
+      return err(domainError('internal', 'PROJECTS_DIR_READ_FAIL', 'failed to read projects directory', { cause }));
     }
     const names = entries.filter((e) => e.isDirectory).map((e) => e.name).sort();
     const summaries: ProjectSummary[] = [];
@@ -150,7 +150,7 @@ export class ProjectService {
     }
     if (this.deps.fs.exists(projectDir(input.name))) {
       return err(
-        domainError('conflict', 'PROJECT_EXISTS', `项目 ${input.name} 已存在`, {
+        domainError('conflict', 'PROJECT_EXISTS', `project ${input.name} already exists`, {
           details: { name: input.name },
         }),
       );
@@ -160,7 +160,7 @@ export class ProjectService {
         domainError(
           'internal',
           'INIT_EXECUTOR_MISSING',
-          '项目创建需要 ProjectInitExecutor 注入（Phase 3 task）',
+          'project creation requires ProjectInitExecutor injection (Phase 3 task)',
         ),
       );
     }
@@ -168,7 +168,7 @@ export class ProjectService {
       await this.deps.initExecutor.init(input.name, input);
     } catch (cause) {
       return err(
-        domainError('external', 'PROJECT_INIT_FAIL', '项目初始化失败', {
+        domainError('external', 'PROJECT_INIT_FAIL', 'project initialization failed', {
           cause,
           details: { message: cause instanceof Error ? cause.message : String(cause) },
         }),
@@ -177,7 +177,7 @@ export class ProjectService {
     const summary = this.readSummary(input.name);
     if (!summary) {
       return err(
-        domainError('internal', 'PROJECT_INIT_POST_READ_FAIL', '初始化完成但读不到项目概览'),
+        domainError('internal', 'PROJECT_INIT_POST_READ_FAIL', 'initialization completed but project overview is unreadable'),
       );
     }
     return ok(summary);
@@ -200,7 +200,7 @@ export class ProjectService {
     }
     if (this.isPipelineRunning(name)) {
       return err(
-        domainError('conflict', 'PIPELINE_RUNNING', '项目 pipeline 正在运行，先停止再删除', {
+        domainError('conflict', 'PIPELINE_RUNNING', 'project pipeline is running; stop it before deleting', {
           details: { project: name },
         }),
       );
@@ -222,7 +222,7 @@ export class ProjectService {
       this.deps.fs.rm(dir, { recursive: true, force: true });
     } catch (cause) {
       return err(
-        domainError('internal', 'PROJECT_DELETE_FAIL', '项目目录删除失败', { cause }),
+        domainError('internal', 'PROJECT_DELETE_FAIL', 'failed to delete project directory', { cause }),
       );
     }
 
@@ -252,14 +252,14 @@ export class ProjectService {
     const confPath = projectConfFile(name);
     if (!this.deps.fs.exists(confPath)) {
       return err(
-        domainError('not-found', 'CONF_NOT_FOUND', `项目 ${name} 的 conf 文件不存在`),
+        domainError('not-found', 'CONF_NOT_FOUND', `conf file for project ${name} not found`),
       );
     }
     try {
       const content = this.deps.fs.readFile(confPath);
       return ok({ content, etag: hashEtag(content) });
     } catch (cause) {
-      return err(domainError('internal', 'CONF_READ_FAIL', 'conf 读取失败', { cause }));
+      return err(domainError('internal', 'CONF_READ_FAIL', 'failed to read conf', { cause }));
     }
   }
 
@@ -276,19 +276,19 @@ export class ProjectService {
     const confPath = projectConfFile(name);
     if (!this.deps.fs.exists(confPath)) {
       return err(
-        domainError('not-found', 'CONF_NOT_FOUND', `项目 ${name} 的 conf 文件不存在`),
+        domainError('not-found', 'CONF_NOT_FOUND', `conf file for project ${name} not found`),
       );
     }
     if (!etag || typeof etag !== 'string') {
       return err(
-        domainError('validation', 'ETAG_REQUIRED', 'etag 必填 —— 避免并发覆盖'),
+        domainError('validation', 'ETAG_REQUIRED', 'etag is required to prevent concurrent overwrite'),
       );
     }
     let current: string;
     try {
       current = this.deps.fs.readFile(confPath);
     } catch (cause) {
-      return err(domainError('internal', 'CONF_READ_FAIL', 'conf 读取失败', { cause }));
+      return err(domainError('internal', 'CONF_READ_FAIL', 'failed to read conf', { cause }));
     }
     const currentEtag = hashEtag(current);
     if (etag !== currentEtag) {
@@ -296,7 +296,7 @@ export class ProjectService {
         domainError(
           'conflict',
           'CONF_ETAG_MISMATCH',
-          'conf 已被其它编辑修改，请重新加载',
+          'conf was modified by another editor; please reload',
           { details: { currentEtag } },
         ),
       );
@@ -304,7 +304,7 @@ export class ProjectService {
     try {
       this.deps.fs.writeFileAtomic(confPath, content);
     } catch (cause) {
-      return err(domainError('internal', 'CONF_WRITE_FAIL', 'conf 写入失败', { cause }));
+      return err(domainError('internal', 'CONF_WRITE_FAIL', 'failed to write conf', { cause }));
     }
     return ok({ etag: hashEtag(content) });
   }
@@ -439,7 +439,7 @@ export class ProjectService {
 // ─── Error factories ──────────────────────────────────────────────
 
 function projectNotFound(name: string): DomainError {
-  return domainError('not-found', 'PROJECT_NOT_FOUND', `项目 ${name} 不存在`, {
+  return domainError('not-found', 'PROJECT_NOT_FOUND', `project ${name} not found`, {
     details: { name },
   });
 }
@@ -448,7 +448,7 @@ function invalidName(): DomainError {
   return domainError(
     'validation',
     'INVALID_PROJECT_NAME',
-    '项目名非法 —— 只允许字母、数字、_ 和 -',
+    'invalid project name — only letters, digits, _ and - are allowed',
   );
 }
 

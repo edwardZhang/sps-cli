@@ -57,12 +57,12 @@ function resolveProjectDir(flagProject: string | undefined, log: Logger): string
       const match = conf.match(/^REPO_DIR="?([^"\n]+)"?\s*$/m);
       if (match && existsSync(resolve(match[1], '.claude'))) return resolve(match[1]);
     }
-    log.error(`无法定位项目 "${flagProject}" 的工作目录（需含 .claude/）`);
+    log.error(`could not locate working directory for project "${flagProject}" (must contain .claude/)`);
     return null;
   }
   const cwd = process.cwd();
   if (existsSync(resolve(cwd, '.claude'))) return cwd;
-  log.error('当前目录没有 .claude/；请在项目根目录运行，或用 --project <name>');
+  log.error('no .claude/ in current directory; run from a project root or pass --project <name>');
   return null;
 }
 
@@ -106,7 +106,7 @@ export async function executeSkillCommand(
 function skillList(log: Logger, flagProject: string | undefined): void {
   const users = listUserSkills();
   if (users.length === 0) {
-    log.info(`~/.coral/skills/ 还没有 skill — 试试 \`sps skill sync\``);
+    log.info(`no skills in ~/.coral/skills/ yet — try \`sps skill sync\``);
     return;
   }
 
@@ -150,13 +150,13 @@ function skillAdd(log: Logger, name: string | undefined, flagProject: string | u
       log.ok(`${name} → ${projectSkillsDir(projectDir)}/${name} (copied, symlink fallback)`);
       break;
     case 'skipped-linked':
-      log.info(`${name} 已 linked，跳过`);
+      log.info(`${name} is already linked, skipping`);
       break;
     case 'skipped-frozen':
-      log.info(`${name} 已 frozen，跳过（先 unfreeze 再 add 可切回 symlink）`);
+      log.info(`${name} is already frozen, skipping (unfreeze first to switch back to symlink)`);
       break;
     case 'skipped-absent':
-      log.error(`~/.coral/skills/${name} 不存在；\`sps skill list\` 看可用的`);
+      log.error(`~/.coral/skills/${name} not found; run \`sps skill list\` to see available skills`);
       process.exit(1);
   }
 }
@@ -171,9 +171,9 @@ function skillRemove(log: Logger, name: string | undefined, flagProject: string 
 
   const removed = removeSkillFromProject(projectDir, name);
   if (removed) {
-    log.ok(`移除 ${name}（~/.coral/skills/ 下的原始 skill 未动）`);
+    log.ok(`removed ${name} (the original skill under ~/.coral/skills/ is untouched)`);
   } else {
-    log.info(`${name} 不在项目中，无需移除`);
+    log.info(`${name} is not in this project, nothing to remove`);
   }
 }
 
@@ -187,21 +187,21 @@ function skillFreeze(log: Logger, name: string | undefined, flagProject: string 
 
   const info = inspectProjectSkill(projectDir, name);
   if (!info) {
-    log.error(`~/.coral/skills/${name} 不存在`);
+    log.error(`~/.coral/skills/${name} not found`);
     process.exit(1);
   }
   if (info.state === 'absent') {
-    log.error(`${name} 还没在项目里，先 \`sps skill add ${name}\``);
+    log.error(`${name} is not in this project yet; run \`sps skill add ${name}\` first`);
     process.exit(1);
   }
   if (info.state === 'frozen') {
-    log.info(`${name} 已是 frozen`);
+    log.info(`${name} is already frozen`);
     return;
   }
   if (freezeSkillInProject(projectDir, name)) {
-    log.ok(`${name} symlink → 真实副本；现在可以在项目里改动了`);
+    log.ok(`${name}: symlink → real copy; you can now edit it locally in the project`);
   } else {
-    log.error(`freeze 失败`);
+    log.error(`freeze failed`);
     process.exit(1);
   }
 }
@@ -216,17 +216,17 @@ function skillUnfreeze(log: Logger, name: string | undefined, flagProject: strin
 
   const info = inspectProjectSkill(projectDir, name);
   if (!info) {
-    log.error(`~/.coral/skills/${name} 不存在`);
+    log.error(`~/.coral/skills/${name} not found`);
     process.exit(1);
   }
   if (info.state === 'linked') {
-    log.info(`${name} 已是 symlink`);
+    log.info(`${name} is already a symlink`);
     return;
   }
   if (unfreezeSkillInProject(projectDir, name)) {
-    log.ok(`${name} 真实副本 → symlink；项目里的本地改动已丢弃`);
+    log.ok(`${name}: real copy → symlink; any local edits in the project have been discarded`);
   } else {
-    log.error(`unfreeze 失败`);
+    log.error(`unfreeze failed`);
     process.exit(1);
   }
 }

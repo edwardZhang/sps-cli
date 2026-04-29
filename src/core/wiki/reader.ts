@@ -218,22 +218,22 @@ export function formatWikiContext(ctx: WikiContext): string {
   if (ctx.hot.trim().length > 0) {
     // hot 已经是带 frontmatter 的完整文档；展示时去掉 frontmatter 块
     const hotBody = stripFrontmatter(ctx.hot).trim();
-    sections.push('# 项目知识 - 当前状态\n\n' + hotBody);
+    sections.push('# Project knowledge — current state\n\n' + hotBody);
   }
 
   if (ctx.indexSummary.trim().length > 0) {
-    sections.push('# 知识地图（节选）\n\n' + ctx.indexSummary.trim());
+    sections.push('# Knowledge map (excerpt)\n\n' + ctx.indexSummary.trim());
   }
 
   if (ctx.pages.length > 0) {
-    const lines: string[] = ['# 与本任务相关的页', ''];
+    const lines: string[] = ['# Pages relevant to this task', ''];
     for (const p of ctx.pages) {
       const tag = p.source === 'pinned' ? '📌 pinned' : p.source === 'skill' ? 'via skill' : 'via keyword';
       lines.push(`## [[${p.pageId}]] (${p.type}, ${tag})`);
       lines.push(`TL;DR: ${p.tldr.replace(/\s+/g, ' ').trim().slice(0, 300)}`);
       lines.push('');
     }
-    lines.push('完整内容：直接 Read 文件，或 `sps wiki read "<keyword>"` 找更多。');
+    lines.push('For full content: Read the file directly, or run `sps wiki read "<keyword>"` for more.');
     sections.push(lines.join('\n'));
   }
 

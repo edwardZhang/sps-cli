@@ -260,10 +260,10 @@ export class MarkdownTaskBackend implements TaskBackend {
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const entry = `\n### ${ts} [pipeline]\n${text}\n`;
 
-    // Find or create ## 日志 section
-    const logHeader = '## 日志';
+    // Find or create ## Log section (recognize legacy ## 日志 too)
+    const logHeader = '## Log';
     let newBody: string;
-    if (body.includes(logHeader)) {
+    if (body.includes(logHeader) || body.includes('## 日志')) {
       newBody = body + entry;
     } else {
       newBody = body + `\n${logHeader}\n${entry}`;
@@ -296,7 +296,7 @@ export class MarkdownTaskBackend implements TaskBackend {
       claimed_at: null,
     };
 
-    const body = `## 描述\n\n${desc || '(无描述)'}\n\n## 检查清单\n\n## 日志\n`;
+    const body = `## Description\n\n${desc || '(no description)'}\n\n## Checklist\n\n## Log\n`;
 
     const filePath = resolve(dir, filename);
     this.writeFile(filePath, frontmatter, body);
@@ -321,7 +321,7 @@ export class MarkdownTaskBackend implements TaskBackend {
     const checklistMd = items.map((item) => `- [ ] ${item}`).join('\n');
 
     // Replace content after ## 检查清单 and before next ## heading
-    const newBody = this.replaceSection(body, '检查清单', checklistMd);
+    const newBody = this.replaceSection(body, ['Checklist', '检查清单'], checklistMd);
     this.writeFile(filePath, frontmatter, newBody);
   }
 
@@ -402,7 +402,7 @@ export class MarkdownTaskBackend implements TaskBackend {
    */
   private readCard(filePath: string, state: CardState): Card {
     const { frontmatter, body } = this.parseFile(filePath);
-    const desc = this.extractSection(body, '描述');
+    const desc = this.extractSection(body, ['Description', '描述']);
 
     // v0.42.0: new format uses `title` and `skills` fields. Old v0.41.x cards
     // used `name` and `skill:*` labels — per design decision they are not
@@ -549,23 +549,34 @@ export class MarkdownTaskBackend implements TaskBackend {
   }
 
   /**
-   * Extract content from a ## section (until next ## or end).
+   * Extract content from a ## section (until next ## or end). Accepts a list
+   * of heading aliases for backward compatibility (e.g. EN canonical + legacy
+   * zh heading). Returns the first match.
    */
-  private extractSection(body: string, heading: string): string {
-    const re = new RegExp(`## ${heading}\\n([\\s\\S]*?)(?=\\n## |$)`);
-    const match = body.match(re);
-    return match ? match[1].trim() : '';
+  private extractSection(body: string, heading: string | string[]): string {
+    const headings = Array.isArray(heading) ? heading : [heading];
+    for (const h of headings) {
+      const re = new RegExp(`## ${h}\\n([\\s\\S]*?)(?=\\n## |$)`);
+      const match = body.match(re);
+      if (match) return match[1].trim();
+    }
+    return '';
   }
 
   /**
-   * Replace content of a ## section.
+   * Replace content of a ## section. Accepts heading aliases — replaces
+   * whichever existing section matches; if none, writes a new section using
+   * the first (canonical) heading.
    */
-  private replaceSection(body: string, heading: string, content: string): string {
-    const re = new RegExp(`(## ${heading}\\n)[\\s\\S]*?(?=\\n## |$)`);
-    if (re.test(body)) {
-      return body.replace(re, `$1\n${content}\n`);
+  private replaceSection(body: string, heading: string | string[], content: string): string {
+    const headings = Array.isArray(heading) ? heading : [heading];
+    for (const h of headings) {
+      const re = new RegExp(`(## ${h}\\n)[\\s\\S]*?(?=\\n## |$)`);
+      if (re.test(body)) {
+        return body.replace(re, `$1\n${content}\n`);
+      }
     }
-    return body + `\n## ${heading}\n\n${content}\n`;
+    return body + `\n## ${headings[0]}\n\n${content}\n`;
   }
 
   /**
@@ -607,14 +618,14 @@ export class MarkdownTaskBackend implements TaskBackend {
  * 如果没找到 "## 描述"，在头部插入一个。
  */
 function replaceDescriptionSection(body: string, newDesc: string): string {
-  const trimmed = newDesc.trim() || '(无描述)';
+  const trimmed = newDesc.trim() || '(no description)';
   const lines = body.split('\n');
 
-  // Find "## 描述" heading line
-  const descIdx = lines.findIndex((l) => /^##\s+描述\s*$/.test(l));
+  // Find existing "## Description" or legacy "## 描述" heading line
+  const descIdx = lines.findIndex((l) => /^##\s+(Description|描述)\s*$/.test(l));
   if (descIdx === -1) {
-    // Prepend
-    return `## 描述\n\n${trimmed}\n\n${body}`;
+    // Prepend with English canonical heading
+    return `## Description\n\n${trimmed}\n\n${body}`;
   }
 
   // Find next heading after 描述 (start from descIdx+1)

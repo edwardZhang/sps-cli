@@ -197,9 +197,9 @@ describe('Wiki E2E: project init → ingest → read flow', () => {
 
     // formatWikiContext renders all 3 sections
     const formatted = formatWikiContext(ctx);
-    expect(formatted).toContain('# 项目知识 - 当前状态');
-    expect(formatted).toContain('# 知识地图（节选）');
-    expect(formatted).toContain('# 与本任务相关的页');
+    expect(formatted).toContain('# Project knowledge — current state');
+    expect(formatted).toContain('# Knowledge map (excerpt)');
+    expect(formatted).toContain('# Pages relevant to this task');
     expect(formatted).toContain('[[lessons/Stop-Hook-Race]]');
     expect(formatted).toContain('[[modules/PipelineService]]');
 

@@ -63,7 +63,7 @@ describe('E2E /api/projects/:project/cards', () => {
   });
 
   it('GET /cards/:seq 返回详情含 body + checklist', async () => {
-    const seq = await seedCard(fx, 'with desc', 'some description\n\n## 检查清单\n- [ ] step one');
+    const seq = await seedCard(fx, 'with desc', 'some description\n\n## Checklist\n- [ ] step one');
     const res = await app.req(`/api/projects/board-test/cards/${seq}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -86,10 +86,10 @@ describe('E2E /api/projects/:project/cards', () => {
     const seq = await seedCard(fx, 'full body', 'my desc');
     const res = await app.req(`/api/projects/board-test/cards/${seq}`);
     const body = (await res.json()) as { body: string };
-    expect(body.body).toContain('## 描述');
+    expect(body.body).toContain('## Description');
     expect(body.body).toContain('my desc');
-    expect(body.body).toContain('## 检查清单');
-    expect(body.body).toContain('## 日志');
+    expect(body.body).toContain('## Checklist');
+    expect(body.body).toContain('## Log');
   });
 
   it('GET /cards/:seq 404 seq 不存在', async () => {

@@ -75,12 +75,12 @@ export class SkillService {
 
   async get(name: string): Promise<Result<SkillDetail, DomainError>> {
     if (!isValidSkillName(name)) {
-      return err(domainError('validation', 'INVALID_SKILL_NAME', 'skill 名非法'));
+      return err(domainError('validation', 'INVALID_SKILL_NAME', 'invalid skill name'));
     }
     const { listUserSkills } = await import('../core/skillStore.js');
     const found = listUserSkills().find((u) => u.name === name);
     if (!found) {
-      return err(domainError('not-found', 'SKILL_NOT_FOUND', `skill ${name} 不存在`));
+      return err(domainError('not-found', 'SKILL_NOT_FOUND', `skill ${name} not found`));
     }
     const fm = readFrontmatter(resolve(found.userPath, 'SKILL.md'));
     const body = readFileOrEmpty(resolve(found.userPath, 'SKILL.md'));
@@ -117,7 +117,7 @@ export class SkillService {
     try {
       skillStore.syncBundledSkillsToUser(bundled);
     } catch (cause) {
-      return err(domainError('internal', 'SKILL_SYNC_FAIL', 'skill 同步失败', { cause }));
+      return err(domainError('internal', 'SKILL_SYNC_FAIL', 'failed to sync skills', { cause }));
     }
     return ok(undefined);
   }
@@ -131,7 +131,7 @@ export class SkillService {
     const result = addSkillToProject(repo, skill);
     if (result === 'skipped-absent') {
       return err(
-        domainError('not-found', 'SKILL_NOT_FOUND', `skill ${skill} 不在 user registry`),
+        domainError('not-found', 'SKILL_NOT_FOUND', `skill ${skill} is not in user registry`),
       );
     }
     // 已在工程中（symlink 或 frozen copy）→ 幂等 ok，不再 emit
@@ -171,7 +171,7 @@ export class SkillService {
     if (!repo) return err(projectNotFound(project));
     const { freezeSkillInProject } = await import('../core/skillStore.js');
     if (!freezeSkillInProject(repo, skill)) {
-      return err(domainError('conflict', 'FREEZE_FAIL', '冻结失败 —— 可能未 link'));
+      return err(domainError('conflict', 'FREEZE_FAIL', 'freeze failed — skill may not be linked'));
     }
     return ok(undefined);
   }
@@ -183,7 +183,7 @@ export class SkillService {
     if (!repo) return err(projectNotFound(project));
     const { unfreezeSkillInProject } = await import('../core/skillStore.js');
     if (!unfreezeSkillInProject(repo, skill)) {
-      return err(domainError('conflict', 'UNFREEZE_FAIL', '解冻失败 —— 可能未冻结'));
+      return err(domainError('conflict', 'UNFREEZE_FAIL', 'unfreeze failed — skill may not be frozen'));
     }
     return ok(undefined);
   }
@@ -291,15 +291,15 @@ function isValidSkillName(name: string): boolean {
 }
 
 function invalidSkill(): DomainError {
-  return domainError('validation', 'INVALID_SKILL_NAME', 'skill 名非法');
+  return domainError('validation', 'INVALID_SKILL_NAME', 'invalid skill name');
 }
 
 function invalidProject(): DomainError {
-  return domainError('validation', 'INVALID_PROJECT_NAME', '项目名非法');
+  return domainError('validation', 'INVALID_PROJECT_NAME', 'invalid project name');
 }
 
 function projectNotFound(name: string): DomainError {
-  return domainError('not-found', 'PROJECT_NOT_FOUND', `项目 ${name} 不存在`);
+  return domainError('not-found', 'PROJECT_NOT_FOUND', `project ${name} not found`);
 }
 
 /**

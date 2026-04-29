@@ -136,7 +136,7 @@ export class PipelineService {
       return ok({ status: 'running', pid });
     } catch (cause) {
       return err(
-        domainError('external', 'PIPELINE_SPAWN_FAIL', '启动 pipeline 失败', {
+        domainError('external', 'PIPELINE_SPAWN_FAIL', 'failed to start pipeline', {
           cause,
           details: { message: cause instanceof Error ? cause.message : String(cause) },
         }),
@@ -148,14 +148,14 @@ export class PipelineService {
     if (!isValidProject(project)) return err(invalidProject());
     if (!this.deps.executor) {
       return err(
-        domainError('internal', 'EXECUTOR_MISSING', 'PipelineExecutor 未注入'),
+        domainError('internal', 'EXECUTOR_MISSING', 'PipelineExecutor not injected'),
       );
     }
     try {
       await this.deps.executor.stop(project);
     } catch (cause) {
       return err(
-        domainError('external', 'PIPELINE_STOP_FAIL', 'stop pipeline 失败', {
+        domainError('external', 'PIPELINE_STOP_FAIL', 'failed to stop pipeline', {
           cause,
           details: { message: cause instanceof Error ? cause.message : String(cause) },
         }),
@@ -184,13 +184,13 @@ export class PipelineService {
   ): Promise<Result<void, DomainError>> {
     if (!isValidProject(project)) return err(invalidProject());
     if (!this.deps.executor) {
-      return err(domainError('internal', 'EXECUTOR_MISSING', 'PipelineExecutor 未注入'));
+      return err(domainError('internal', 'EXECUTOR_MISSING', 'PipelineExecutor not injected'));
     }
     try {
       await this.deps.executor.reset(project, opts);
     } catch (cause) {
       return err(
-        domainError('external', 'PIPELINE_RESET_FAIL', 'reset pipeline 失败', {
+        domainError('external', 'PIPELINE_RESET_FAIL', 'failed to reset pipeline', {
           cause,
         }),
       );
@@ -221,7 +221,7 @@ export class PipelineService {
         .sort();
     } catch (cause) {
       return err(
-        domainError('internal', 'PIPELINES_READ_FAIL', 'pipelines 目录读取失败', { cause }),
+        domainError('internal', 'PIPELINES_READ_FAIL', 'failed to read pipelines directory', { cause }),
       );
     }
     const activePath = activePipelineFile(project);
@@ -256,17 +256,17 @@ export class PipelineService {
   ): Promise<Result<PipelineFileContent, DomainError>> {
     if (!isValidProject(project)) return err(invalidProject());
     if (!PipelineFilenameRe.test(filename)) {
-      return err(domainError('validation', 'INVALID_FILENAME', 'pipeline 文件名非法'));
+      return err(domainError('validation', 'INVALID_FILENAME', 'invalid pipeline filename'));
     }
     const path = pipelineFile(project, filename);
     if (!this.deps.fs.exists(path)) {
-      return err(domainError('not-found', 'PIPELINE_NOT_FOUND', 'pipeline 文件不存在'));
+      return err(domainError('not-found', 'PIPELINE_NOT_FOUND', 'pipeline file not found'));
     }
     let content: string;
     try {
       content = this.deps.fs.readFile(path);
     } catch (cause) {
-      return err(domainError('internal', 'PIPELINE_READ_FAIL', '读取失败', { cause }));
+      return err(domainError('internal', 'PIPELINE_READ_FAIL', 'read failed', { cause }));
     }
     const etag = hashEtag(content);
     let parsed: unknown = null;
@@ -293,31 +293,31 @@ export class PipelineService {
   ): Promise<Result<{ etag: string }, DomainError>> {
     if (!isValidProject(project)) return err(invalidProject());
     if (!PipelineFilenameRe.test(filename)) {
-      return err(domainError('validation', 'INVALID_FILENAME', 'pipeline 文件名非法'));
+      return err(domainError('validation', 'INVALID_FILENAME', 'invalid pipeline filename'));
     }
     if (!etag) {
-      return err(domainError('validation', 'ETAG_REQUIRED', 'etag 必填'));
+      return err(domainError('validation', 'ETAG_REQUIRED', 'etag is required'));
     }
     const path = pipelineFile(project, filename);
     if (!this.deps.fs.exists(path)) {
-      return err(domainError('not-found', 'PIPELINE_NOT_FOUND', 'pipeline 文件不存在'));
+      return err(domainError('not-found', 'PIPELINE_NOT_FOUND', 'pipeline file not found'));
     }
     let current: string;
     try {
       current = this.deps.fs.readFile(path);
     } catch (cause) {
-      return err(domainError('internal', 'PIPELINE_READ_FAIL', '读取失败', { cause }));
+      return err(domainError('internal', 'PIPELINE_READ_FAIL', 'read failed', { cause }));
     }
     if (hashEtag(current) !== etag) {
       return err(
-        domainError('conflict', 'PIPELINE_ETAG_MISMATCH', 'pipeline 被其它人修改，请重新加载'),
+        domainError('conflict', 'PIPELINE_ETAG_MISMATCH', 'pipeline was modified by someone else; please reload'),
       );
     }
     try {
       YAML.parse(content);
     } catch (e) {
       return err(
-        domainError('validation', 'YAML_INVALID', 'YAML 语法错误', {
+        domainError('validation', 'YAML_INVALID', 'invalid YAML syntax', {
           details: { message: e instanceof Error ? e.message : String(e) },
         }),
       );
@@ -325,7 +325,7 @@ export class PipelineService {
     try {
       this.deps.fs.writeFileAtomic(path, content);
     } catch (cause) {
-      return err(domainError('internal', 'PIPELINE_WRITE_FAIL', '写入失败', { cause }));
+      return err(domainError('internal', 'PIPELINE_WRITE_FAIL', 'write failed', { cause }));
     }
     return ok({ etag: hashEtag(content) });
   }
@@ -336,28 +336,28 @@ export class PipelineService {
   ): Promise<Result<{ name: string; content: string; etag: string }, DomainError>> {
     if (!isValidProject(project)) return err(invalidProject());
     if (!PipelineFilenameRe.test(input.name)) {
-      return err(domainError('validation', 'INVALID_FILENAME', '文件名非法'));
+      return err(domainError('validation', 'INVALID_FILENAME', 'invalid filename'));
     }
     const dir = pipelinesDir(project);
     if (!this.deps.fs.exists(dir)) {
-      return err(domainError('not-found', 'PIPELINES_DIR_NOT_FOUND', 'pipelines 目录不存在'));
+      return err(domainError('not-found', 'PIPELINES_DIR_NOT_FOUND', 'pipelines directory not found'));
     }
     const path = pipelineFile(project, input.name);
     if (this.deps.fs.exists(path)) {
-      return err(domainError('conflict', 'PIPELINE_EXISTS', 'pipeline 已存在'));
+      return err(domainError('conflict', 'PIPELINE_EXISTS', 'pipeline already exists'));
     }
     const template = input.template ?? 'blank';
     let content: string;
     if (template === 'sample') {
       const src = resolve(dir, 'sample.yaml.example');
       if (!this.deps.fs.exists(src)) {
-        return err(domainError('not-found', 'SAMPLE_NOT_FOUND', 'sample 模板不存在'));
+        return err(domainError('not-found', 'SAMPLE_NOT_FOUND', 'sample template not found'));
       }
       content = this.deps.fs.readFile(src);
     } else if (template === 'active') {
       const src = activePipelineFile(project);
       if (!this.deps.fs.exists(src)) {
-        return err(domainError('not-found', 'ACTIVE_NOT_FOUND', '当前 active pipeline 不存在'));
+        return err(domainError('not-found', 'ACTIVE_NOT_FOUND', 'active pipeline not found'));
       }
       content = this.deps.fs.readFile(src);
     } else {
@@ -366,7 +366,7 @@ export class PipelineService {
     try {
       this.deps.fs.writeFileAtomic(path, content);
     } catch (cause) {
-      return err(domainError('internal', 'PIPELINE_WRITE_FAIL', '写入失败', { cause }));
+      return err(domainError('internal', 'PIPELINE_WRITE_FAIL', 'write failed', { cause }));
     }
     return ok({ name: input.name, content, etag: hashEtag(content) });
   }
@@ -377,26 +377,26 @@ export class PipelineService {
   ): Promise<Result<void, DomainError>> {
     if (!isValidProject(project)) return err(invalidProject());
     if (!PipelineFilenameRe.test(filename)) {
-      return err(domainError('validation', 'INVALID_FILENAME', '文件名非法'));
+      return err(domainError('validation', 'INVALID_FILENAME', 'invalid filename'));
     }
     if (filename === 'project.yaml') {
       return err(
-        domainError('conflict', 'CANNOT_DELETE_ACTIVE', '当前 active pipeline 不能删，先切换再删'),
+        domainError('conflict', 'CANNOT_DELETE_ACTIVE', 'cannot delete the active pipeline; switch first'),
       );
     }
     if (filename === 'sample.yaml.example') {
       return err(
-        domainError('conflict', 'CANNOT_DELETE_SAMPLE', 'sample 模板不能删'),
+        domainError('conflict', 'CANNOT_DELETE_SAMPLE', 'cannot delete sample template'),
       );
     }
     const path = pipelineFile(project, filename);
     if (!this.deps.fs.exists(path)) {
-      return err(domainError('not-found', 'PIPELINE_NOT_FOUND', 'pipeline 不存在'));
+      return err(domainError('not-found', 'PIPELINE_NOT_FOUND', 'pipeline not found'));
     }
     try {
       this.deps.fs.unlink(path);
     } catch (cause) {
-      return err(domainError('internal', 'PIPELINE_DELETE_FAIL', '删除失败', { cause }));
+      return err(domainError('internal', 'PIPELINE_DELETE_FAIL', 'delete failed', { cause }));
     }
     return ok(undefined);
   }
@@ -409,7 +409,7 @@ export class PipelineService {
     if (!isValidProject(project)) return err(invalidProject());
     if (!PipelineFilenameRe.test(filename) || filename === 'project.yaml') {
       return err(
-        domainError('validation', 'INVALID_FILENAME', 'pipeline 文件名非法或不能是 project.yaml'),
+        domainError('validation', 'INVALID_FILENAME', 'invalid pipeline filename, or it must not be project.yaml'),
       );
     }
     if (this.readSupervisorPid(project)) {
@@ -417,19 +417,19 @@ export class PipelineService {
         domainError(
           'conflict',
           'PIPELINE_RUNNING',
-          'pipeline 正在跑，先停止再切换',
+          'pipeline is running; stop it before switching',
         ),
       );
     }
     const src = pipelineFile(project, filename);
     if (!this.deps.fs.exists(src)) {
-      return err(domainError('not-found', 'PIPELINE_NOT_FOUND', '源 pipeline 不存在'));
+      return err(domainError('not-found', 'PIPELINE_NOT_FOUND', 'source pipeline not found'));
     }
     try {
       const content = this.deps.fs.readFile(src);
       this.deps.fs.writeFileAtomic(activePipelineFile(project), content);
     } catch (cause) {
-      return err(domainError('internal', 'PIPELINE_SWITCH_FAIL', '切换失败', { cause }));
+      return err(domainError('internal', 'PIPELINE_SWITCH_FAIL', 'switch failed', { cause }));
     }
     return ok({ activePipeline: filename });
   }
@@ -466,9 +466,9 @@ function isValidProject(project: string): boolean {
 }
 
 function invalidProject(): DomainError {
-  return domainError('validation', 'INVALID_PROJECT_NAME', '项目名非法');
+  return domainError('validation', 'INVALID_PROJECT_NAME', 'invalid project name');
 }
 
 function projectNotFound(name: string): DomainError {
-  return domainError('not-found', 'PROJECT_NOT_FOUND', `项目 ${name} 不存在`);
+  return domainError('not-found', 'PROJECT_NOT_FOUND', `project ${name} not found`);
 }
